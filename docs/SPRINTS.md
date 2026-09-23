@@ -50,7 +50,7 @@ Sources: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-nn, Qn), `docs/design/
 | **[OWN]** | `cd "$WT" && python3 Scripts/sprint/ownership.py docs/sprints/s<N>.md#<id> "$WT"` (FunkGui cards: the lead runs it from the FCompressor checkout against `$FWT`) |
 | **[FG]** | `cd "$FWT" && cmake --workflow --preset agent-verify && cmake --workflow --preset agent-gui-verify && tools/verify.sh "$FWT/build-agent-gui"` |
 | **[XV]** | FunkGui cards from S1: `RO=/Users/seanfunk/audio/plugins/FCompressor/.claude/worktrees/ro-s<N>-<code>; cd "$RO" && cmake --preset agent -DFETCHCONTENT_SOURCE_DIR_FUNKGUI="$FWT" && cmake --build --preset agent && Scripts/verify.sh "$RO/build-agent"` |
-| **[PNG]** | `<build>/fcmp_probe_plugin ui.dump --mode <key> --golden-root tests/golden --arch arm64 -- --view <id> --out <build>/png/<id>-<key>.dump --png <build>/png/<id>-<key>.png` (S5 revision: probe-own flags after `--`) |
+| **[PNG]** | `<build>/fcmp_probe_plugin_artefacts/<Config>/fcmp_probe_plugin ui.dump --mode <key> --golden-root tests/golden --arch arm64 -- --view <id> --out <build>/png/<id>-<key>.dump --png <build>/png/<id>-<key>.png` (S5 revision: probe-own flags after `--`) |
 
 CTest labels (03 §2.9): `verify`; layer `dsp`/`proc`/`ui`/`lint`; `global` or `mode:<key>`; `probe:<layer>.<name>`.
 FunkGui tests: `verify`, `fg`, plus `gpu` (needs `FUNKGUI_WITH_BGFX`) or `live` (needs a window server; never in
