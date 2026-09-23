@@ -42,7 +42,7 @@ SPRINTS beats 03 §4.9 on scheduling and ownership only.
 - `Source/fcdsp/**` is JUCE-free: no `<juce_*>`, no `funkgui/*`, nothing from `plugin/` or `editor/`. std and SIMD
   intrinsics only.
 - **No libm on the audio path**: under `Source/fcdsp/{core,engine,modes}` the lint rejects
-  `\b(std::)?(tan|tanh|exp|expf|log|logf|log1p|pow|powf|sin|cos|tanf|tanhf)\s*\(`; use
+  `(^|[^A-Za-z0-9_])((std::)?(a?(sin|cos|tan)h?f?|atan2f?|exp(2|m1)?f?|log(2|10|1p)?f?|powf?|cbrtf?|hypotf?|erfc?f?|[lt]gammaf?))[ \t]*\(`; use
   `fcdsp::log2/exp2/tanh/logCosh/tanPi/sinPi/cosPi` instead (`params/` and `analysis/` are exempt).
 - No function-local statics, lazily initialised globals or static constructors in `fcdsp`. The registry and the
   descriptors are constant-initialised. `FCMP_TEST_TAP` never appears: the test tap is a runtime pointer.

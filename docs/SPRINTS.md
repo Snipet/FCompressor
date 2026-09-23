@@ -178,7 +178,8 @@ chain                            F6 ──────────┴───�
    interface-change request (accepted ones become a lead revision in the next base).
 2. **FunkGui first** (only in sprints with a G card): commit the worktree on its branch; `git merge --no-ff`; on
    FunkGui `main` run the `agent-verify` **and** `agent-gui-verify` workflows (the tag gate, 02 §1.10), then
-   `lead-verify` and `FUNKGUI_ALLOW_BLESS=1 tools/golden.py adopt build-lead … --reason …`; bump
+   `tools/verify.sh <build>` (it wipes stale candidates/results) and `FUNKGUI_ALLOW_BLESS=1 tools/golden.py adopt <build> …
+   --reason …` (FZ0 errata: adopt only right after a wiping verify, R-G1 #4); bump
    `project(FunkGui VERSION 0.x.0)` and `CHANGELOG.md` (with its golden impact); commit; `git tag -a v0.x.0`.
 3. **Bump the pin** (`FCMP_FUNKGUI_TAG/_SHA/_VERSION`); `rm -rf build-lead/_deps/funkgui-*`.
 4. **Merge FCompressor cards**: commit each worktree on its branch; `git merge --no-ff s<N>/<code>` in card order.

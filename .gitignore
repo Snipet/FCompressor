@@ -11,3 +11,4 @@
 # local CMake presets; harness-made agent worktrees (03 §1.1)
 /CMakeUserPresets.json
 /.claude/worktrees/
+__pycache__/

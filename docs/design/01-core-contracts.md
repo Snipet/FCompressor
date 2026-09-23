@@ -151,7 +151,7 @@ Targets (the full table, with link lines, is 03 §2.7):
 2. `editor/` reads the processor only through `Source/plugin/ProcessorFacade.h` (02 §9.5). It never reaches `fcdsp::EngineHost` directly.
 3. `plugin/` never includes `editor/` headers, except `CreateEditorGpu.cpp`, the one TU that constructs `fcmp::ui::Editor`. The facade lives in `plugin/` because the processor implements it (K1 #1).
 4. **No libm on the audio path** (K2 #14). Under `Source/fcdsp/{core,engine,modes}` the lint rejects the regex
-   `\b(std::)?(tan|tanh|exp|expf|log|logf|log1p|pow|powf|sin|cos|tanf|tanhf)\s*\(`. Everything goes through
+   `(^|[^A-Za-z0-9_])((std::)?(a?(sin|cos|tan)h?f?|atan2f?|exp(2|m1)?f?|log(2|10|1p)?f?|powf?|cbrtf?|hypotf?|erfc?f?|[lt]gammaf?))[ \t]*\(` (FZ0 errata: widened by the S0 review, R-B0 #4). Everything goes through
    `fcdsp::log2/exp2/tanh/logCosh/tanPi/sinPi/cosPi` (§5.1), so arm64 and x86 goldens can match exactly and macOS
    updates cannot move `print.*` hashes (E §0.9, C §5.12). `params/` (host maps) and `analysis/` (plot-only extras) are
    exempt; the analysis functions that must be bit-identical to the audio path call the policies, so they inherit the
