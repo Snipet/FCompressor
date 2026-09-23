@@ -1,0 +1,488 @@
+# FCompressor decision log
+
+Status: ADR-style log, synthesised 2026-09-22 (design phase; no code exists). Every decision behind
+`docs/ARCHITECTURE.md` and the design appendices `docs/design/01-core-contracts.md` (01),
+`02-funkgui-and-ui.md` (02) and `03-build-verify-process.md` (03) is recorded here with the chosen option, the
+rejected options and the rationale. Sources: research reports `docs/research/{A..F}-*.md` (cited `A §x` … `F §x`),
+critiques `docs/design/K{1,2,3}-*.md` (cited `K1 #n` …), HardwareReverb (HR, read-only).
+
+Conventions:
+- **[USER 2026-09-22]** marks a decision the user made; it is binding and not re-litigated here.
+- **Accepted** decisions were made in design (Drafts 1–3 or this synthesis). **Pending Qn** means accepted as the
+  default but listed for the user's confirmation in §"Open questions for the user".
+- All non-user decisions are dated 2026-09-22.
+
+---
+
+## A. User decisions
+
+### ADR-01 Every library through CMake FetchContent [USER 2026-09-22]
+- **Decision:** JUCE 8.0.4 and bgfx.cmake v1.153.9385-561 (as HR pins them) and FunkGui come in through
+  `FetchContent`; no vendored or copied third-party or shared sources.
+- **Consequences:** `cmake/FcmpDeps.cmake` declares all three and asserts versions and SHAs after population (03 §2.3);
+  a read-only machine cache `~/audio/.deps` feeds `FETCHCONTENT_SOURCE_DIR_*` (ADR-37). System SDK libraries (SQLite3,
+  like Metal and CoreAudio) and prebuilt build tools are outside the rule pending Q2 and Q8.
+
+### ADR-02 FunkGui is its own repository and CMake project [USER 2026-09-22]
+- **Decision:** `/Users/seanfunk/audio/libraries/FunkGui`, its own git repo; CMake project and target `FunkGui`;
+  namespace `funkgui`; consumed by `FetchContent_Declare(FunkGui GIT_REPOSITORY /Users/seanfunk/audio/libraries/FunkGui
+  GIT_TAG <tag>)`; dev/agent builds may override with `-DFETCHCONTENT_SOURCE_DIR_FUNKGUI=<path>`.
+
+### ADR-03 FunkGui is seeded from a snapshot of HardwareReverb, then generalised [USER 2026-09-22]
+- **Decision:** the seed is HR `Source/gui` plus shaders and the bundled font; generalisation follows in FunkGui.
+- **Implementation:** ADR-32 (commit sequence, `SEED.tsv` provenance).
+
+### ADR-04 HardwareReverb is read-only; it migrates after FCompressor v1 [USER 2026-09-22]
+- **Decision:** no edits to HR and no builds in its build directories; HR moves onto FunkGui only after FCompressor v1,
+  once its goldens prove identical. Nothing permanent depends on HR's `build/` contents.
+- **Consequences:** `.deps` is populated from upstream (a one-time `--seed-from` copy is a read); the FunkGui seed is
+  verified by sha256 on the day of the copy; FunkGui's `v1.0.0` is the tag HR migrates onto.
+
+### ADR-05 Characteristics = always-visible band + full-panel screen [USER 2026-09-22]
+- **Decision:** the main panel has a band (GR history, transfer curve, meters) that is always visible, plus an expand
+  toggle opening a full-panel Characteristics screen with internals (detector/envelope, step responses, sidechain
+  filter, colour transfer).
+- **Implementation:** 02 §6.5, §7. The reading that "full-panel" keeps the chrome is Q4.
+
+### ADR-06 Editor 960×640, fixed [USER 2026-09-22]
+- **Decision:** no resize; HR's fixed-panel and never-relayout rules. `setResizable(false, false)` and one
+  `setSize` (02 §5.1, §6.1).
+
+### ADR-07 Product identity [USER 2026-09-22]
+- **Decision:** manufacturer `Funk`, plugin code `Fcmp`, bundle id `com.funk.fcompressor`, formats AU/VST3/Standalone,
+  macOS.
+
+### ADR-08 Parallel work and ownership of commits and goldens [USER 2026-09-22]
+- **Decision:** at most 3 agents run concurrently; FCompressor agents use git worktrees; FunkGui agents use their own
+  `git worktree add`; commits at sprint boundaries by the lead after review; agents never bless goldens.
+- **Implementation:** 03 §4 (agents never commit; `golden.py adopt` refuses outside the main checkout and without
+  `FCMP_ALLOW_BLESS=1`). Whether the lead session counts toward the 3 is Q1.
+
+### ADR-09 One UI for every Mode; Modes may lock or step parameters [USER 2026-09-22]
+- **Decision:** all Modes share the same parameters and visual aids; some Modes restrict a parameter to finite
+  increments (e.g. 2-4-10 ratio).
+- **Implementation:** ADR-11, ADR-12, ADR-13; 02 §6.4 places every parameter once.
+
+---
+
+## B. Architecture and contracts
+
+### ADR-10 Three layers with a JUCE-free DSP library
+- **Decision:** `fcdsp` (JUCE-free STATIC library: parameters, resolver, registry, engine, oversampler, telemetry,
+  analysis) ← `plugin` (JUCE processor) ← `editor` (JUCE + FunkGui). Every probe links `fcdsp`.
+- **Rejected:** DSP inside the JUCE processor (probes would not test shipped object code; C §5.14); a JUCE-dependent
+  engine using `juce::dsp` (E §9.2 row 10).
+- **Rationale:** one archive for plugin and probes; bit-reproducibility; enforced by the target graph (01 §1–2).
+
+### ADR-11 A 29-parameter universal superset; 128 Mode slots
+- **Decision:** 22 Mode-filtered parameters + 7 globals (01 §3.1); ratio stored as slope S ∈ [0, 2]; integer lists of
+  capacity 8; `mode` = `AudioParameterInt 0..127`, non-automatable, with a `modeId` key string in state; D's `in` is a
+  remapped `thr` plus a character-only `drive`; no `topo` host parameter (folded into `voice`/`physical()`).
+- **Rejected:** 64 slots (B §7.4.3); F's 15-slot panel; D's 24-slot list with `in`, `topo`, `lshape`, `out`.
+- **Rationale:** 35 Modes already catalogued; `thr` keeps one meaning across Modes; saves a UI slot n/a in 6 of 8 Modes.
+
+### ADR-12 The raw value is truth; snap on read; a Mode switch writes only `mode`
+- **Decision:** every reader resolves raw values through the active Mode with one pure `resolve()`; the UI writes only
+  exact detent values; "switch + load Mode defaults" is an explicit Alt-click inside a batch.
+- **Rejected:** B §7.4.2 (rewrite raw values on a Mode switch); F §3.2's stepped-only variant.
+- **Rationale:** A→B→A exact; one host gesture; no audio-thread writes; deterministic D3; a lane between detents shows
+  the snapped text (accepted cost). The one hazard is closed by ADR-25.
+
+### ADR-13 A Mode is a descriptor plus a traits struct
+- **Decision:** constexpr `ModeDescriptor` (a `ParamSpec` per parameter + metadata) and a traits struct choosing one
+  policy per stage slot, fused into `ModeEngine<T>`; one virtual call per 64-sample chunk; engines placement-constructed
+  into two 8 KiB arena slots (01 §4.3, §5.3; E §3.5–3.6). `Remapped` and "program-dependent" are attributes, not kinds.
+- **Rejected:** a virtual call per sample; per-Mode classes with bespoke UIs; C's `ModeSpec` and F's hooks (subsumed).
+
+### ADR-14 Kernel crossfade with per-path state
+- **Decision:** a change of Mode or of a kernel-selecting value (`det`, `stmode`, `voice`, topology, effective external
+  key) runs a 20 ms equal-gain crossfade. Each path has a `PathState` (outgoing `EngineParams` frozen; its own
+  preGain/makeup smoother); one `up()` and one `down()` per chunk; the new engine is seeded from `Carry`, with lanes
+  merged by `max` when the M/S domain changes; crossfade starts ≥ 50 ms apart (01 §5.5).
+- **Rejected:** Draft 1's shared host gain staging (the old path ran on the new Mode's preGain/makeup; K2 #3);
+  unseeded switches; an FB↔FF flip without a fade on EXT toggles (K2 #22).
+
+### ADR-15 Latency depends only on Quality and the lookahead budget; setup is applied off the audio thread
+- **Decision:** `latency = lookaheadSamples(labudget) + kOs[quality].latency`. `quality` and `labudget` are
+  non-automatable globals applied in `prepareToPlay` and by a 20 Hz message-thread `SetupWatcher` (reconfigure under
+  `suspendProcessing`, then `setLatencySamples`). The processor has no APVTS listeners and no `AsyncUpdater`.
+- **Rejected:** latency = max over Modes (B §7.4.5); Draft 1's `AsyncUpdater` path (VST3 fires listeners on the audio
+  thread; `triggerAsyncUpdate` may block; K2 #6).
+
+### ADR-16 FCompressor owns its oversampler; mixing happens in the OS domain
+- **Decision:** `fcdsp::Oversampler` (2× polyphase IIR + a constexpr Thiran fractional delay; 4× linear-phase FIR),
+  integer latencies frozen at FZ2; dry/wet mix inside the OS domain against an un-pre-gained dry; the side chain is
+  delayed by `L_la − look + D_up − engine SC delay`; gain interpolated linearly in dB at the OS rate (01 §5.4, §5.6).
+- **Rejected:** `juce::dsp::Oversampling` in the engine (E §2.9; breaks the JUCE-free rule); rounding the STD latency up
+  without a fractional delay (bypass/PDC comb; K2 #11a); applying preGain before the dry tap (K2 #3c).
+
+### ADR-17 The mix-0 and below-threshold null specs
+- **Decision:** ECO: bit-exact against `delay(x, L)`; STD/HQ: bit-exact against a control `Oversampler` round trip plus
+  passband ≤ 0.01 dB to 20 kHz; bypass bit-exact at every Quality (01 §5.6; 03 §3.4, §3.7).
+- **Rejected:** C D8a / Draft 3 "mix 0 bit-exact against the delayed input" at every Quality (can never pass with mix
+  in OS; K1 #2, K2 #12).
+
+### ADR-18 The feedback-solver interface is affine
+- **Decision:** `FbAffine{A, B}`; `G::solveFb(c, x, a)` returns the root of `r = A + B·r̂(x − r)`; ballistics expose
+  `B::solveFb(c, s, solve)` (max of roots over branches) and `B::commitFb(c, s, r)`; link is applied between them; FB
+  curves must be monotone (`fb.monotone`); the opto one-sample-delay guard runs in `prepare()` at the actual fs with a
+  ZDF fallback (01 §5.2–5.3).
+- **Rejected:** Draft 1's `alphaFor`/`solveFb(…, α)` (no single α for DualRelease, MultiStage3, Hold; K2 #1); K2's
+  single `stepFb(solve)` (adapted: it had no place for link between solve and commit, K2 #5b); a `static_assert` guard
+  (α depends on fs at runtime).
+
+### ADR-19 Sources by per-directory globs; `FCDSP_DEFINE_MODE`; `Modes.def` drives only the registry and CTest
+- **Decision:** `file(GLOB_RECURSE … CONFIGURE_DEPENDS)` per directory (`cmake/FcmpSources.cmake`, written once);
+  each Mode TU ends with `FCDSP_DEFINE_MODE(Traits)`, which instantiates its engine and defines `kEntry_<Traits>`;
+  `Registry.cpp` collects addresses from `Modes.def` (01 §8.2; 03 §2.1).
+- **Rejected:** Draft 1's `Modes.def`-driven `target_sources` + generated `ModeIncludes.h` and **K1 #5**, which
+  recommended keeping it (every new file would still need a lead CMake edit; one TU would instantiate every Mode;
+  K3 #2, #6). K1 #5's concern — an unregistered Mode's half-written `.cpp` compiling into `fcdsp` — is real but cheap:
+  it exists only in its owner's worktree, must compile for that task's DoD anyway, and its unreferenced entry is dropped
+  by the linker. Draft 3's "glob only `Source/modes/*.cpp`" is also superseded.
+
+### ADR-20 The canonical source tree
+- **Decision:** `Source/fcdsp/{core,params,engine{,/host,/stages/<slot>},modes{,/<key>},telemetry,analysis}`,
+  `Source/plugin/` (with `ProcessorFacade.h`), `Source/editor/` (with `gpu/Editor`), one directory per Mode, one header
+  per stage policy, one file pair per UI sub-view (01 §2.1).
+- **Rejected:** Draft 3's `Source/dsp/{simd,units,…}` + `Source/modes/`; `editor/ProcessorFacade.h` (the processor
+  implements it); per-slot multi-policy headers (every Mode sprint would edit the same files; K3 #7).
+- **Rationale:** directory = namespace = include prefix; file-disjoint parallel work (K1 #1, K3 #1).
+
+### ADR-21 Self-registering probe files; names and golden paths
+- **Decision:** one file per probe with a `// FCMP_PROBE layer=… name=… scope=… timeout=…` line and a static
+  `FCMP_PROBE(layer, name)` registration; tests `<layer>.<name>[.<key>]`; golden files
+  `tests/golden/{base,<arch>}/{global,modes/<key>}/<layer>.<name>.txt`; exit codes 0–4; executables
+  `fcmp_probe_dsp`, `fcmp_probe_plugin`, `fcmp_bench` (03 §2.9, §3.2).
+- **Rejected:** Draft 3's CMake lists and dispatch table; Draft 1's `FcmpDspProbe/FcmpProcProbe/FcmpUiProbe`,
+  `--golden-dir`, `Tools/golden/`, "missing golden exits 2" (K1 #4, K3 #3); `<probe>.txt` without the layer (`dsp.null`
+  and `proc.null` would collide).
+
+### ADR-22 The test tap is a runtime pointer
+- **Decision:** `EngineHost::setTap(TestTap*)`, always compiled; `TestTap` holds spans per sample; the host loads the
+  pointer once per block and feeds `ControlIo`'s nullable outputs; the plugin never sets it (01 §5.4).
+- **Rejected:** `#if FCMP_TEST_TAP` (C §5.1, Draft 1): a second `fcdsp` build or an ODR hazard (K1 #6, K2 #2). K1's
+  raw-pointer `TestTap` and K2's span version differ only in form; spans chosen.
+
+### ADR-23 No `UndoManager`
+- **Decision:** `apvts(*this, nullptr, …)`; undo belongs to the host, which records every UI gesture (01 §9.1).
+- **Rejected:** Draft 1 / E §4.3's `UndoManager` (JUCE's APVTS timer pushes host automation into one unbounded
+  transaction; undo would revert automation; K2 #7). `ProcessorFacade::beginUndoTransaction` is deleted.
+
+### ADR-24 No libm on the audio path
+- **Decision:** `FastMath` gains fma-only `tanh`, `logCosh`, `tanPi`, `sinPi`, `cosPi` (scalar == lane 0); `lint.deps`
+  rejects libm transcendentals under `fcdsp/{core,engine,modes}`; host-map-derived `proc.*` rows use `absrel`
+  (01 §2.2, §5.1).
+- **Rejected:** libm in colour stages and SVF design (Apple libm differs across arches and macOS releases; K2 #14).
+
+### ADR-25 No "circuit off" step where another Mode's default lands; nothing steps
+- **Decision:** FET 76's attack-knob OFF detent moves to FET's `tmode` slot, relabelled `GR` (ON = 0, OFF = 7);
+  `atk` becomes continuous 0.02–0.8 ms; a `crossmode.no_off` registry lint checks every ordered Mode pair; GR OFF and
+  Stage-2 OFF ramp over 20 ms; `dsp.zipper` gains detent-edge rows (01 §10.2, §10.5; K2 #4). User-visible: Q9.
+- **Rejected:** Draft 1's hybrid `atk` with OFF at 1.0 ms (every raw attack > 0.894 ms resolved to OFF, so switching to
+  FET 76 from Clean, Bus G, Bus 25 or Diode 609 disabled gain reduction).
+
+### ADR-26 Telemetry: seqlock frame, claim-word history, lifetime count, overlay for live curves
+- **Decision:** `UiFrame` 72 words (seqlock); `HistoryRing` 4096 × 32 B columns of 1 ms with min/max GR and a claim
+  word (tear-free); both gated by an attach **count**; live curves = `resolve()` + `overlaySmoothed(frame)`
+  (01 §6; 02 §9.1).
+- **Rejected:** E's 57-word and F's 38-word frames; 2048 × 16 B history; a bool attach flag (HR); Draft 1's re-read
+  check (accepted torn columns; K2 #8); building `EngineParams` from `UiFrame` alone (no `m[8]`, `topo`, `flags`;
+  K1 #7).
+
+### ADR-27 The lookahead budget is visible to the resolver
+- **Decision:** `RawParams::budget` (the configured budget); `resolveView` locks `look` at 0 with a reason while the
+  budget is OFF and clamps it otherwise; derived specs read the clamped value; the engine clamp is defensive only
+  (01 §4.4).
+- **Rejected:** an engine-only clamp (host text and UI disagreed with audio) and Draft 2's UI "locked" overlay (K1 #8).
+
+### ADR-28 Host order is `kApvtsOrder`, separate from `Pid`
+- **Decision:** `Pid` is internal and may regroup; `kApvtsOrder` is v1-forever and append-only (01 §3.2).
+- **Rejected:** "Pid order == APVTS order, append only" (a v2 Mode-filtered parameter could not join the Mode block;
+  K2 #9).
+
+### ADR-29 Per-Mode sound revisions
+- **Decision:** `ModeDescriptor::revision`; state and presets store `modeRev`; once a Mode is in `modes-ever.tsv`, a
+  moved default print hash requires `revision++`; older sessions get a footer notice; step plain values and DisplayMaps
+  of shipped Modes are v1-forever (01 §0, §9.1).
+- **Rejected:** relying on `stateVersion` (cannot express a per-Mode change; K2 #10); emulating old revisions in v1.
+
+### ADR-30 An early descriptor wave with provisional Modes
+- **Decision:** task DW writes all 7 remaining descriptors in full with generic traits and `provisional = true` in S4,
+  so the schema freezes (FZ3) on evidence from all 8 Modes and the UI never waits for DSP-complete Modes; `golden.py`
+  refuses provisional rows; release builds refuse provisional Modes (01 §4.3, §8.4; 03 §4.9).
+- **Rejected:** Draft 1's "four sketched, finished by their owners" (the hardest schema cases would arrive after UI code
+  was built on the schema; K3 #9).
+
+### ADR-31 FunkGui is a set of INTERFACE libraries; the consumer provides JUCE and bgfx
+- **Decision:** `FunkGui::core`, `::gpu`, `::harness`, `::presets` (INTERFACE + INTERFACE sources), `FunkGuiFonts`
+  (binary data); the consumer provides JUCE; bgfx is fetched only `if(NOT TARGET bgfx)` using normal variables;
+  shaderc is either `FUNKGUI_SHADERC` or the bgfx target, guarded (02 §1).
+- **Rejected:** a JUCE module (unity layout, no bgfx/shader/font channels); a STATIC library (compiles JUCE headers
+  under FunkGui's flags; A §6.3); Draft 2's unconditional `shaderc` FATAL (broke every prebuilt-shaderc configure; K1
+  #3, K2 #17); `CACHE … FORCE` in the fallback (leaks into the consumer's cache).
+
+### ADR-32 FunkGui tag sequence and the pipelining rule
+- **Decision:** lead pre-work G0 = verbatim HR copy + `SEED.tsv` (untagged), sed renames keeping HR file stems, a
+  harness-only CMake → **v0.0.1**; G1 (targets + Harness v2) → v0.1.0; G2…G8 → v0.2.0…v0.8.0; FCompressor consumes only
+  tags, one sprint behind (02 §2.1; 03 §4.5, §4.9).
+- **Rejected:** **K1 #12**'s "drop v0.0.1; S0-H alone renames and builds, v0.1.0 first pin" (leaves two agent slots idle
+  in S0 and keeps a bootstrap cycle; K3 #5); Draft 2's "v0.1.0 = full generalisation"; Draft 2's UI agent building on
+  other agents' live worktrees (K3 #4).
+
+### ADR-33 The FunkGui pin stays a tag; overrides must descend from it
+- **Decision:** `GIT_TAG ${FCMP_FUNKGUI_TAG}` as the user decided, plus a post-population SHA assert; an override must
+  pass `git merge-base --is-ancestor ${FCMP_FUNKGUI_SHA} HEAD`; `verify.sh --integration` fails with any override
+  (03 §2.3).
+- **Rejected:** **K2 #26a** (pin FunkGui by SHA in `GIT_TAG`): it contradicts the user's `GIT_TAG <tag>` decision, and
+  the SHA assert already refuses a moved tag (fix: delete `_deps/funkgui-*`). Draft 3's "override VERSION ≥ pin"
+  (VERSION changes only in tagging commits, so it cannot detect a stale worktree; K2 #26b).
+
+### ADR-34 One test harness, in FunkGui — pending Q3
+- **Decision:** Harness v2 (`FunkGui::harness`, header-only, JUCE-free): spec vs golden rows, tolerance grammar,
+  duplicate-key errors, candidates only (`--bless-to`), `RESULT` JSON line (03 §3.2).
+- **Rejected:** an FCompressor-owned harness with FunkGui duplicating a subset (two harnesses to keep in step, and HR's
+  migration needs FunkGui's).
+
+### ADR-35 The preset data layer lives in FunkGui; state does not depend on it — pending Q2
+- **Decision:** `FunkGui::presets` (HR `presets/` generalised with `Attribute`, `ProductConfig`, `PresetHooks`), no GUI
+  dependency, SQLite3 from the macOS SDK; written by G8 in the last sprint; `State.cpp` owns `<PARAMS>` and reaches
+  `<PRESET>` only through optional hooks installed by P3 (01 §9; 02 §1.2).
+- **Rejected:** copying HR's preset sources into FCompressor (violates ADR-01); putting FunkPresets on the state path
+  (`proc.state` would wait on HR's preset work settling; K3 #14).
+- **Fallback:** an FCompressor-owned `Source/plugin/presets/`, re-implemented from HR's headers.
+
+### ADR-36 Prebuilt build tools in the machine cache — pending Q8
+- **Decision:** `deps.sh` builds `shaderc` (pinned bgfx.cmake SHA, stamped) and `pluginval` (pinned tag) into
+  `~/audio/.deps/tools`; builds fall back to building shaderc from the fetched bgfx.cmake automatically (03 §2.5).
+- **Rationale:** the shaderc toolchain is 97.5 % of a cold bgfx build (2,060 of 2,112 CPU-s measured).
+
+### ADR-37 A read-only machine dependency cache
+- **Decision:** `~/audio/.deps` populated by `deps.sh`, used through `FETCHCONTENT_SOURCE_DIR_{JUCE,BGFX}` defaults;
+  never `FETCHCONTENT_FULLY_DISCONNECTED` (03 §2.4).
+- **Rejected:** per-build-dir clones (823 MB each); a shared `FETCHCONTENT_BASE_DIR` (concurrent builds share binary
+  dirs); pointing at HR's `build/_deps` (forbidden by ADR-04); `FCompressor/.deps` or `plugins/.deps` (C §6.3, B §7.6).
+
+### ADR-38 ObjC classes are registered at runtime under randomised names
+- **Decision:** `juce::ObjCClass<NSView/NSObject>` with name roots `<OBJC_PREFIX>RenderView_` / `…DisplayLinkTarget_`
+  (02 §1.8).
+- **Rejected:** Draft 2's static `FcmpRenderView` (a prefix separates products, not binaries: AU + VST3 in one host, or
+  dev + installed builds, would collide; K2 #16).
+
+### ADR-39 The FCompressor panel is a fixed composition of sub-views with a probe-facing view API
+- **Decision:** `SubView` per region, each in its own files; `Layout.h` and `Tags.h` complete and frozen at FZ4;
+  `fcmp::ui::{Screen, Overlay, ViewSpec, views(), PanelOptions, Panel::setView}` with view ids `panel`,
+  `chars.sidechain`, `chars.colour`, `modebrowser`, `presetbrowser`; one environment set `FCMP_UI_VIEW`,
+  `FCMP_UI_NO_HINT`, `FCMP_UI_NO_LIVE`, `FCMP_UI_FIXED_DT` (02 Part 2 intro, §5.1).
+- **Rejected:** Draft 2's monolithic `Panel.cpp` (a hot file for five UI tasks; K3 #15); Draft 3's undefined
+  `setView/settled/views()` and band sub-views that do not exist (K1 #10); K3's `setScreen/setOverlay` pair (merged into
+  `ViewSpec`, because the SC|COLOUR tab also changes geometry); `FCMP_UI_SCREEN`/`FCMP_UI_BROWSER`.
+
+### ADR-40 `ProcessorFacade` lives in `plugin/` and hands out ports
+- **Decision:** `Source/plugin/ProcessorFacade.h`: `port(Pid)` (29 `JuceParamPort`s owned by the processor, outliving
+  every editor), `currentRaw()`, telemetry, `UiState`, `StateNotice`, `beginBatch/endBatch`, `PresetAccess`; a
+  `FakeFacade` for probes and UI tasks (02 §9.5).
+- **Rejected:** `apvts()` in the facade (every UI task would need a prepared processor; K3 #13); ports owned by the
+  editor (use-after-free in `~EditorHost`; K2 #27 proposed Panel-owned ports — processor ownership satisfies both
+  critiques); `registry()` (free functions suffice; K1 #14).
+
+### ADR-41 No drawn state depends on thread timing
+- **Decision:** determinism rule 7; with `PanelOptions::syncPreview` (probes, fixed-dt captures) step responses are
+  computed inside `tick()`; `wantsFullRate()` stays true while a job is pending (02 §3.7).
+- **Rejected:** Draft 2's worker-only `PreviewWorker` in probes (flaky geometry goldens; K1 #11).
+
+### ADR-42 Handle drags in the plot's own units
+- **Decision:** threshold handles sit at `analysis::inputThresholdDb(eng)` and drag by `thr_new = thr_cur + ΔT`
+  (T_in is affine in `thr` with slope 1 in every Mode — the `thr.slope` lint); knee/range drag absolutely only with
+  `kFlagPlotIsPlain` and an identity display map (Clean), otherwise relatively (02 §6.5; 01 §7).
+- **Rejected:** Draft 2's absolute drags through `DisplayMap::toPlain` (wrong for FET's threshold offsets and Mu 67's DC
+  THRESH; K1 #9).
+
+### ADR-43 Formatting contract
+- **Decision:** `formatParts` → `{value, unit, spoken, prefix}`; the value never contains the slot label; minus is
+  U+2212 everywhere (parse accepts `-`); n/a prints U+2013; Mode-filtered parameters carry the JUCE label `""` and the
+  unit in the text; host names are universal forever (01 §3.1, §4.6).
+- **Rejected:** a single `formatValue` string (the UI needs value/unit/spoken; K1 #15); a fixed JUCE unit label (hosts
+  would append "dB" to "INPUT 30"; K2 #25a).
+
+### ADR-44 One sprint plan for both repositories
+- **Decision:** 03 §4.9: S0–S12, ≤ 3 agent tasks per sprint across both repositories, disjoint ownership, FunkGui one
+  sprint ahead; freeze points FZ0 (S0) … FZ5 (S12); spikes early (GPU chain S0, determinism S1, recorder and
+  oversampler S2, FB solvers S3, schema S4, live parity S8).
+- **Rejected:** Draft 2 §10 and Draft 3 §4.9 (incompatible, neither under one global cap; K3 #4); **K1 #13**'s five-sprint
+  example table (not sized: several of its rows are larger than one agent session, and it has no descriptor wave).
+
+### ADR-45 Golden churn and gate cadence
+- **Decision:** `ui.geometry` goldens are adopted only at the UI freeze FZ5; FunkGui is tagged only in sprints that
+  merge a FunkGui task; asan/tsan/tsan-agent/rtsan, `gui-live` and a universal build run at milestones (S4, S8, S12)
+  (03 §4.8).
+- **Rejected:** re-blessing UI geometry at every pin bump while the UI is still changing (K3 #21).
+
+### ADR-46 Host-validation and real-time gates
+- **Decision:** `Scripts/validate.sh` (auval `-strict`, pluginval strictness 10, repeat 2, randomised) every sprint end
+  and before release; an `rtsan` preset with `[[clang::nonblocking]]` on `EngineHost::process`, the `IEngine` per-chunk
+  calls and `processBlock`, falling back to an interposer; a headless `tsan-agent` preset running `proc.*`/`ui.*`
+  (03 §2.10, §4.8).
+- **Adapted from K2 #18:** `-Wfunction-effects` applies to `fcdsp` only; enabling it on `Processor::processBlock` would
+  flag every call into JUCE, whose functions carry no effect annotations.
+
+### ADR-47 v1 ships arm64-only unless an x86 verify has passed — pending Q6
+- **Decision:** the `release` preset is arm64; `release.sh` accepts a universal build only with
+  `build-lead-x86/verify-passed-<sha>`; `lead-x86` keeps compiling the SSE backend at sprint ends (03 §5).
+- **Rejected:** shipping a universal binary whose SSE path has never executed (no Rosetta on this Mac; K2 #15).
+
+### ADR-48 The layout owns the attached words; `tmode` is always a slot
+- **Decision:** AUTO = `automu` on MAKEUP, EXT = `extkey` on DETECT, LISTEN = `listen` on SC HPF; a word is hidden when
+  its parameter is n/a, disabled with the reason when locked; `kFlagLatchWord` and `kit::latch` are deleted (02 §6.4).
+- **Rejected:** Draft 1's descriptor-driven latch words (K1 #23); compound cells (Draft 1 §12.1).
+
+### ADR-49 No host programs; monitoring latches never persist
+- **Decision:** `getNumPrograms() == 1`; `listen` and `delta` reset to 0 on state load (01 §3.1, §9.1).
+- **Rejected:** "host programs are the factory bank" (Draft 1; HR returns 1 program, B §1.7; JUCE's VST3 program
+  parameter would remap with the bank size; K2 #25d).
+
+### ADR-50 Input sanitisation before any delay line
+- **Decision:** NaN/inf → 0 and |x| ≤ 1e6 at `EngineHost::process` entry; the poison fallback outputs the sanitised,
+  latency-aligned dry; meters are floored and clamped (01 §5.8).
+- **Rejected:** checking only engine state (a NaN input would sit in the delay lines and re-emerge as the "dry"
+  fallback; K2 #13).
+
+### ADR-51 `AU_SANDBOX_SAFE` stays FALSE
+- **Decision:** sandboxed hosts load FCompressor out of process, where the preset DB and preferences are reachable; the
+  in-memory fallback remains (01 §9.2; K2 #19 asked for an explicit choice).
+- **Rejected:** TRUE (in-process in the host sandbox: `~/Library/Application Support` unreachable, presets in memory).
+
+### ADR-52 A new Mode rewrites no other Mode's goldens
+- **Decision:** `dsp.switch.<key>` owns every pair with a lower-slot Mode, both directions; `dsp.registry` and
+  `ui.browsers` are spec-only; each Mode's browser row is fingerprinted in its own `ui.geometry.<key>` (03 §3.4, §3.6).
+- **Rejected:** Draft 3's "every pair with this Mode as source" and count/hash global rows (K3 #17).
+
+### ADR-53 Factory presets per Mode, hashed bank revision
+- **Decision:** P3 writes `Source/plugin/factory/FactoryBank.cpp` once; each Mode adds its own `factory/<key>.inc`; a
+  configure-generated include list in slot order; `factoryBankRevision()` = first 32 bits of the SHA-256 of the `.inc`
+  contents (01 §9.2).
+- **Rejected:** a shared `FactoryPresets.cpp` with a hand-bumped counter (every Mode task edits it; K1 #31, K3 #18);
+  K1's path `Source/plugin/presets/<key>.inc` (confusable with the FunkPresets fallback directory).
+
+### ADR-54 Agents build RelWithDebInfo; the lead blesses from Release+LTO
+- **Decision:** a hash difference between the two is a determinism bug, never a golden update; the F1 spike proves
+  equality in S1 (03 §2.6, §2.10).
+- **Fallback:** agents build Release with `FCOMPRESSOR_LTO=OFF`.
+
+### ADR-55 Finite sentinels and the smoothing layout
+- **Decision:** `kRangeOff = 60`, `kS2Off = 24` (the host range ends); the engine smooths `{thrDb, slope, min(range,
+  60)}` and `{s2ThrDb, kneeDb}` per sample and ramps `offAmt`/`s2On` over 20 ms; each path smooths preGain and total
+  makeup; drive is smoothed per tick by each engine's colour stage (01 §4.2, §5.1).
+- **Rejected:** 1000 dB sentinels passing through smoothers (7 τ to leave OFF; an unsmoothed ON step; K2 #20).
+
+### ADR-56 Descriptor corrections from the critiques
+- **Decision:** Mu 67 ratio = `prog(derived(...))` showing the live EFF ratio (K1 #26); Brickwall `automu` n/a so
+  makeup is not applied twice (K1 #27); `DetectorLaw::custom` axes labelled with the active `det` step (K1 #28);
+  `ParamSpec::brief` for the locked sub-line (K1 #25); at most one history internal and ≤ 8 internals (K1 #20); step
+  labels > 6 glyphs are a warning, the pair-fit rule is the gate (K1 #24).
+
+### ADR-57 Probes that do not wait for the host; a componentised host
+- **Decision:** `EngineRig` drives static/time/quant/link/analysis probes on a bare `ModeEngine`; `EngineHost.cpp` is
+  orchestration over single-owner components in `engine/host/` (01 §5.4; 03 §3.4).
+- **Rejected:** every spec probe through `EngineHost` (policies and host would serialise; K3 #10); a single-owner
+  `EngineHost` holding every host feature (K3 #12).
+
+### ADR-58 Batches for multi-parameter writes
+- **Decision:** `beginBatch/endBatch` (a counter) around state load, preset apply, Alt-click defaults and `tapMany`;
+  the audio thread reuses the previous `BlockParams` while a batch is open; `endBatch` raises the snap (01 §2.3; 02 §9.5).
+- **Rejected:** unbracketed sequential writes (intermediate kernel crossfades or a transient OFF; K2 #23).
+
+### ADR-59 Fixed calibration and sign conventions
+- **Decision:** 0 dBFS = +22 dBu (0 VU = +4 dBu = −18 dBFS), no reference-level parameter; GR is positive dB of
+  attenuation everywhere below the UI; meters are published in dB floored at −200 (01 §3.1, §6.2).
+- **Rejected:** a global reference-level parameter (D; a candidate v2 append); F's GR ≤ 0 and linear meters.
+
+### ADR-60 Oversampling-reference probe compares filters, not latency
+- **Decision:** `proc.osref` checks passband and image rejection against JUCE; latency is `dsp.os`'s
+  declared-equals-measured row; the Quality help text is formatted from `kOs` (03 §3.5; K1 #29, K2 #28).
+
+### ADR-61 FunkGui licences from the fetched sources
+- **Decision:** the bgfx, bx, bimg and bgfx.cmake licence texts are taken from `${bgfx_SOURCE_DIR}` at configure time
+  and installed as bundle resources by `funkgui_add_font` in GPU configurations (02 §1.6; K1 #16).
+- **Rejected:** copying HR's `Resources/licences/` into FunkGui (a copied shared source).
+
+---
+
+## C. Critique points not adopted as written
+
+| Critique | Proposal | What was done instead | Why |
+|---|---|---|---|
+| K1 #5 | Keep `Modes.def`-driven `target_sources` + `ModeIncludes.h`; drop the glob | Globs + `FCDSP_DEFINE_MODE` (ADR-19) | Removes every shared CMake/C++ edit per Mode; the unregistered-TU concern is harmless |
+| K1 #12 | Drop `v0.0.1`; first pin `v0.1.0` after a lone S0-H | Lead-made `v0.0.1` harness-only bootstrap (ADR-32) | S0 can run three agents; no bootstrap cycle |
+| K1 #13 | A five-sprint example table | 03 §4.9's 13-sprint plan (ADR-44) | Sized tasks, descriptor wave, pipelining rule |
+| K1 #6 / K2 #2 | `TestTap` with raw pointers / with spans | Spans (ADR-22) | Same contract; spans carry their capacity |
+| K1 #10 / K3 #15 | View ids + `setView` / `setScreen` + `setOverlay` | `ViewSpec` + `setView` + sub-view composition (ADR-39) | The SC|COLOUR tab is part of a view's geometry |
+| K1 #31 / K3 #18 | `plugin/presets/<key>.inc` / `plugin/factory/<key>.inc` | `plugin/factory/<key>.inc` (ADR-53) | Avoids clashing with the FunkPresets fallback path |
+| K2 #1 | `B::stepFb(solve)` owning solve and commit | `B::solveFb` + `B::commitFb` with link between (ADR-18) | K2 #5b's link placement needs a seam between the two |
+| K2 #18 | `[[clang::nonblocking]]` + `-Wfunction-effects` on `processBlock` | `-Wfunction-effects` on `fcdsp` only (ADR-46) | JUCE functions are unannotated; the warning would fire on every call |
+| K2 #26a | Pin FunkGui by SHA in `GIT_TAG` | Tag in `GIT_TAG` + SHA assert (ADR-33) | Contradicts the user's `GIT_TAG <tag>`; the assert already catches moved tags |
+| K2 #27 / K3 #13 | Panel-owned ports / facade `port(Pid)` | Processor-owned ports behind `port(Pid)` (ADR-40) | Outlives every editor; satisfies both |
+| K2 #21b | STD: base-rate safety clip or documented overshoot | Documented overshoot (≤ ceiling + 1 dB TP spec), HQ ≤ +0.1 dB | A post-`down()` clip would sit outside the engine's colour stage and the Mode abstraction |
+
+---
+
+## Open questions for the user
+
+Only genuine user-level choices. Each has a recommended default, which the design already assumes; answering
+"default" changes nothing.
+
+**Q1. Does the lead session count toward the 3-agent limit?**
+The plan (03 §4.9) runs 3 agent tasks per sprint with the lead outside the count: 13 sprints (S0–S12).
+*Recommended default: the lead does not count.* If it does, run 2 agents per sprint in the same order (≈ 20 sprints);
+no design change.
+
+**Q2. May FunkGui carry the preset data layer (`FunkGui::presets`), and may it link SQLite3 from the macOS SDK?**
+This extends "a shared GUI library" to a GUI-independent sibling target, and SQLite would be a system library outside
+the FetchContent rule (like Metal and CoreAudio). *Recommended default: yes to both* — it avoids copying HR's preset
+code into FCompressor and gives HR's migration one preset core. Fallback: an FCompressor-owned
+`Source/plugin/presets/`, re-implemented from HR's headers (ADR-35).
+
+**Q3. May FunkGui carry the test harness (`FunkGui::harness`)?**
+*Recommended default: yes* — one harness for FunkGui's own tests, FCompressor's probes and HR's later migration
+(ADR-34). Alternative: an FCompressor-owned harness, with FunkGui keeping a subset.
+
+**Q4. Does "full-panel Characteristics" keep the header, display row and footer?**
+The design swaps only the middle region (y 124–600), so Mode, preset, bypass, quality and the toggle itself stay in
+the same place (02 §7.1). *Recommended default: yes.* Alternatives: a truly full-window screen with its own close
+control; or keep the chrome and add a strip of the 7 primary slots at y 560–600 (02 §11 Q1).
+
+**Q5. Keep a 0–200 % mix (Clean only; hardware Modes clamp at 100 %)?**
+The host range 0–2 is v1-forever once shipped. *Recommended default: keep it* (D §2.8, E §10.6; parallel "more than
+wet" is a Pro-C-style feature). If not wanted, the range becomes 0–1 now, before v1.
+
+**Q6. Intel support: install Rosetta and ship universal, or ship v1 arm64-only?**
+Rosetta is not installed, so the x86 build compiles but has never run. *Recommended default: arm64-only for v1*
+(ADR-47); if you want Intel, run `softwareupdate --install-rosetta --agree-to-license` and the lead adds `lead-x86`
+verify to each sprint end. Apple has announced that full Rosetta support ends after macOS 27.
+
+**Q7. Preferences (theme, meter scale, history span): per product or shared by all Funk plugins?**
+*Recommended default: per product* (`~/Library/Application Support/FCompressor/`), so HR keeps its own when it
+migrates (02 §11 Q3).
+
+**Q8. Do prebuilt build tools fit "every library via FetchContent"?**
+`shaderc` and `pluginval` are compiled once from pinned upstream sources into `~/audio/.deps/tools` — tools, not
+libraries linked into the plugin. *Recommended default: yes* (saves ≈ 2,060 CPU-s per GPU build directory; the
+build-from-source fallback for shaderc is automatic) (ADR-36).
+
+**Q9. FET 76: move the attack knob's OFF detent to a separate `GR ON/OFF` switch?**
+On the hardware, OFF is the attack knob's end stop. Kept there, every Mode switch into FET 76 from a Mode with an
+attack above 0.9 ms would silently disable gain reduction (ADR-25). *Recommended default: yes, a separate switch* in the
+TIME MODE slot, labelled `GR`.
+
+**Q10. Fixed calibration 0 dBFS = +22 dBu, with no reference-level parameter in v1?**
+*Recommended default: yes* (ADR-59); a reference-level parameter remains a candidate v2 append.
+
+## Resolutions recorded at Sprint 0 (2026-09-22)
+
+The user asked the lead to proceed through Sprints 0–3 without waiting, so the recommended defaults stand until the
+user says otherwise: **Q1** the lead does not count toward the 3-agent cap · **Q2** FunkGui may carry
+`FunkGui::presets` and link SQLite3 (re-confirm by the end of S6) · **Q3** the harness lives in FunkGui · **Q4** the
+Characteristics screen keeps the chrome · **Q5** mix 0–200 % · **Q6** arm64-only for now (Rosetta is not installed; the
+user may install it with `softwareupdate --install-rosetta --agree-to-license` to enable the universal target) ·
+**Q7** preferences per product · **Q8** prebuilt `shaderc`/`pluginval` in `~/audio/.deps/tools` · **Q9** FET 76 gets a
+separate `GR` switch · **Q10** fixed calibration 0 dBFS = +22 dBu.
