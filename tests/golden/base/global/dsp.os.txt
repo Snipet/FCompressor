@@ -1,0 +1,22 @@
+# funkgui-golden 2  probe=dsp.os  scope=global
+# key	value	tolerance
+os.std.gd.at_10k.fs44k1	5.22704007	abs:0.01
+os.std.gd.at_10k.fs48k	4.99958158	abs:0.01
+os.std.passband.dev_db	1.09301198e-06	abs:0.1
+os.std.image_rejection_db	103.618174	abs:0.1
+os.std.alias_rejection_db	90.8174186	abs:0.1
+xarch.os.std.hash	bea8dbc8d477de1f	exact
+os.hq.gd.at_10k.fs44k1	61	abs:0.01
+os.hq.gd.at_10k.fs48k	61	abs:0.01
+os.hq.passband.dev_db	0.00167038367	abs:0.1
+os.hq.image_rejection_db	94.2234054	abs:0.1
+os.hq.alias_rejection_db	79.9203346	abs:0.1
+xarch.os.hq.hash	2e495866d880273b	exact
+xarch.adaa.tanh.hash	973876a21339e984	exact
+adaa.tanh.alias_reduction_db	6.72145646	abs:0.5
+xarch.adaa.asymtanh.hash	ce650f1027baf2aa	exact
+adaa.asymtanh.alias_reduction_db	7.28198184	abs:0.5
+xarch.adaa.softclip.hash	94b86f63ef6e06e4	exact
+adaa.softclip.alias_reduction_db	8.39754706	abs:0.5
+xarch.adaa.hardclip.hash	a5354daef3eb8d48	exact
+adaa.hardclip.alias_reduction_db	8.80832601	abs:0.5
