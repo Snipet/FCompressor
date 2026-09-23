@@ -737,6 +737,14 @@ This is safe from any thread (E §4.3; `getText` from background threads is exer
 > (limit +3); the shaped fade +0.8/+1.3 dB (F3). `oneMinusAlpha(tauMs, fs)` lives in `core/Units.h`, and
 > `BallisticsPolicy`/`Stage2Policy` require `grDb(const State&)` for `Carry` (S2 lead revisions).
 
+> **S3 lead revisions.** (1) Ramp shape: **smootherstep** `6t⁵ − 15t⁴ + 10t³` (C2) replaces smoothstep for every 20 ms
+> gain transition — smoothstep read +3.3 dB on the bypass click row at 10.5 dB GR (F4); F7 converts the host ramps and
+> the next `ModeEngine.h` owner converts `offAmt`/`s2On`; click rows must pass at ≥ 10.5 dB GR. (2) Makeup and mix use
+> **two cascaded** 20 ms one-poles (both landing exactly; a single stage clicked +10/+21 dB on step edges, F4).
+> (3) Ballistics may expose optional `sense(c, s, v)`/`crestDb(s)` hooks (F9, CrestAuto); `ModeEngine` uses them when
+> present. (4) Open: an FB release cannot carry sub-ulp steps through `FbAffine` (≈ 0.07 dB stall on a 3 s FB release at
+> 48 kHz); extend `FbAffine` with a base GR before Mu 67 (M4, S10).
+
 **`Rt.h`** (FZ0 errata, R-F0 #1) holds `FCDSP_NONBLOCKING` (§2.2 rule 6), so `core/` can annotate without including
 `engine/`. Every function declared in `core/` is `FCDSP_NONBLOCKING`; F1 (S1) adds the bodies and may define the
 non-SIMD ones inline in their headers (preferred for the per-sample `Smoother4::tick`, `LinearRamp::tick` and

@@ -772,7 +772,7 @@ FCMP_PROBE(dsp, resolve)
         P.eq("clean.states.na", n[static_cast<std::size_t>(SlotState::na)], 4);             // s2thr s2atk s2rel, drive
         P.eq("clean.plot_is_plain", b2i((v[Pid::thr].flags & kFlagPlotIsPlain) != 0 && (v[Pid::knee].flags & kFlagPlotIsPlain) != 0
                                         && (v[Pid::range].flags & kFlagPlotIsPlain) != 0), 1);
-        P.eq("clean.provisional", b2i(clean.provisional), 1);
+        P.eq("clean.provisional", b2i(clean.provisional), 0);   // S3 lead fix: F9 cleared it
         P.eq("clean.key", b2i(clean.key == "clean" && clean.name == "CLEAN"), 1);
         P.eq("clean.not_registered_yet", b2i(fcdsp::byKey("clean") == nullptr || fcdsp::byKey("clean")->desc == &clean), 1);
     }

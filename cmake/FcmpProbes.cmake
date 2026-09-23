@@ -107,6 +107,9 @@ add_custom_target(fcmp_probes
             -DFCMP_OUT=${FCMP_BUILT_FROM_PROBES} -DFCMP_WHAT=probes -P ${PROJECT_SOURCE_DIR}/cmake/FcmpBuiltFrom.cmake
     VERBATIM)
 add_dependencies(fcmp_probes ${_fcmp_probe_exes})
+if(TARGET fcmp_bench)          # S3 lead fix (F4 finding): build the bench with the probes so the `bench` label runs
+  add_dependencies(fcmp_probes fcmp_bench)
+endif()
 foreach(_e IN LISTS _fcmp_probe_exes)
   add_dependencies(${_e} fcmp_probes_building)
 endforeach()
