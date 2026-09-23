@@ -41,8 +41,9 @@
 //              includes the colour stage's describing-function gain (E §6.3: N(A) of the entry's static colourCurve at
 //              the wet amplitude, 64-point trapezoid), so err_outside/inside_db hold the voice to its declared static
 //              shape; .gr_matches_off: the tapped GR equals voice OFF's bit for bit (colour never feeds the control
-//              path, so voice OFF's tap_vs_audio row is the meter truth); golden .x<d>.out_db, and .thd_db (THD of a
-//              -10 dBFS sine with no GR at 48 kHz, H2-H8, abs:0.5, C §5.8 D8)
+//              path, so voice OFF's tap_vs_audio row is the meter truth; a voice step that switches the topology, as
+//              Bus 25's NEW/OLD = FF/FB does, has its own GR and prints a NOTE instead, DW S4); golden .x<d>.out_db,
+//              and .thd_db (THD of a -10 dBFS sine with no GR at 48 kHz, H2-H8, abs:0.5, C §5.8 D8)
 //   time mode  static.tmode.<step>.<cfg>.*  every other step of `tmode` (Clean: AUTO), and static.hold.<cfg>.* at the
 //              longest hold: the static curve is the same
 //   feedback   static.fb.* for every configuration above whose topo resolves to FB (K2 #1; none in Clean, which is FF):
@@ -608,7 +609,14 @@ FCMP_PROBE(dsp, static)
                     const std::vector<double> taps = curveRows(P, F, tol, en, raw, prefix, o);
                     differ += taps == offTaps[c] ? 0 : 1;
                 }
-                P.eq(prefix + "gr_matches_off", differ, 0);
+                RawParams voiced = base;
+                voiced[Pid::voice] = st.plain;
+                if (fcmp::probe::resolveRaw(en, voiced).eng.topo == fcmp::probe::resolveRaw(en, base).eng.topo)
+                    P.eq(prefix + "gr_matches_off", differ, 0);
+                else
+                    std::printf("NOTE     %sgr_matches_off: this voice switches the topology, so its GR is its own "
+                                "(%lld of %zu configuration(s) differ); not judged\n",
+                                prefix.c_str(), static_cast<long long>(differ), std::size(offCfgs));
 
                 RawParams clean = base;
                 clean[Pid::voice] = st.plain;

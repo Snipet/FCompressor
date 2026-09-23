@@ -22,14 +22,18 @@
 //     time.<cfg>.reversals         the GR moves one way through the step (0 samples against the step's direction)
 //     time.<cfg>.nonfinite, time.<cfg>.gr_min_db
 //     time.groff.<edge>.hf_ratio_db  GR OFF toggled just after t = 1 s, at a waveform peak (on -> off, off -> on),
-//                                  on a 110 Hz tone at -6 dBFS with about 8 dB of GR: energy above 8 kHz in +-2 ms
+//                                  on a 110 Hz tone at -6 dBFS with about 8 dB of GR (a live threshold is moved 8 dB
+//                                  under the tone's detector level, as dsp.null's bypass and dsp.zipper's edges do;
+//                                  else the Mode's defaults): energy above 8 kHz in +-2 ms
 //                                  against both steady controls, <= +3 dB (offAmt's shaped 20 ms ramp, K2 #4 iii; a
 //                                  linear ramp reads about +40 dB here); time.groff.off.lands: GR exactly 0 from 21 ms
 //                                  after the edge; time.groff.metric_sensitivity_db: the same controls spliced with a
 //                                  hard cut must read >= +20 dB, which proves the metric can see a step (C §5.0:
 //                                  +42.8 dB)
 //     time.carry.*                 the hand-over (01 §5.5): carry() is valid and finite(); a fresh engine seeded
-//                                  from it continues bit-identically with the old one (seamless); a carry from the
+//                                  from it continues bit-identically with the old one (seamless: within 2 ulp of
+//                                  the carried GR, the rounding remainder a slow one-pole keeps and Carry cannot
+//                                  hold, SmoothBranching.h); a carry from the
 //                                  other lane domain seeds max(lane0, lane1) (K2 #3d); a cold carry (valid 0) is a
 //                                  no-op
 //     time.telemetry.finite, time.internals.*  telemetry() finite and >= 0; internals() finite, 0 beyond the
@@ -195,7 +199,20 @@ FCMP_PROBE(dsp, time)
 
     // ---- GR OFF never steps (K2 #4 iii): offAmt's 20 ms ramp --------------------------------------------------------
     {
-        EngineParams on = fcmp::probe::resolveRaw(en, base).eng;
+        // The toggle needs GR: with a live threshold, the input threshold goes 8 dB under the tone's detector level
+        // (T_in is affine in thr with slope 1, K1 #9). DW (S4): Opto 2A's PEAK RED. 40 and Brickwall's -6 dBFS
+        // default leave a -6 dBFS tone uncompressed, which toggles nothing.
+        RawParams toggle = base;
+        if (const ParamSpec* ts = view.spec[idx(Pid::thr)];
+            ts != nullptr && (ts->kind == Kind::continuous || ts->kind == Kind::hybrid))
+        {
+            const EngineParams e0 = fcmp::probe::resolveRaw(en, base).eng;
+            const double want = -6.0 - 8.0 - fcmp::probe::peakOffsetDb(en, e0);
+            toggle[Pid::thr] = std::clamp(static_cast<float>(static_cast<double>(base[Pid::thr]) + want
+                                                             - static_cast<double>(analysis::inputThresholdDb(e0))),
+                                          ts->lo, ts->hi);
+        }
+        EngineParams on = fcmp::probe::resolveRaw(en, toggle).eng;
         EngineParams off = on;
         off.flags = static_cast<uint8_t>(off.flags | kEngGrOff);
         const Rendered ctlOn = renderToggle(en, on, on), ctlOff = renderToggle(en, off, off);
@@ -251,7 +268,12 @@ FCMP_PROBE(dsp, time)
         }
         std::printf("NOTE     time.carry: GR %.6g dB, detector %.6g dB handed over; seeded engine differs by %.3g dB\n",
                     static_cast<double>(simd::lane<0>(c.grDb)), static_cast<double>(simd::lane<0>(c.detDb)), seam);
-        P.eq("time.carry.seamless", seam == 0.0 ? 1 : 0, 1);
+        // A release slower than 2^14 samples keeps its sub-ulp rounding remainder in the ballistics state, which the
+        // frozen Carry (01 §5.5) cannot hold: the hand-over drops at most half an ulp (SmoothBranching.h), and the
+        // seeded engine may round an ulp away. DW (S4): Bus 25's 0.5 s default release. Faster ones are bit-exact.
+        const float carried = std::max(std::fabs(simd::lane<0>(c.grDb)), std::fabs(simd::lane<1>(c.grDb)));
+        const double ulp2 = 2.0 * static_cast<double>(std::nextafter(carried, HUGE_VALF) - carried);
+        P.eq("time.carry.seamless", seam <= ulp2 ? 1 : 0, 1);
 
         // The lane-domain rule (K2 #3d): a carry from the other domain seeds max(lane0, lane1) into every lane; a
         // cold carry (valid 0) changes nothing.
