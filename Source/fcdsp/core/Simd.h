@@ -15,7 +15,10 @@
 //   - min/max NaN semantics differ between NEON and x86. Input sanitisation (Sanitize.h), the log floors and the
 //     poison check keep NaN out of the engine; dsp.simd pins the policy.
 //   - Comparisons return a lane mask `m32x4` (all-ones or all-zeros per lane) that sel/band/bor consume.
+//   - Every op is FCDSP_NONBLOCKING (core/Rt.h; FZ0 errata): the bodies are intrinsics only.
 // The x86-64 slice requires FMA: an unfused fallback would be a different arithmetic, not a slower one.
+
+#include "fcdsp/core/Rt.h"
 
 #if defined(__aarch64__) || defined(__ARM_NEON)
   #include <arm_neon.h>
@@ -41,37 +44,37 @@ using m32x4 = __m128;                       // SSE compares produce float-typed 
 #endif
 
 // Memory and construction (unaligned access on both backends).
-inline f32x4 load (const float* p) noexcept;
-inline void  store(float* p, f32x4 v) noexcept;
-inline f32x4 set1 (float s) noexcept;
+inline f32x4 load (const float* p) noexcept FCDSP_NONBLOCKING;
+inline void  store(float* p, f32x4 v) noexcept FCDSP_NONBLOCKING;
+inline f32x4 set1 (float s) noexcept FCDSP_NONBLOCKING;
 
 // Arithmetic. div and sqrt are IEEE correctly rounded, so bit-equal across arches.
-inline f32x4 add(f32x4 a, f32x4 b) noexcept;
-inline f32x4 sub(f32x4 a, f32x4 b) noexcept;
-inline f32x4 mul(f32x4 a, f32x4 b) noexcept;
-inline f32x4 div(f32x4 a, f32x4 b) noexcept;
-inline f32x4 fma(f32x4 a, f32x4 b, f32x4 c) noexcept;     // a + b*c, one rounding
-inline f32x4 fms(f32x4 a, f32x4 b, f32x4 c) noexcept;     // a - b*c, one rounding
-inline f32x4 min(f32x4 a, f32x4 b) noexcept;
-inline f32x4 max(f32x4 a, f32x4 b) noexcept;
-inline f32x4 abs(f32x4 a) noexcept;                       // exact (sign bit cleared)
-inline f32x4 neg(f32x4 a) noexcept;                       // exact (sign bit flipped)
-inline f32x4 sqrt(f32x4 a) noexcept;
-inline f32x4 floor(f32x4 a) noexcept;                     // exact (round toward -inf)
+inline f32x4 add(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 sub(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 mul(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 div(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 fma(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING;     // a + b*c, one rounding
+inline f32x4 fms(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING;     // a - b*c, one rounding
+inline f32x4 min(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 max(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;
+inline f32x4 abs(f32x4 a) noexcept FCDSP_NONBLOCKING;                       // exact (sign bit cleared)
+inline f32x4 neg(f32x4 a) noexcept FCDSP_NONBLOCKING;                       // exact (sign bit flipped)
+inline f32x4 sqrt(f32x4 a) noexcept FCDSP_NONBLOCKING;
+inline f32x4 floor(f32x4 a) noexcept FCDSP_NONBLOCKING;                     // exact (round toward -inf)
 
 // Newton-Raphson 1/sqrt halves, as the hardware exposes them: r0 = rsqrte(x); r1 = r0 * rsqrts(r0*x, r0).
-inline f32x4 rsqrte(f32x4 x) noexcept;
-inline f32x4 rsqrts(f32x4 p, f32x4 q) noexcept;
+inline f32x4 rsqrte(f32x4 x) noexcept FCDSP_NONBLOCKING;
+inline f32x4 rsqrts(f32x4 p, f32x4 q) noexcept FCDSP_NONBLOCKING;
 
 // Comparison, selection and mask logic.
-inline m32x4 gt  (f32x4 a, f32x4 b) noexcept;             // a > b, per lane
-inline m32x4 ge  (f32x4 a, f32x4 b) noexcept;             // a >= b, per lane
-inline f32x4 sel (m32x4 mask, f32x4 t, f32x4 f) noexcept; // mask ? t : f, per lane
-inline m32x4 band(m32x4 a, m32x4 b) noexcept;             // mask AND
-inline m32x4 bor (m32x4 a, m32x4 b) noexcept;             // mask OR
+inline m32x4 gt  (f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;             // a > b, per lane
+inline m32x4 ge  (f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING;             // a >= b, per lane
+inline f32x4 sel (m32x4 mask, f32x4 t, f32x4 f) noexcept FCDSP_NONBLOCKING; // mask ? t : f, per lane
+inline m32x4 band(m32x4 a, m32x4 b) noexcept FCDSP_NONBLOCKING;             // mask AND
+inline m32x4 bor (m32x4 a, m32x4 b) noexcept FCDSP_NONBLOCKING;             // mask OR
 
 // Lane access; I in [0, 3].
-template <int I> inline float lane(f32x4 v) noexcept;
-template <int I> inline f32x4 withLane(f32x4 v, float s) noexcept;
+template <int I> inline float lane(f32x4 v) noexcept FCDSP_NONBLOCKING;
+template <int I> inline f32x4 withLane(f32x4 v, float s) noexcept FCDSP_NONBLOCKING;
 
 } // namespace fcdsp::simd

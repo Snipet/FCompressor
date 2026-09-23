@@ -5,15 +5,18 @@
 // saved register. EngineHost::process opens one, and so does every analysis:: entry point, so probes, the plugin and
 // the PreviewWorker run in the same FP mode whoever calls them.
 //
-// Frozen at FZ0. F0 declares; F1 (S1) implements (inline asm / _mm_getcsr, allocation- and syscall-free).
+// Frozen at FZ0. F0 declares; F1 (S1) implements (inline asm / _mm_getcsr, allocation- and syscall-free). The
+// constructor and destructor are FCDSP_NONBLOCKING (core/Rt.h; FZ0 errata), because EngineHost::process opens one;
+// F1 may define them inline in this header or out of line (repeating the macro).
 
+#include "fcdsp/core/Rt.h"
 #include <cstdint>
 
 namespace fcdsp {
 
 struct ScopedFtz {
-    ScopedFtz() noexcept;                  // saves the FP control register, then sets flush-to-zero
-    ~ScopedFtz() noexcept;                  // restores the saved register
+    ScopedFtz() noexcept FCDSP_NONBLOCKING;     // saves the FP control register, then sets flush-to-zero
+    ~ScopedFtz() noexcept FCDSP_NONBLOCKING;    // restores the saved register
     ScopedFtz(const ScopedFtz&) = delete;
     ScopedFtz& operator=(const ScopedFtz&) = delete;
 

@@ -4,12 +4,18 @@
 // runs (EngineParams). Pure and thread-agnostic: the audio thread (per block), the UI (per frame), the host text
 // lambdas and the probes all call it. Snap on read: a Mode change never writes a parameter other than `mode`.
 // Sprint-frozen; F2 (S1) implements Resolve.cpp.
+//
+// Pid precondition (FZ0 errata, R-F0 #5): every Pid this header takes (the indexers, snap, stepIndexOf) and every Pid
+// Text.h takes is a MODE-FILTERED Pid, idx(pid) < kNumModeParams (22). RawParams and ParamView hold only those 22
+// values; the indexers assert it. The 7 globals (mode, extkey, listen, delta, bypass, quality, labudget) are never
+// resolved: their host text is formatted by the plugin (Text.h names who formats them).
 
 #include "fcdsp/params/EngineParams.h"
 #include "fcdsp/params/ParamSpec.h"
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Setup.h"
 #include <array>
+#include <cassert>
 #include <cstdint>
 
 namespace fcdsp {
@@ -28,14 +34,17 @@ struct ResolvedParam {
     uint16_t  tag = 0;           // the step's tag
 };
 inline constexpr uint8_t kClamped = 1u << 7;
+static_assert((kClamped & (kFlagExtension | kFlagHwReversed | kFlagProgram | kFlagPlotIsPlain)) == 0,
+              "kClamped (bit 7) must not collide with a SpecFlag: SpecFlag bits 4..6 are the reserved ones (R-F0 #8)");
 
 struct RawParams {                                   // host plain values as the APVTS raw atomics hold them
     std::array<float, kNumModeParams> v{};
     uint8_t modeSlot = 0;                            // effective slot (resolveSlot applied)
     LookaheadBudget budget = LookaheadBudget::off;   // the CONFIGURED budget (what EngineHost runs); every snapshot
                                                      // (Processor::currentRaw(), the audio thread, probes) fills it (K1 #8)
-    float&       operator[](Pid p) noexcept       { return v[idx(p)]; }
-    const float& operator[](Pid p) const noexcept { return v[idx(p)]; }
+    // Mode-filtered Pids only (precondition above; asserted)
+    float&       operator[](Pid p) noexcept       { assert(idx(p) < kNumModeParams); return v[idx(p)]; }
+    const float& operator[](Pid p) const noexcept { assert(idx(p) < kNumModeParams); return v[idx(p)]; }
 };
 
 struct ParamView {
@@ -44,7 +53,8 @@ struct ParamView {
     uint32_t tags = 0;
     std::array<ResolvedParam, kNumModeParams> p{};
     std::array<const ParamSpec*, kNumModeParams> spec{};   // active spec after variants
-    const ResolvedParam& operator[](Pid x) const noexcept { return p[idx(x)]; }
+    // Mode-filtered Pids only (precondition above; asserted)
+    const ResolvedParam& operator[](Pid x) const noexcept { assert(idx(x) < kNumModeParams); return p[idx(x)]; }
 };
 
 struct Resolution { ParamView view; EngineParams eng; };
@@ -53,7 +63,7 @@ struct Snapped { float plain; int8_t step; uint16_t tag; bool clamped; };
 
 // snap() semantics (probe D3, C §5.4):
 //   continuous    clamp(raw, lo, hi), step -1, clamped = raw outside [lo, hi]; soft notches never move the value
-//   stepped       nearest step in kSnapDomain[pid] (log: ln plain; host: toNorm(pid, plain); linear: plain);
+//   stepped       nearest step in snapDomain(pid) (log: ln plain; host: toNorm(pid, plain); linear: plain);
 //                 ties go to the LOWER step; no hysteresis
 //   hybrid        inside [lo, hi]: continuous (SlotState::live); else the nearest of {each step, lo, hi} in the snap
 //                 domain: a range edge clamps, a step is that step (SlotState::stepped)

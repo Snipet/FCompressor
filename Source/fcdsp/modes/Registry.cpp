@@ -6,7 +6,8 @@
 // The raw-slot map (retired -> successor, unassigned -> clean) is computed from the two tables at compile time. Every
 // table is constexpr, so it is constant-initialised: no lazy initialisation, no function-local statics, no static
 // constructors (C D12). With no active line in Modes.def the registry is empty and every lookup is safe: modeSlots()
-// is empty and resolveSlot returns the null ModeSlot{0, "", nullptr} until slot 0 is active.
+// is empty and resolveSlot returns the null ModeSlot{0, "", nullptr} until slot 0 is active. Every lookup is
+// FCDSP_NONBLOCKING (FZ0 errata, R-F0 #1), repeated here from Registry.h.
 
 #include "fcdsp/modes/Registry.h"
 
@@ -112,26 +113,26 @@ constexpr std::array<uint8_t, kModeCapacity> kSlotMap = [] {
 
 namespace fcdsp {
 
-std::span<const ModeSlot> modeSlots() noexcept {
+std::span<const ModeSlot> modeSlots() noexcept FCDSP_NONBLOCKING {
     return { modes::kModeRows, modes::kNumModes };
 }
 
-const ModeEntry* bySlot(int slot) noexcept {
+const ModeEntry* bySlot(int slot) noexcept FCDSP_NONBLOCKING {
     if (slot < 0 || slot >= kModeCapacity) return nullptr;
     const ModeSlot& row = modes::kModeRows[modes::kSlotMap[static_cast<std::size_t>(slot)]];
     return row.slot == slot ? row.entry : nullptr;             // a retired or unassigned slot maps to another row
 }
 
-const ModeEntry* byKey(std::string_view key) noexcept {
+const ModeEntry* byKey(std::string_view key) noexcept FCDSP_NONBLOCKING {
     return modes::kModeRows[modes::findMode(key)].entry;       // the null row's entry is nullptr
 }
 
-const ModeSlot& resolveSlot(int rawSlot) noexcept {
+const ModeSlot& resolveSlot(int rawSlot) noexcept FCDSP_NONBLOCKING {
     if (rawSlot < 0 || rawSlot >= kModeCapacity) return modes::kModeRows[modes::kFallbackRow];
     return modes::kModeRows[modes::kSlotMap[static_cast<std::size_t>(rawSlot)]];
 }
 
-const ModeSlot* resolveKey(std::string_view key) noexcept {
+const ModeSlot* resolveKey(std::string_view key) noexcept FCDSP_NONBLOCKING {
     std::size_t row = modes::findMode(key);
     if (row == modes::kNullRow) {
         const std::size_t r = modes::findRetired(key);
@@ -141,13 +142,13 @@ const ModeSlot* resolveKey(std::string_view key) noexcept {
     return row == modes::kNullRow ? nullptr : &modes::kModeRows[row];
 }
 
-int slotOf(const ModeEntry& entry) noexcept {
+int slotOf(const ModeEntry& entry) noexcept FCDSP_NONBLOCKING {
     for (const ModeSlot& m : modeSlots())
         if (m.entry == &entry) return m.slot;
     return -1;
 }
 
-std::span<const Retired> retired() noexcept {
+std::span<const Retired> retired() noexcept FCDSP_NONBLOCKING {
     return { modes::kRetiredRows, modes::kNumRetired };
 }
 

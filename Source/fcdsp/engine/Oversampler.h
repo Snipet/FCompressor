@@ -12,6 +12,7 @@
 // F6 (S2, the oversampler spike) owns this header after S0: it adds the class's members and bodies and replaces the
 // four latency VALUES below, which then freeze at FZ2 and are v1-forever (targets: STD <= 4, HQ <= 64).
 
+#include "fcdsp/core/Rt.h"
 #include "fcdsp/params/Setup.h"
 #include <cmath>
 
@@ -30,15 +31,18 @@ inline constexpr OsDesign kOs[3] = {        // indexed by Quality
     { 4, kHqLatency, kHqUpDelay },          // HQ
 };
 
+// Real time (FZ0 errata, R-F0 #1): reset, up and down run on the audio thread and are FCDSP_NONBLOCKING; F6's
+// out-of-line definitions repeat the macro. configure allocates and is never called from the audio thread.
 class Oversampler {
 public:
     void configure(Quality, int maxBaseBlock, int channels);            // allocates
-    void reset() noexcept;
-    int  up(const float* const* in, int n, float* const* osOut) noexcept;     // returns n*factor; ONCE per chunk
-    void down(const float* const* osIn, int nOs, float* const* out) noexcept;
+    void reset() noexcept FCDSP_NONBLOCKING;
+    int  up(const float* const* in, int n, float* const* osOut) noexcept FCDSP_NONBLOCKING;   // returns n*factor;
+                                                                                              //   ONCE per chunk
+    void down(const float* const* osIn, int nOs, float* const* out) noexcept FCDSP_NONBLOCKING;
 };
 
-inline int lookaheadSamples(LookaheadBudget b, double fs) noexcept {   // ceil(ms*fs/1000); 0 when off
+inline int lookaheadSamples(LookaheadBudget b, double fs) noexcept FCDSP_NONBLOCKING {   // ceil(ms*fs/1000); 0 = off
     return b == LookaheadBudget::off ? 0 : static_cast<int>(std::ceil(static_cast<double>(budgetMs(b)) * fs / 1000.0));
 }
 

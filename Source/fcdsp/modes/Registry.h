@@ -11,7 +11,12 @@
 // 01 §8.2 names the list function `modes()`, but a function fcdsp::modes cannot coexist with the namespace
 // fcdsp::modes that holds the descriptors and entries (D24; "redefinition of 'modes' as different kind of symbol"),
 // so the list function is `modeSlots()`.
+//
+// Real time (FZ0 errata, R-F0 #1): every lookup is a constant-table read and FCDSP_NONBLOCKING (Registry.cpp repeats
+// the macro), and ModeEntry::construct is a pointer to a nonblocking function, so the host may construct an engine on
+// the audio thread (01 §5.5). The analysis pointers are not on the audio path and are not annotated.
 
+#include "fcdsp/core/Rt.h"
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/params/EngineParams.h"
 #include <cstdint>
@@ -26,7 +31,7 @@ inline constexpr int kModeCapacity = 128;
 
 struct ModeEntry {                                        // one per Mode, defined by FCDSP_DEFINE_MODE in the Mode's TU
     const ModeDescriptor* desc;
-    IEngine* (*construct)(void* arena) noexcept;          // placement-new ModeEngine<T>; RT-safe
+    IEngine* (*construct)(void* arena) noexcept FCDSP_NONBLOCKING;   // placement-new ModeEngine<T>; RT-safe
     uint32_t engineBytes, engineAlign;
     void (*staticGr)(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     void (*scShapeDb)(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
@@ -35,12 +40,14 @@ struct ModeEntry {                                        // one per Mode, defin
 struct ModeSlot { uint8_t slot; std::string_view key; const ModeEntry* entry; };   // registry-owned
 struct Retired  { uint8_t slot; std::string_view key, successor; };
 
-std::span<const ModeSlot> modeSlots() noexcept;           // assigned slots, slot order (01 §8.2's modes())
-const ModeEntry* bySlot(int slot) noexcept;               // nullptr: unassigned or retired
-const ModeEntry* byKey(std::string_view key) noexcept;    // registered keys only
-const ModeSlot&  resolveSlot(int rawSlot) noexcept;       // O(1) constexpr map: retired -> successor; unassigned -> clean
-const ModeSlot*  resolveKey(std::string_view key) noexcept;   // registered, or retired -> successor; nullptr if unknown
-int              slotOf(const ModeEntry&) noexcept;       // for ParamView::slot and telemetry; -1 if not registered
-std::span<const Retired> retired() noexcept;
+std::span<const ModeSlot> modeSlots() noexcept FCDSP_NONBLOCKING;   // assigned slots, slot order (01 §8.2's modes())
+const ModeEntry* bySlot(int slot) noexcept FCDSP_NONBLOCKING;        // nullptr: unassigned or retired
+const ModeEntry* byKey(std::string_view key) noexcept FCDSP_NONBLOCKING;   // registered keys only
+const ModeSlot&  resolveSlot(int rawSlot) noexcept FCDSP_NONBLOCKING;      // O(1) constexpr map: retired ->
+                                                                           //   successor; unassigned -> clean
+const ModeSlot*  resolveKey(std::string_view key) noexcept FCDSP_NONBLOCKING;   // registered, or retired ->
+                                                                                //   successor; nullptr if unknown
+int              slotOf(const ModeEntry&) noexcept FCDSP_NONBLOCKING;  // ParamView::slot, telemetry; -1 = unregistered
+std::span<const Retired> retired() noexcept FCDSP_NONBLOCKING;
 
 } // namespace fcdsp

@@ -8,7 +8,10 @@
 // Ordering: the writer makes seq odd, then (release fence) stores the words, then (release fence) makes seq even. A
 // reader that observed any word of a later publish has, through its acquire fence, also observed that publish's odd
 // seq store, so its re-check fails and the copy is discarded.
+//
+// publish and read are FCDSP_NONBLOCKING (core/Rt.h; FZ0 errata): the audio thread publishes, any thread reads.
 
+#include "fcdsp/core/Rt.h"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -27,7 +30,7 @@ class Seqlock {
 
 public:
     // single writer: memcpy->uint32_t[]; seq+1 (release, odd); release fence; relaxed stores; release fence; seq+1 (even)
-    void publish(const T& value) noexcept {
+    void publish(const T& value) noexcept FCDSP_NONBLOCKING {
         uint32_t w[kWords];
         std::memcpy(w, &value, sizeof(T));
         const uint32_t s = seq_.load(std::memory_order_relaxed);
@@ -41,7 +44,7 @@ public:
 
     // any reader, <= 8 attempts: acquire seq (skip odd); relaxed loads; acquire fence; relaxed re-check; memcpy.
     // false = contention: caller keeps its previous frame
-    bool read(T& out) const noexcept {
+    bool read(T& out) const noexcept FCDSP_NONBLOCKING {
         for (int attempt = 0; attempt < 8; ++attempt) {
             const uint32_t before = seq_.load(std::memory_order_acquire);
             if ((before & 1u) != 0u)

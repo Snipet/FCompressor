@@ -20,7 +20,8 @@
 // processing state (arena slots and PathStates, oversampler, host scratch, configuration) lives in Impl, which
 // EngineHost.cpp defines and configure() allocates; its owners (F4, F7) never edit this header.
 
-#include "fcdsp/engine/IEngine.h"            // FCDSP_NONBLOCKING
+#include "fcdsp/core/Rt.h"
+#include "fcdsp/engine/IEngine.h"
 #include "fcdsp/engine/TestTap.h"
 #include "fcdsp/params/EngineParams.h"
 #include "fcdsp/params/Setup.h"
@@ -39,18 +40,20 @@ struct HostConfig {
     int mainIns = 2, mainOuts = 2, keyChans = 0;       // key 0 = bus inactive
 };
 
+// Every member has a default initialiser (FZ0 errata, R-F0 #7): the processor's "previous BlockParams" (reused while
+// a batch is open, 01 §2.3) is well defined before its first write.
 struct BlockParams {                                   // built by the processor each block (reused while a batch is open)
-    uint8_t slot;                                      // effective Mode slot
-    EngineParams eng;                                  // resolve(slot, raw).eng
-    bool bypass, delta, listen, extKey;
+    uint8_t slot = 0;                                  // effective Mode slot
+    EngineParams eng{};                                // resolve(slot, raw).eng
+    bool bypass = false, delta = false, listen = false, extKey = false;
 };
 
 struct ProcessIo {
-    const float* const* in;  int numIn;                // 1 or 2
-    const float* const* key; int numKey;               // 0, 1 or 2
-    float* const* out;       int numOut;               // 1 or 2; may alias in
-    int n;                                             // any length >= 0; chunked internally
-    bool hostBypassed;                                 // processBlockBypassed path (HR B §1.6)
+    const float* const* in = nullptr;  int numIn = 0;  // 1 or 2
+    const float* const* key = nullptr; int numKey = 0; // 0, 1 or 2
+    float* const* out = nullptr;       int numOut = 0; // 1 or 2; may alias in
+    int n = 0;                                         // any length >= 0; chunked internally
+    bool hostBypassed = false;                         // processBlockBypassed path (HR B §1.6)
 };
 
 class EngineHost {
@@ -62,18 +65,20 @@ public:
 
     // prepareToPlay's thread, or SetupWatcher (message thread) under suspendProcessing(true)
     void configure(const HostConfig&, const BlockParams& initial);   // the ONLY allocation point; engines start snapped
-    static int latencyFor(const HostConfig&) noexcept;              // lookaheadSamples + kOs[quality].latency
-    int    latencySamples() const noexcept;
-    double tailSeconds(const BlockParams&) const noexcept;          // desc.tailSeconds + latency/fs
-    // audio thread; [[clang::nonblocking]] where the compiler supports it (03 §2.10 rtsan)
+    static int latencyFor(const HostConfig&) noexcept FCDSP_NONBLOCKING;   // lookaheadSamples + kOs[quality].latency
+    int    latencySamples() const noexcept FCDSP_NONBLOCKING;
+    double tailSeconds(const BlockParams&) const noexcept;          // desc.tailSeconds + latency/fs (not RT: calls
+                                                                    //   the descriptor's unannotated tailSeconds)
+    // audio thread. FCDSP_NONBLOCKING (core/Rt.h) = [[clang::nonblocking]] where supported (03 §2.10 rtsan); every
+    // out-of-line definition in EngineHost.cpp repeats it (FZ0 errata, R-F0 #1: reset and the any-thread calls too)
     void process(const ProcessIo&, const BlockParams&) noexcept FCDSP_NONBLOCKING;
-    void reset() noexcept;
-    // any thread
-    void requestSnap() noexcept;                       // release store; consumed (acquire) at the next block START
-    void setUiAttached(bool attached) noexcept;        // editor ctor(true)/dtor(false); a COUNT, not a bool
-    bool readUiFrame(UiFrame&) const noexcept;         // <= 8 seqlock attempts
-    const HistoryRing& history() const noexcept;
-    void setTap(TestTap*) noexcept;                    // probes only; nullptr = off; loaded once per block (K1 #6, K2 #2)
+    void reset() noexcept FCDSP_NONBLOCKING;
+    // any thread, the audio thread included: lock-free
+    void requestSnap() noexcept FCDSP_NONBLOCKING;     // release store; consumed (acquire) at the next block START
+    void setUiAttached(bool attached) noexcept FCDSP_NONBLOCKING;   // editor ctor(true)/dtor(false); a COUNT
+    bool readUiFrame(UiFrame&) const noexcept FCDSP_NONBLOCKING;    // <= 8 seqlock attempts
+    const HistoryRing& history() const noexcept FCDSP_NONBLOCKING;
+    void setTap(TestTap*) noexcept FCDSP_NONBLOCKING;  // probes only; nullptr = off; loaded once per block (K1 #6, K2 #2)
 
 private:
     struct Impl;                                       // EngineHost.cpp: everything the audio path owns
