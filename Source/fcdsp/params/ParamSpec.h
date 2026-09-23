@@ -7,6 +7,7 @@
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/core/Units.h"          // TimeLaw
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <span>
 
@@ -59,7 +60,8 @@ enum SpecFlag : uint8_t {
     kFlagProgram    = 1u << 2,       // locked/derived value is nominal; UI prints live EFF from UiFrame
     kFlagPlotIsPlain = 1u << 3,      // the TRANSFER plot's value for this param IS its plain value (identity DisplayMap):
                                      // knee/range handles may drag absolutely (02 §6.5). Clean sets it on thr/knee/range.
-    // bits 4..7 reserved.
+    // bits 4..6 reserved; bit 7 is kClamped (Resolve.h: ResolvedParam::flags = ParamSpec::flags | kClamped), so it
+    // is never a SpecFlag (FZ0 errata, R-F0 #8; static_assert in Resolve.h).
 };
 
 struct ParamSpec {
@@ -90,10 +92,10 @@ struct ParamEntry {
     std::span<const Variant> variants{};
 };
 
-struct ParamTable {
+struct ParamTable {                                 // Mode-filtered Pids only: idx(p) < kNumModeParams (asserted)
     std::array<ParamEntry, kNumModeParams> e{};
-    constexpr ParamEntry&       operator[](Pid p)       noexcept { return e[idx(p)]; }
-    constexpr const ParamEntry& operator[](Pid p) const noexcept { return e[idx(p)]; }
+    constexpr ParamEntry&       operator[](Pid p)       noexcept { assert(idx(p) < kNumModeParams); return e[idx(p)]; }
+    constexpr const ParamEntry& operator[](Pid p) const noexcept { assert(idx(p) < kNumModeParams); return e[idx(p)]; }
 };
 
 } // namespace fcdsp

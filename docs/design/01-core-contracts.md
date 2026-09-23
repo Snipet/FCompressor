@@ -40,7 +40,7 @@ Tags:
 | Level | Contents | May change |
 |---|---|---|
 | **v1-forever** | Host parameter string IDs, plain ranges, normalised maps, defaults, `kApvtsOrder` (§3.2), the Mode slot table (`Modes.def`), `modeId` keys, the state XML layout, the preset payload format, `kStdLatency`/`kHqLatency` (§5.6), and — once a Mode is listed in `tests/fixtures/modes-ever.tsv` — that Mode's step `plain` values and `DisplayMap`s | Never after the v1 tag. The only allowed change is appending a parameter with a new version hint and a neutral default (HR pattern, B §1.2). |
-| **Sprint-frozen** | `Pid`, `Setup.h`, `ParamSpec`/`Step`/`ModeDescriptor`, `resolve()` semantics, `EngineParams`, stage concepts (incl. `FbAffine`), `IEngine`/`Carry`/`ControlIo`/`EngineTelemetry`/`AudioIo`, `TestTap`, `EngineHost` public API, `DefineMode.h`, `UiFrame`, `HistoryColumn`, the analysis signatures, `Source/plugin/ProcessorFacade.h` (02 §9.5) | Only through a lead-approved revision of this document between sprints, at the freeze points FZ0–FZ4 (03 §4.9). Agents never change them inside a sprint. |
+| **Sprint-frozen** | `Pid`, `Setup.h`, `ParamSpec`/`Step`/`ModeDescriptor`, `resolve()` semantics, `EngineParams`, stage concepts (incl. `FbAffine` and, FZ0 errata, `LevelCtl` and `ScShapePolicy`), `core/Rt.h`'s `FCDSP_NONBLOCKING` rule (§2.2 rule 6), `IEngine`/`Carry`/`ControlIo`/`EngineTelemetry`/`AudioIo`, `TestTap`, `EngineHost` public API, `DefineMode.h`, `UiFrame`, `HistoryColumn`, the analysis signatures, `Source/plugin/ProcessorFacade.h` (02 §9.5) | Only through a lead-approved revision of this document between sprints, at the freeze points FZ0–FZ4 (03 §4.9). Agents never change them inside a sprint. |
 | **Owner-local** | Stage policy internals, [H] constants, Mode `physical()` bodies, colour shapers | Freely, by the owning agent, covered by probes and goldens. **Exception (K2 #10):** once a Mode is in `modes-ever.tsv`, a change that moves its `dsp.print.<key>` default hash requires `ModeDescriptor::revision++` and an entry in `docs/modes/<key>.md` (§9.1). |
 
 Before the v1 tag, v1-forever items can still change, because no user session exists yet. They are written here as if
@@ -157,6 +157,17 @@ Targets (the full table, with link lines, is 03 §2.7):
    exempt; the analysis functions that must be bit-identical to the audio path call the policies, so they inherit the
    rule.
 5. Nothing under `Source/fcdsp` has a function-local static, a lazily initialised global or a static constructor (C D12).
+6. **Real-time annotation (FZ0 errata, review R-F0 #1).** `Source/fcdsp/core/Rt.h` defines `FCDSP_NONBLOCKING`
+   (`[[clang::nonblocking]]` where supported, else empty); `Simd.h` and every header that uses it include it (it moved
+   out of `IEngine.h`, so `core/` can use it without an upward include). Every declaration the audio thread reaches
+   carries it: `EngineHost::process`/`reset` and its any-thread calls, **every** `IEngine` virtual including
+   `~IEngine`, and each `ModeEngine` override, `ModeEngine::construct` and the `ModeEntry::construct` pointer type,
+   the registry lookups, `Oversampler::reset/up/down`, `lookaheadSamples`, and the core helpers (`Simd` ops,
+   `FastMath`, `lawFactor`/`alphaFromTau`, `ScopedFtz`, `sanitize`, `Smoother4`, `LinearRamp`, `ControlTicker`,
+   `Seqlock`, `HistoryRing`). Virtual calls, calls through function pointers and calls to out-of-line definitions
+   cannot be inferred, so those declarations must carry it; an out-of-line definition repeats it. Stage policies and
+   Traits hooks are header-inline, so `-Wfunction-effects` (rtsan preset, `fcdsp` only) infers them; they may carry it
+   explicitly. The macro sits after `noexcept` and before `override`, `= 0`, `= default` or the body.
 
 `ProcessorFacade` (defined in 02 §9.5) exposes `port(Pid)`, `currentRaw()`, `readUiFrame`, `history()`,
 `setUiAttached`, `uiState()`, `stateNotice()`, `beginBatch/endBatch` and `presets()`. The registry is reached through
@@ -284,16 +295,26 @@ inline constexpr std::array<Pid, kNumModeParams> kResolveOrder {
     Pid::s2thr, Pid::s2atk, Pid::s2rel };
 
 // Snap domain for stepped values (E §4.2.3): midpoints in this domain; ties go to the LOWER step.
+// FZ0 errata (R-F0 #4): keyed by NAME, so regrouping Pid can never move a parameter into another domain.
 enum class SnapDomain : uint8_t { linear, log, host };
-inline constexpr std::array<SnapDomain, kNumModeParams> kSnapDomain {
-    /*thr*/SnapDomain::linear, /*ratio: S*/SnapDomain::linear, /*knee*/SnapDomain::linear, /*range*/SnapDomain::linear,
-    /*atk*/SnapDomain::log, /*rel*/SnapDomain::log, /*tmode*/SnapDomain::linear, /*hold*/SnapDomain::linear,
-    /*look*/SnapDomain::linear, /*det*/SnapDomain::linear, /*schpf*/SnapDomain::host, /*sce*/SnapDomain::linear,
-    /*link*/SnapDomain::linear, /*stmode*/SnapDomain::linear, /*voice*/SnapDomain::linear, /*drive*/SnapDomain::linear,
-    /*makeup*/SnapDomain::linear, /*automu*/SnapDomain::linear, /*mix*/SnapDomain::linear, /*s2thr*/SnapDomain::linear,
-    /*s2atk*/SnapDomain::log, /*s2rel*/SnapDomain::log };
+constexpr SnapDomain snapDomain(Pid p) noexcept {
+    switch (p) {
+        case Pid::atk: case Pid::rel: case Pid::s2atk: case Pid::s2rel: return SnapDomain::log;   // ln(plain)
+        case Pid::schpf:                                                return SnapDomain::host;  // toNorm(schpf, plain)
+        default:                                                        return SnapDomain::linear;
+    }
+}
+inline constexpr std::array<SnapDomain, kNumModeParams> kSnapDomain = [] {   // GENERATED: kSnapDomain[idx(p)] == snapDomain(p)
+    std::array<SnapDomain, kNumModeParams> t{};
+    for (std::size_t i = 0; i < kNumModeParams; ++i) t[i] = snapDomain(static_cast<Pid>(i));
+    return t;
+}();
 }
 ```
+
+**FZ0 errata (R-F0 #4).** Draft 1's `kSnapDomain` was a positional table checked against nothing: moving `hold` ahead
+of `atk` in `Pid` would have snapped `atk` in the linear domain without a compile error. `snapDomain(Pid)` is now the
+source of truth; `kSnapDomain` survives only as a table generated from it.
 
 `Source/fcdsp/params/Setup.h` holds the two setup enums, so that `RawParams` (§4.4), `EngineHost` (§5.4) and the
 processor share them without including the engine:
@@ -403,7 +424,9 @@ enum SpecFlag : uint8_t {
     kFlagProgram    = 1u << 2,       // locked/derived value is nominal; UI prints live EFF from UiFrame
     kFlagPlotIsPlain = 1u << 3,      // the TRANSFER plot's value for this param IS its plain value (identity DisplayMap):
                                      // knee/range handles may drag absolutely (02 §6.5). Clean sets it on thr/knee/range.
-    // bit 4..7 reserved. (Draft 1's kFlagLatchWord is deleted: the layout owns the words, 02 §6.4; K1 #23.)
+    // bits 4..6 reserved; bit 7 is kClamped (§4.4: ResolvedParam::flags = ParamSpec::flags | kClamped), never a
+    // SpecFlag (FZ0 errata, R-F0 #8; static_assert in Resolve.h). (Draft 1's kFlagLatchWord is deleted: the layout
+    // owns the words, 02 §6.4; K1 #23.)
 };
 
 struct ParamSpec {
@@ -434,10 +457,10 @@ struct ParamEntry {
     std::span<const Variant> variants{};
 };
 
-struct ParamTable {
+struct ParamTable {                                 // Mode-filtered Pids only (FZ0 errata, R-F0 #5; asserted)
     std::array<ParamEntry, kNumModeParams> e{};
-    constexpr ParamEntry&       operator[](Pid p)       noexcept { return e[idx(p)]; }
-    constexpr const ParamEntry& operator[](Pid p) const noexcept { return e[idx(p)]; }
+    constexpr ParamEntry&       operator[](Pid p)       noexcept { assert(idx(p) < kNumModeParams); return e[idx(p)]; }
+    constexpr const ParamEntry& operator[](Pid p) const noexcept { assert(idx(p) < kNumModeParams); return e[idx(p)]; }
 };
 }
 ```
@@ -576,14 +599,17 @@ struct ResolvedParam {
     uint16_t  tag = 0;           // the step's tag
 };
 inline constexpr uint8_t kClamped = 1u << 7;
+static_assert((kClamped & (kFlagExtension | kFlagHwReversed | kFlagProgram | kFlagPlotIsPlain)) == 0);   // R-F0 #8
 
+// FZ0 errata (R-F0 #5): every Pid taken here and in Text.h is Mode-filtered, idx(pid) < kNumModeParams; the
+// indexers assert it (the 7 globals are never resolved).
 struct RawParams {                                   // host plain values as the APVTS raw atomics hold them
     std::array<float, kNumModeParams> v{};
     uint8_t modeSlot = 0;                            // effective slot (resolveSlot applied)
     LookaheadBudget budget = LookaheadBudget::off;   // the CONFIGURED budget (what EngineHost runs); every snapshot
                                                      // (Processor::currentRaw(), the audio thread, probes) fills it (K1 #8)
-    float&       operator[](Pid p) noexcept       { return v[idx(p)]; }
-    const float& operator[](Pid p) const noexcept { return v[idx(p)]; }
+    float&       operator[](Pid p) noexcept       { assert(idx(p) < kNumModeParams); return v[idx(p)]; }
+    const float& operator[](Pid p) const noexcept { assert(idx(p) < kNumModeParams); return v[idx(p)]; }
 };
 
 struct ParamView {
@@ -592,7 +618,7 @@ struct ParamView {
     uint32_t tags = 0;
     std::array<ResolvedParam, kNumModeParams> p{};
     std::array<const ParamSpec*, kNumModeParams> spec{};   // active spec after variants
-    const ResolvedParam& operator[](Pid x) const noexcept { return p[idx(x)]; }
+    const ResolvedParam& operator[](Pid x) const noexcept { assert(idx(x) < kNumModeParams); return p[idx(x)]; }
 };
 
 struct Resolution { ParamView view; EngineParams eng; };
@@ -618,7 +644,7 @@ namespace kit { void physicalDefault(const ParamView&, EngineParams&) noexcept; 
 | Kind | Result |
 |---|---|
 | continuous | `clamp(raw, lo, hi)`, `step = −1`, `clamped = raw ∉ [lo, hi]`. Soft notches never move the value. |
-| stepped | The nearest step in `kSnapDomain[pid]`: log uses `ln(plain)`, host uses `toNorm(pid, plain)`, linear uses plain. Ties go to the **lower** step. There is no hysteresis, so snapping is deterministic. For SSL 2/4/10 in S, the boundaries fall at S = 0.625 and S = 0.825, as E §4.2.3 gives. |
+| stepped | The nearest step in `snapDomain(pid)` (§3.2): log uses `ln(plain)`, host uses `toNorm(pid, plain)`, linear uses plain. Ties go to the **lower** step. There is no hysteresis, so snapping is deterministic. For SSL 2/4/10 in S, the boundaries fall at S = 0.625 and S = 0.825, as E §4.2.3 gives. |
 | hybrid | If `lo ≤ raw ≤ hi`, it is continuous (`SlotState::live`). Otherwise the nearest of {each step, `lo`, `hi`} in the snap domain wins. A range edge means clamp. A step means that step (`SlotState::stepped`, K1 #32). |
 | locked | `value` (+ step 0 when there is a one-step span) |
 | notApplicable | `value` |
@@ -677,6 +703,15 @@ bool parseHost(const ModeEntry&, const RawParams& current, Pid, std::string_view
 }
 ```
 
+**Precondition (FZ0 errata, R-F0 #5).** Every function above takes a **Mode-filtered** `Pid`,
+`idx(pid) < kNumModeParams`: `RawParams` and `ParamView` hold only those 22 values, and their indexers assert it.
+`formatHost`/`parseHost` are never called for the 7 globals; the plugin's host-text glue (`plugin/HostText.cpp`, P1)
+formats those itself:
+- `mode`: the Mode's name from the registry, `resolveSlot(slot).entry->desc->name` (the entry is `nullptr` on the null
+  row, before slot 0 is registered);
+- `quality`, `labudget`: `kHostParams[idx(pid)].choices` ("ECO"/"STD"/"HQ", "OFF"/"5 MS"/"20 MS");
+- `extkey`, `listen`, `delta`, `bypass`: "OFF"/"ON" (`kit::kOffOn`'s labels).
+
 - **n/a** prints "–" (U+2013, the same glyph the UI draws; K1 #15).
 - **Locked** prints "(10 MS)".
 - **Derived** prints "(= 0.8 MS)".
@@ -696,10 +731,16 @@ This is safe from any thread (E §4.3; `getText` from background threads is exer
 
 ### 5.1 Core (Source/fcdsp/core)
 
+**`Rt.h`** (FZ0 errata, R-F0 #1) holds `FCDSP_NONBLOCKING` (§2.2 rule 6), so `core/` can annotate without including
+`engine/`. Every function declared in `core/` is `FCDSP_NONBLOCKING`; F1 (S1) adds the bodies and may define the
+non-SIMD ones inline in their headers (preferred for the per-sample `Smoother4::tick`, `LinearRamp::tick` and
+`ControlTicker::advance`, which keeps them inlinable in non-LTO agent builds) or out of line, repeating the macro.
+
 **`Simd.h`** extends HR's `Simd.h` (namespace `fcdsp::simd`; macros `FCDSP_SIMD_NEON`/`FCDSP_SIMD_SSE`; `#error` without FMA).
 - **Type:** `f32x4` is a type alias, not a wrapper class. Lanes = `{ch0, ch1, aux0, aux1}` (E §3.2).
 - **Ops kept from HR:** `load, store, set1, add, sub, mul, fma(a,b,c)=a+b·c, fms, rsqrte, rsqrts`.
 - **Ops added:** `div, min, max, abs, neg, sqrt, floor, gt, ge, sel(mask, t, f), band, bor, lane<i>(v), withLane<i>(v, s)`.
+- Every op is declared `inline … noexcept FCDSP_NONBLOCKING` and `Simd.h` includes `Rt.h` (FZ0 errata, R-F0 #1).
 - NaN semantics differ between NEON and x86 `min`/`max`. Input sanitisation (§5.8), the floors and the poison check keep NaN out; `dsp.simd` pins the policy.
 - The SSE backend compiles in every sprint-end `lead-x86` build but has never executed on this Mac (no Rosetta). v1 therefore ships arm64-only unless an x86 verify has passed (03 §5, K2 #15).
 
@@ -709,6 +750,7 @@ This is safe from any thread (E §4.3; `getText` from background threads is exer
 namespace fcdsp {
 inline constexpr float kDbPerLog2 = 6.02059991f, kLog2PerDb = 0.166096404f;
 inline constexpr float kLinFloor = 1e-12f /*−240 dB*/, kMsFloor = 1e-24f;
+// Every declaration below carries FCDSP_NONBLOCKING (FZ0 errata, R-F0 #1); shown once here for brevity.
 simd::f32x4 log2(simd::f32x4) noexcept;     // minimax poly; |err| ≤ 4e-6 (refit target 4e-7)
 simd::f32x4 exp2(simd::f32x4) noexcept;     // input clamped to [−126, 126]; rel err ≤ 9e-5 (refit target 1e-5)
 float log2(float) noexcept;                 // == lane 0 of the vector form, bit-identical
@@ -731,12 +773,12 @@ inline simd::f32x4 linFromDb(simd::f32x4 db)   noexcept;   // exp2(db · kLog2Pe
 namespace fcdsp {
 inline constexpr float kDbuAt0dBFS = 22.0f;                              // fixed calibration (§3.1)
 enum class TimeLaw : uint8_t { expDb, expLin, t10_90, t0_90, t50, rateDbPerS };   // E §2.3
-float lawFactor(TimeLaw) noexcept;         // t_published / tau: 1, 1, ln9, ln10, ln2; rate → n/a
-float alphaFromTau(float tauMs, float fs) noexcept;   // exp2(−1000/(tauMs·fs·ln2)); tauMs ≤ 0 → 0
+constexpr float lawFactor(TimeLaw) noexcept FCDSP_NONBLOCKING;   // t_published / tau: 1, 1, ln9, ln10, ln2; rate → 1
+inline float alphaFromTau(float tauMs, float fs) noexcept FCDSP_NONBLOCKING;   // exp2(−1000/(tauMs·fs·ln2)); tauMs ≤ 0 → 0
 }
 ```
 
-**`ScopedFtz.h`** is HR's `ScopedFtz` (Harness.h:50-72), made JUCE-free: FPCR bit 24 on arm64, MXCSR 0x8040 on x86. **`EngineHost::process` opens one itself**, and so does every `analysis::` entry point (K2 #24), so probes, the plugin and `PreviewWorker` run in the same FP mode no matter who calls them. The processor keeps `juce::ScopedNoDenormals` as well, which does no harm.
+**`ScopedFtz.h`** is HR's `ScopedFtz` (Harness.h:50-72), made JUCE-free: FPCR bit 24 on arm64, MXCSR 0x8040 on x86. Its constructor and destructor are `FCDSP_NONBLOCKING` (FZ0 errata). **`EngineHost::process` opens one itself**, and so does every `analysis::` entry point (K2 #24), so probes, the plugin and `PreviewWorker` run in the same FP mode no matter who calls them. The processor keeps `juce::ScopedNoDenormals` as well, which does no harm.
 
 **`Sanitize.h`** (K2 #13):
 
@@ -744,7 +786,7 @@ float alphaFromTau(float tauMs, float fs) noexcept;   // exp2(−1000/(tauMs·fs
 namespace fcdsp {
 // Before ANY delay line or filter: NaN/inf → 0 (bit test (bits & 0x7f800000) != 0x7f800000), then clamp |x| ≤ 1e6
 // (+120 dBFS). Returns how many samples were replaced or clamped (→ UiFrame kUiPoisonReset notice when > 0).
-int sanitize(const float* in, float* out, int n) noexcept;
+int sanitize(const float* in, float* out, int n) noexcept FCDSP_NONBLOCKING;
 }
 ```
 
@@ -752,27 +794,38 @@ int sanitize(const float* in, float* out, int n) noexcept;
 
 ```cpp
 namespace fcdsp {
+// Every member is FCDSP_NONBLOCKING (FZ0 errata, R-F0 #1).
 struct Smoother4 {                          // four independent per-sample one-poles, tau 20 ms, epsilon landing (HR smoothSnap)
     simd::f32x4 cur, tgt, a, eps;
-    void prepare(float fs, float tauMs = 20.f, simd::f32x4 eps = simd::set1(1e-5f)) noexcept;
-    void setTarget(simd::f32x4 t) noexcept { tgt = t; }
-    void snap() noexcept { cur = tgt; }
-    simd::f32x4 tick() noexcept;            // cur = tgt + a·(cur − tgt); lands exactly when |cur − tgt| < eps
+    void prepare(float fs, float tauMs = 20.f, simd::f32x4 eps = simd::set1(1e-5f)) noexcept FCDSP_NONBLOCKING;
+    void setTarget(simd::f32x4 t) noexcept FCDSP_NONBLOCKING { tgt = t; }
+    void snap() noexcept FCDSP_NONBLOCKING { cur = tgt; }
+    simd::f32x4 tick() noexcept FCDSP_NONBLOCKING;   // cur = tgt + a·(cur − tgt); lands exactly when |cur − tgt| < eps
 };
 struct LinearRamp {                         // 0…1 amount, linear, fixed length; lands exactly on 0 and 1
     float cur = 0, tgt = 0, step = 0;
-    void prepare(float fs, float ms = 20.f) noexcept;
-    void setTarget(float t) noexcept;  float tick() noexcept;  bool moving() const noexcept;
+    void prepare(float fs, float ms = 20.f) noexcept FCDSP_NONBLOCKING;
+    void setTarget(float t) noexcept FCDSP_NONBLOCKING;  float tick() noexcept FCDSP_NONBLOCKING;
+    bool moving() const noexcept FCDSP_NONBLOCKING;
 };
 struct ControlTicker {                      // true every kTickSamples at ABSOLUTE sample index multiples
     uint64_t next = 0;
-    bool advance(uint64_t sampleIndex) noexcept;
+    bool advance(uint64_t sampleIndex) noexcept FCDSP_NONBLOCKING;
 };
 inline constexpr int kTickSamples = 16;
 }
 ```
 
-- **Per sample, in the engine:** `lvl_ = Smoother4{thrDb, slope, min(rangeDb, 60), –}` and `lvl2_ = Smoother4{clamp(s2ThrDb, −40, 24), kneeDb, –, –}` (K2 #20: sentinels are finite range ends, never 1000). Two `LinearRamp`s: `offAmt_` multiplies the target GR and ramps to 0 over 20 ms while `kEngGrOff` is set, so GR OFF never steps (K2 #4 iii); `s2On_` does the same for stage 2 (`s2ThrDb ≥ kS2Off` = off).
+- **Per sample, in the engine:** `lvl_ = Smoother4{thrDb, slope, min(rangeDb, 60), –}` and `lvl2_ = Smoother4{clamp(s2ThrDb, −40, 24), kneeDb, –, –}` (K2 #20: sentinels are finite range ends, never 1000).
+  - **FZ0 errata (R-F0 #2): they reach the policies as a per-sample `LevelCtl`** (§5.2). Each sample,
+    `a = lvl_.tick()`, `b = lvl2_.tick()`, and `l = LevelCtl{bcast<0>(a), bcast<1>(a), bcast<1>(b), bcast<0>(b)}`
+    (`thrDb, slope, kneeDb, s2ThrDb`; `bcast<I>(v) = set1(lane<I>(v))`, one DUP on NEON); `range = bcast<2>(a)`.
+    `G::target`/`G::solveFb` and `S2::combine` take `l`; `design()` never bakes those four into `Coeffs`, so
+    threshold, ratio, knee and stage-2 threshold moves are smoothed per sample, never stepped per tick, and never force
+    a per-sample `design()`. `ModeEngine::staticGr` (analysis) builds `l` unsmoothed from the same targets,
+    `{set1(thrDb), set1(slope), set1(kneeDb), set1(clamp(s2ThrDb, −40, 24))}`, so the settled engine (the smoothers
+    land exactly) and `staticGr` agree bit for bit.
+  - Two `LinearRamp`s: `offAmt_` multiplies the target GR and ramps to 0 over 20 ms while `kEngGrOff` is set, so GR OFF never steps (K2 #4 iii); `s2On_` does the same for stage 2 (`s2ThrDb ≥ kS2Off` = off).
 - **Per sample, in the host, per path** (`PathState::gain`, §5.5): `{preGainDb, makeupTotalDb (= makeupDb + that engine's autoMakeupDb()), –, –}`. **Host-level:** `mix_` (Smoother4 lane 0, the incoming Mode's value); `bypass_`, `listen_`, `delta_` and the fade weight are `LinearRamp`s of 20 ms. `driveDb` is smoothed per tick by each engine's colour stage, so each path keeps its own.
 - **Per tick:** attack/release/hold τ (smoothed in the log domain), Stage-2 times, the SC filter coefficients (host, via `tanPi`).
 - **At the next tick, unsmoothed:** step tags and `tmode`. Ballistics state is continuous across a coefficient step (E §4.6). Tag flips that change gain (GR OFF, Stage-2 OFF, AUTO) are ramped as above, and `dsp.zipper` has detent-edge rows for every stepped and hybrid parameter (K2 #4 iv).
@@ -782,12 +835,27 @@ inline constexpr int kTickSamples = 16;
 
 Every stage is a POD `State` of `f32x4` members, plus a `Coeffs` struct, plus `static` functions (E §3.3). Engines own no resources, so destroying one is a trivial `~IEngine()` (E §3.5).
 
+**Two rates (FZ0 errata, R-F0 #2).** `design()` runs on control ticks only and fills `Coeffs` from `EngineParams`;
+it never bakes a `LevelCtl` quantity into `Coeffs`. Threshold, slope, knee and stage-2 threshold arrive **per sample**
+as a `LevelCtl`, built by `ModeEngine` from its smoothers (§5.1). Draft 1's concepts gave the smoothed values no way
+to reach the gain computer or stage 2, so F3 would have had to call `design()` per sample or step them every 16
+samples (zipper), and every later computer would have had to guess the workaround.
+
 ```cpp
 namespace fcdsp {
-struct StageCtx { float fs; float fsOs; int osFactor; std::span<float> scratch; };
+struct StageCtx { float fs = 0; float fsOs = 0; int osFactor = 1; std::span<float> scratch{}; };
+
+// Per-sample level controls (FZ0 errata, R-F0 #2): smoothed, each value broadcast to all four lanes by ModeEngine;
+// built unsmoothed from EngineParams by ModeEngine::staticGr.
+struct LevelCtl {
+    simd::f32x4 thrDb{};      // detector-domain threshold, dB (after preGain)
+    simd::f32x4 slope{};      // S = 1 − 1/R
+    simd::f32x4 kneeDb{};     // knee width W, dB
+    simd::f32x4 s2ThrDb{};    // stage-2 threshold, dB: clamp(s2ThrDb, −40, kS2Off)
+};
 
 template <class P> concept Designable = requires (typename P::Coeffs& c, const EngineParams& p, const StageCtx& x) {
-    { P::design(c, p, x) } noexcept;                       // runs on control ticks only
+    { P::design(c, p, x) } noexcept;                       // control ticks only; never bakes a LevelCtl field
 };
 
 template <class D> concept DetectorPolicy = Designable<D> &&
@@ -802,14 +870,16 @@ requires (const typename D::Coeffs& c, typename D::State& s, simd::f32x4 v) {
 struct FbAffine { simd::f32x4 A, B; };
 
 template <class G> concept GainComputerPolicy = Designable<G> &&
-requires (const typename G::Coeffs& c, simd::f32x4 x, FbAffine a) {
-    { G::target(c, x) } noexcept -> std::same_as<simd::f32x4>;          // FF, pure: r̂ ≥ 0 at detector level x
-    { G::solveFb(c, x, a) } noexcept -> std::same_as<simd::f32x4>;      // FB: THE root of r = A + B·r̂(x − r);
+requires (const typename G::Coeffs& c, simd::f32x4 x, const LevelCtl& l, FbAffine a) {
+    { G::target(c, x, l) } noexcept -> std::same_as<simd::f32x4>;       // FF, pure: r̂ ≥ 0 at detector level x
+    { G::solveFb(c, x, l, a) } noexcept -> std::same_as<simd::f32x4>;   // FB: THE root of r = A + B·r̂(x − r);
                                                                          // a = {0, 1} → the static FB curve
 };
 
 template <class L> concept LinkPolicy =
-requires (simd::f32x4 r) { { L::apply(r, 0.5f) } noexcept -> std::same_as<simd::f32x4>; };   // lanes 0–1 only
+requires (simd::f32x4 r, float link) {
+    { L::apply(r, link) } noexcept -> std::same_as<simd::f32x4>;         // apply(r, link): lanes 0–1 only;
+};                                                                       //   link = EngineParams::link ∈ [0, 1]
 
 namespace detail { struct FbSolveArchetype { simd::f32x4 operator()(FbAffine) const noexcept; }; }   // declared only
 
@@ -826,24 +896,42 @@ requires (const typename B::Coeffs& c, typename B::State& s, simd::f32x4 v, deta
 };
 
 template <class S2> concept Stage2Policy = Designable<S2> &&
-requires (const typename S2::Coeffs& c, typename S2::State& s, simd::f32x4 v) {
-    { S2::combine(c, s, v, v) } noexcept -> std::same_as<simd::f32x4>;  // (r1, xDb) → r; s2 GR in aux lanes
+requires (const typename S2::Coeffs& c, typename S2::State& s, simd::f32x4 r1, simd::f32x4 xDb, const LevelCtl& l) {
+    { S2::combine(c, s, r1, xDb, l) } noexcept -> std::same_as<simd::f32x4>;   // (r1, xDb, l) → r; s2 GR in aux lanes
+    { S2::seed(s, r1) } noexcept;                                              // from Carry::s2GrDb (FZ0 errata)
+};
+
+// Mode-internal SC shaping (FZ0 errata, R-F0 #3): Flat, R37Shelf, SlowHp, Thrust. Per sample on the linear SC after
+// the host filters (ControlIo::sc), before the detector; magDb feeds scShapeDb / analysis::scResponse.
+template <class S> concept ScShapePolicy = Designable<S> &&
+requires (const typename S::Coeffs& c, typename S::State& s, simd::f32x4 v, float hz, float fs) {
+    { S::tick(c, s, v) } noexcept -> std::same_as<simd::f32x4>;          // tick(c, s, sc) → shaped sc, linear
+    { S::magDb(c, hz, fs) } noexcept -> std::same_as<float>;             // |H(hz)| in dB at rate fs
 };
 
 template <class C> concept ColourPolicy = Designable<C> &&
-requires (const typename C::Coeffs& c, typename C::State& s, float* x, const float* gr, int n) {
-    { C::process(c, s, x, gr, n, 0) } noexcept;                          // in place, OS rate, one channel
-    { C::transfer(c, 0.f, 0.f) } noexcept -> std::same_as<float>;        // static shape for the COLOUR view
+requires (const typename C::Coeffs& c, typename C::State& s, float* x, const float* grDb, int n, int channel,
+          float xIn, float grIn) {
+    { C::process(c, s, x, grDb, n, channel) } noexcept;   // process(c, s, x, grDb, n, channel): in place, OS rate,
+                                                          //   one channel; channel = 0 or 1 (the wet/grDbOs row and
+                                                          //   col_[] index), never a drive: drive is in Coeffs
+    { C::transfer(c, xIn, grIn) } noexcept -> std::same_as<float>;   // transfer(c, x, grDb) → y (COLOUR view)
     { C::reset(s) } noexcept;
 };
 }
 ```
 
-**The FB step, per sample, inside `ModeEngine::control` (K2 #1, #5):**
+FZ0 errata (R-F0 #3): `Stage2Policy` gains `seed` (a Mode switch with stage 2 engaged seeds it from `Carry::s2GrDb`
+instead of restarting at 0 dB and overshooting during the fade); `ScShapePolicy` is new; `ModeEngine` asserts
+`LinkPolicy` and `ScShapePolicy` too (§5.3); the colour and link arguments are named.
+
+**The per-sample step inside `ModeEngine::control` (K2 #1, #5), with `l` the sample's `LevelCtl` (§5.1):**
 
 ```cpp
-x = D::tick(dc_, det_, sc[i]);                                  // detector-law dB of the (pre-gained) input
-auto solve = [&](FbAffine a) noexcept { return G::solveFb(gc_, x, a); };
+v = SH::tick(shc_, sh_, sc[i]);                                  // Mode-internal SC shaping (linear)
+x = D::tick(dc_, det_, v);                                       // detector-law dB of the (pre-gained) input
+// FB:
+auto solve = [&](FbAffine a) noexcept { return G::solveFb(gc_, x, l, a); };
 r = B::solveFb(bc_, bal_, solve);                                // per lane; several branches → max of roots
 r = L::apply(r, p_.link);                                        // link AFTER the per-lane solve (lanes 0–1)
 B::commitFb(bc_, bal_, r);                                       // the linked value becomes the next state
@@ -863,8 +951,10 @@ B::commitFb(bc_, bal_, r);                                       // the linked v
 - **Link in FB (K2 #5b)** is applied after the per-lane solve and before `commitFb`. `max` and `mean` are
   non-expansive, so each lane stays a contraction; partial link (Bus 25 OLD) needs no 2-D solve. Static curves use the
   per-lane solve. `dsp.link.<key>` has an FB steady-state row.
-- The FF step is `x = D::tick; r̂ = G::target(x); r̂ = L::apply(r̂, link); r = B::tick(r̂)` (link on targets, E §8).
-  Then, for both topologies: `r = S2::combine(r, x)`, `r = min(r, rangeSmoothed)`, `r ·= offAmt_`.
+- The FF step is `x = D::tick; r̂ = G::target(x, l); r̂ = L::apply(r̂, link); r = B::tick(r̂)` (link on targets,
+  E §8). Then, for both topologies: `r = S2::combine(r, x, l)`, `r = min(r, rangeSmoothed)`, `r ·= offAmt_`.
+- **Real time.** Every policy function is called from `ModeEngine`'s `FCDSP_NONBLOCKING` members. Policies are
+  header-inline, so `-Wfunction-effects` infers them; annotating them `FCDSP_NONBLOCKING` is recommended (§2.2 rule 6).
 
 **Policy catalogue** (E §3.3). Names are fixed now; bodies belong to their owners. **One policy per header** at
 `Source/fcdsp/engine/stages/<slot>/<Policy>.h`; combinators in `stages/combinators/`; no umbrella headers — a traits
@@ -891,58 +981,67 @@ inline constexpr int    kChunk = 64;              // base-rate samples per contr
 inline constexpr size_t kArenaBytes = 8192;       // per slot, alignas(64) (E §3.6)
 inline constexpr int    kInternals = 16;          // UiFrame words; a descriptor declares ≤ 8 (words 8–15 reserved)
 
-struct PrepareInfo { float fs; int osFactor; std::span<float> scratch; };   // scratch: host-owned, per arena slot
+struct PrepareInfo { float fs = 0; int osFactor = 1; std::span<float> scratch{}; };   // scratch: host-owned, per slot
 
 enum class LaneDomain : uint8_t { lr = 0, ms = 1 };
+// FZ0 errata (R-F0 #7): every member has a default initialiser, so `Carry c;` is a well-defined cold start (the
+// same for ControlIo, AudioIo, EngineTelemetry and PrepareInfo). Layout unchanged: 64 bytes.
 struct Carry {                                    // Mode/kernel switch hand-over, lanes {c0, c1, aux0, aux1}
-    simd::f32x4 grDb;                             // applied GR (≥ 0)
-    simd::f32x4 detDb;                            // detector level, detector-law dB
-    simd::f32x4 s2GrDb;
-    float    relNowMs[2];                         // lets a program-dependent Mode seed its memory term
-    uint8_t  msDomain;                            // LaneDomain of lanes 0–1 in the outgoing engine (K2 #3d)
-    uint8_t  pad[3];
-    uint32_t valid;                               // 0 = cold start (seed() is then a no-op)
+    simd::f32x4 grDb{};                           // applied GR (≥ 0)                   → Ballistics::seed
+    simd::f32x4 detDb{};                          // detector level, detector-law dB    → Detector::seed
+    simd::f32x4 s2GrDb{};                         // stage-2 GR, 0 without stage 2      → Stage2::seed
+    float    relNowMs[2]{};                       // lets a program-dependent Mode seed its memory term
+    uint8_t  msDomain = 0;                        // LaneDomain of lanes 0–1 in the outgoing engine (K2 #3d)
+    uint8_t  pad[3]{};
+    uint32_t valid = 0;                           // 0 = cold start (seed() is then a no-op)
 };
+static_assert(sizeof(Carry) == 64 && alignof(Carry) == 16);
 
 // Engine status bits per sample, in HistoryColumn::bits layout (§6.3): b0–1 phase of the max-GR lane
 // (0 idle, 1 attack, 2 hold, 3 release), b2 auto-slow, b3 range-limited, b4 stage-2 active.
 struct ControlIo {
-    int n;                                        // 1..kChunk
-    uint64_t sampleIndex;                         // absolute index of sample 0 (ControlTicker)
-    const simd::f32x4* sc;                        // [n] linear SC after host filters, preGain and encode
-    simd::f32x4* grDb;                            // [n] out: applied GR per lane (lanes 0–1 consumed by host)
-    simd::f32x4* detDb;                           // [n] out or nullptr (tap/telemetry): curve-axis level + preGain
-    simd::f32x4* tgtDb;                           // [n] out or nullptr: static target GR (post link)
-    simd::f32x4* s2GrDb;                          // [n] out or nullptr
-    uint8_t* bits;                                // [n] out or nullptr: status bits above (replaces Draft 1's `phase`)
-    bool keyExternal;                             // FB kernels evaluate FF on the key (E §2.6); part of the kernel key
+    int n = 0;                                    // 1..kChunk
+    uint64_t sampleIndex = 0;                     // absolute index of sample 0 (ControlTicker)
+    const simd::f32x4* sc = nullptr;              // [n] linear SC after host filters, preGain and encode
+    simd::f32x4* grDb = nullptr;                  // [n] out: applied GR per lane (lanes 0–1 consumed by host)
+    simd::f32x4* detDb = nullptr;                 // [n] out or nullptr (tap/telemetry): curve-axis level + preGain
+    simd::f32x4* tgtDb = nullptr;                 // [n] out or nullptr: static target GR (post link)
+    simd::f32x4* s2GrDb = nullptr;                // [n] out or nullptr
+    uint8_t* bits = nullptr;                      // [n] out or nullptr: status bits above (replaces Draft 1's `phase`)
+    bool keyExternal = false;                     // FB kernels evaluate FF on the key (E §2.6); part of the kernel key
 };
 
-struct EngineTelemetry { float attackNowMs[2], releaseNowMs[2], crestDb[2]; };   // lanes 0–1, end of the last chunk
+struct EngineTelemetry {                          // lanes 0–1, end of the last chunk
+    float attackNowMs[2]{}, releaseNowMs[2]{}, crestDb[2]{};
+};
 
 struct AudioIo {
-    int nOs;                                      // samples at the OS rate
-    float* const* wet;                            // [2][nOs] in: upsampled delayed main × g (g includes this path's
+    int nOs = 0;                                  // samples at the OS rate
+    float* const* wet = nullptr;                  // [2][nOs] in: upsampled delayed main × g (g includes this path's
                                                   //   preGain, §5.4), encoded; out: coloured (pre-makeup)
-    const float* const* grDbOs;                   // [2][nOs] applied GR interpolated to the OS rate
+    const float* const* grDbOs = nullptr;         // [2][nOs] applied GR interpolated to the OS rate
 };
 
+// FZ0 errata (R-F0 #1): EVERY member is FCDSP_NONBLOCKING, the destructor included. The host constructs, prepares,
+// seeds, runs and destroys engines on the audio thread (§5.5), and a virtual call cannot be inferred.
 class IEngine {                                   // one virtual call per chunk, never per sample (E §3.6)
 public:
-    virtual ~IEngine() = default;                 // trivial: engines own no resources
-    virtual void  prepare(const PrepareInfo&) noexcept = 0;   // math only; allocation-free; runs the FB stability guard
-    virtual void  reset() noexcept = 0;
-    virtual void  setParams(const EngineParams&) noexcept = 0;   // per block: smoother targets
-    virtual void  snapParams() noexcept = 0;                     // recall: jump smoothers to targets
-    virtual Carry carry() const noexcept = 0;
-    virtual void  seed(const Carry&) noexcept = 0;
-    virtual void  control(const ControlIo&) noexcept = 0;
-    virtual void  colour(const AudioIo&) noexcept = 0;
-    virtual float autoMakeupDb() const noexcept = 0;             // 0 unless kEngAutoMakeup (E §2.2: r̂(0 dBFS)·k)
-    virtual int   scDelaySamples() const noexcept = 0;           // the engine's own SC delay (true-peak interpolator), else 0
-    virtual void  internals(float out[kInternals]) const noexcept = 0;
-    virtual void  telemetry(EngineTelemetry&) const noexcept = 0; // K3 #11
-    virtual bool  finite() const noexcept = 0;                   // poison check (§5.8)
+    virtual ~IEngine() FCDSP_NONBLOCKING = default;                       // engines own no resources
+    virtual void  prepare(const PrepareInfo&) noexcept FCDSP_NONBLOCKING = 0;   // math only; allocation-free; runs
+                                                                               //   the FB stability guard
+    virtual void  reset() noexcept FCDSP_NONBLOCKING = 0;
+    virtual void  setParams(const EngineParams&) noexcept FCDSP_NONBLOCKING = 0;   // per block: smoother targets
+    virtual void  snapParams() noexcept FCDSP_NONBLOCKING = 0;                     // recall: jump smoothers to targets
+    virtual Carry carry() const noexcept FCDSP_NONBLOCKING = 0;
+    virtual void  seed(const Carry&) noexcept FCDSP_NONBLOCKING = 0;               // Detector/Ballistics/Stage2::seed
+    virtual void  control(const ControlIo&) noexcept FCDSP_NONBLOCKING = 0;
+    virtual void  colour(const AudioIo&) noexcept FCDSP_NONBLOCKING = 0;
+    virtual float autoMakeupDb() const noexcept FCDSP_NONBLOCKING = 0;   // 0 unless kEngAutoMakeup (E §2.2: r̂(0 dBFS)·k)
+    virtual int   scDelaySamples() const noexcept FCDSP_NONBLOCKING = 0; // the engine's own SC delay (true-peak
+                                                                         //   interpolator), else 0
+    virtual void  internals(float out[kInternals]) const noexcept FCDSP_NONBLOCKING = 0;
+    virtual void  telemetry(EngineTelemetry&) const noexcept FCDSP_NONBLOCKING = 0;   // K3 #11
+    virtual bool  finite() const noexcept FCDSP_NONBLOCKING = 0;                      // poison check (§5.8)
 };
 
 // A Mode = one directory with a Traits header (E §3.5). Example shape, Source/fcdsp/modes/fet-76/Fet76.h:
@@ -956,14 +1055,16 @@ struct Fet76 {
     using Colour     = stage::ColourSelect<stage::FetColour>;     // voice picks the revision's constants
     using ScShape    = stage::Flat;                               // Mode-internal SC shaping (not the host filter)
     static constexpr uint8_t kTopologies = 1u << kTopoFB;         // kernels compiled in (bitmask)
-    static void internals(const auto& engine, float out[kInternals]) noexcept;
+    static void internals(const auto& engine, float out[kInternals]) noexcept FCDSP_NONBLOCKING;   // reads privates
 };
 
 template <class M>
 class ModeEngine final : public IEngine {
     static_assert(DetectorPolicy<typename M::Detector> && GainComputerPolicy<typename M::Computer> &&
-                  BallisticsPolicy<typename M::Ballistics> && Stage2Policy<typename M::Stage2> &&
-                  ColourPolicy<typename M::Colour>);
+                  LinkPolicy<typename M::Link> && BallisticsPolicy<typename M::Ballistics> &&
+                  Stage2Policy<typename M::Stage2> && ColourPolicy<typename M::Colour> &&
+                  ScShapePolicy<typename M::ScShape>);                        // FZ0 errata (R-F0 #3): + Link, ScShape
+    friend M;                     // FZ0 errata (R-F0 #6): M::internals(engine, out) reads the members below by name
     alignas(16) typename M::Detector::State   det_{};
     alignas(16) typename M::Ballistics::State bal_{};
     alignas(16) typename M::Stage2::State     s2_{};
@@ -971,14 +1072,14 @@ class ModeEngine final : public IEngine {
     typename M::Detector::Coeffs dc_{}; typename M::Computer::Coeffs gc_{};
     typename M::Ballistics::Coeffs bc_{}; typename M::Stage2::Coeffs s2c_{}; typename M::Colour::Coeffs cc_{};
     typename M::ScShape::State sh_{}; typename M::ScShape::Coeffs shc_{};
-    Smoother4 lvl_{}, lvl2_{};        // {thrDb, slope, min(rangeDb,60), –}, {s2ThrDb, kneeDb, –, –}
+    Smoother4 lvl_{}, lvl2_{};        // {thrDb, slope, min(rangeDb,60), –}, {s2ThrDb, kneeDb, –, –} → LevelCtl (§5.1)
     LinearRamp offAmt_{}, s2On_{};
     EngineParams p_{}; ControlTicker tick_{}; StageCtx ctx_{};
 public:
-    static IEngine* construct(void* arena) noexcept;         // placement-new; RT-safe
-    void control(const ControlIo& io) noexcept override;     // loop: tick → design; FF or FB step (§5.2);
-                                                             // branch per CHUNK on p_.topo
-    // … the other overrides forward to the policies
+    static IEngine* construct(void* arena) noexcept FCDSP_NONBLOCKING;   // placement-new; RT-safe
+    void control(const ControlIo& io) noexcept FCDSP_NONBLOCKING override;   // loop: tick → design; FF or FB step
+                                                                             // (§5.2); branch per CHUNK on p_.topo
+    // … the other overrides forward to the policies; each repeats FCDSP_NONBLOCKING (FZ0 errata, R-F0 #1)
     // Analysis entry points (instantiated from the SAME policies; §7):
     static void staticGr(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     static void scShapeDb(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
@@ -988,6 +1089,10 @@ public:
 }
 ```
 
+- **Traits hooks (FZ0 errata, R-F0 #6).** `friend M;` lets the Traits' `internals` hook read `det_`, `bal_`, `s2_`,
+  `col_`, `sh_`, the `Coeffs`, `lvl_`/`lvl2_` and `p_` through its `const auto&` (Clean's REL EFF, CREST and PEAK/RMS
+  DET, FET's LOOP CV). The member names are therefore part of this frozen declaration. The hook is header-inline and
+  must be nonblocking: `ModeEngine::internals` calls it on the audio thread.
 - **Lanes (E §3.2).** Lanes 0–1 are the channels, as L/R or M/S after encoding. Lanes 2–3 carry *independent* recurrences: crest detectors, the Stage-2 detector and ballistics, or a second link-shape detector. Serial chains, such as DualRelease's `r_f → r_s`, are never packed.
 - **FB (E §2.6).** The loop senses `ℓ(filter(x)) − r`; §5.2 gives the per-sample step and the affine solve.
   - `FeedbackDelayed<G>` (a one-sample-delay loop) is allowed only for the opto cell, whose fastest τ ≈ 10 ms is non-ringing at any k (E §2.7). The guard `k ≤ α/(1−α)` depends on fs and on the level-dependent loop gain, so it is **not** a `static_assert` (K2 #5c): `prepare()` computes the bound at the actual fs for the worst-case loop gain, and if it is violated the engine switches that kernel to `FeedbackZdf`. `dsp.srsweep.opto-2a` has a 22.05 kHz stability row.
@@ -1011,18 +1116,20 @@ struct HostConfig {
     int mainIns = 2, mainOuts = 2, keyChans = 0;       // key 0 = bus inactive
 };
 
+// FZ0 errata (R-F0 #7): default initialisers, so the processor's "previous BlockParams" (reused while a batch is
+// open, §2.3) is well defined before its first write.
 struct BlockParams {                                   // built by the processor each block (reused while a batch is open)
-    uint8_t slot;                                      // effective Mode slot
-    EngineParams eng;                                  // resolve(slot, raw).eng
-    bool bypass, delta, listen, extKey;
+    uint8_t slot = 0;                                  // effective Mode slot
+    EngineParams eng{};                                // resolve(slot, raw).eng
+    bool bypass = false, delta = false, listen = false, extKey = false;
 };
 
 struct ProcessIo {
-    const float* const* in;  int numIn;                // 1 or 2
-    const float* const* key; int numKey;               // 0, 1 or 2
-    float* const* out;       int numOut;               // 1 or 2; may alias in
-    int n;                                             // any length ≥ 0; chunked internally
-    bool hostBypassed;                                 // processBlockBypassed path (HR B §1.6)
+    const float* const* in = nullptr;  int numIn = 0;  // 1 or 2
+    const float* const* key = nullptr; int numKey = 0; // 0, 1 or 2
+    float* const* out = nullptr;       int numOut = 0; // 1 or 2; may alias in
+    int n = 0;                                         // any length ≥ 0; chunked internally
+    bool hostBypassed = false;                         // processBlockBypassed path (HR B §1.6)
 };
 
 class EngineHost {
@@ -1031,18 +1138,19 @@ public:
     ~EngineHost();
     // prepareToPlay's thread, or SetupWatcher (message thread) under suspendProcessing(true)
     void configure(const HostConfig&, const BlockParams& initial);   // the ONLY allocation point; engines start snapped
-    static int latencyFor(const HostConfig&) noexcept;              // lookaheadSamples + kOs[quality].latency
-    int    latencySamples() const noexcept;
-    double tailSeconds(const BlockParams&) const noexcept;          // desc.tailSeconds + latency/fs
-    // audio thread; [[clang::nonblocking]] where the compiler supports it (03 §2.10 rtsan)
-    void process(const ProcessIo&, const BlockParams&) noexcept;
-    void reset() noexcept;
-    // any thread
-    void requestSnap() noexcept;                       // release store; consumed (acquire) at the next block START
-    void setUiAttached(bool attached) noexcept;        // editor ctor(true)/dtor(false); a COUNT, not a bool
-    bool readUiFrame(UiFrame&) const noexcept;         // ≤ 8 seqlock attempts
-    const HistoryRing& history() const noexcept;
-    void setTap(TestTap*) noexcept;                    // probes only; nullptr = off; loaded once per block (K1 #6, K2 #2)
+    static int latencyFor(const HostConfig&) noexcept FCDSP_NONBLOCKING;   // lookaheadSamples + kOs[quality].latency
+    int    latencySamples() const noexcept FCDSP_NONBLOCKING;
+    double tailSeconds(const BlockParams&) const noexcept;          // desc.tailSeconds + latency/fs (not RT)
+    // audio thread. FCDSP_NONBLOCKING = [[clang::nonblocking]] where supported (03 §2.10 rtsan); EngineHost.cpp repeats
+    // it on every definition (FZ0 errata, R-F0 #1: reset and the any-thread calls too)
+    void process(const ProcessIo&, const BlockParams&) noexcept FCDSP_NONBLOCKING;
+    void reset() noexcept FCDSP_NONBLOCKING;
+    // any thread, the audio thread included: lock-free
+    void requestSnap() noexcept FCDSP_NONBLOCKING;     // release store; consumed (acquire) at the next block START
+    void setUiAttached(bool attached) noexcept FCDSP_NONBLOCKING;   // editor ctor(true)/dtor(false); a COUNT
+    bool readUiFrame(UiFrame&) const noexcept FCDSP_NONBLOCKING;    // ≤ 8 seqlock attempts
+    const HistoryRing& history() const noexcept FCDSP_NONBLOCKING;
+    void setTap(TestTap*) noexcept FCDSP_NONBLOCKING;  // probes only; nullptr = off; loaded once per block (K1 #6, K2 #2)
 };
 }
 ```
@@ -1110,7 +1218,7 @@ inline constexpr float kMinFadeGapMs = 50.f;          // between crossfade START
 
 1. The request (a new `KernelKey`) is seen at a block start.
 2. `bySlot(slot)->construct(idleArena)` placement-constructs the engine. Then `prepare`, `setParams`, `snapParams`. This is bounded and allocation-free. The new path's `gain` smoother is snapped to its targets.
-3. `seed(active->carry())`. The new ballistics take the old applied GR per lane, and the new detector takes the old level in its own domain (dB → mean-square for RMS, → G for opto through the inverse law). **Domain rule:** if `carry.msDomain` differs from the new engine's lane domain, every lane of `grDb`, `detDb` and `s2GrDb` takes `max(lane0, lane1)` of the old engine first, which never under-compresses (K2 #3d).
+3. `seed(active->carry())`. The new ballistics take the old applied GR per lane, the new detector takes the old level in its own domain (dB → mean-square for RMS, → G for opto through the inverse law), and the new stage 2 takes `Carry::s2GrDb` through `Stage2::seed` (FZ0 errata, R-F0 #3), so a switch with stage 2 engaged does not restart it from 0 dB. Every call in steps 2–5 is `FCDSP_NONBLOCKING` (`construct` through the `ModeEntry` pointer, the `IEngine` virtuals, `~IEngine`; R-F0 #1). **Domain rule:** if `carry.msDomain` differs from the new engine's lane domain, every lane of `grDb`, `detDb` and `s2GrDb` takes `max(lane0, lane1)` of the old engine first, which never under-compresses (K2 #3d).
 4. Both run for 20 ms (`kFadeMs`). The outgoing path keeps running on its frozen `eng` and its own preGain and makeup, so neither path is driven by the other Mode's gain staging (K2 #3a–b). `mix` stays host-level (the incoming value), because it is applied after the blend. A newer request during the fade, or within `kMinFadeGapMs` of the last start, is latched, and only the latest is kept.
 5. The old engine is destroyed with a plain `~IEngine()` and the path pointers are swapped.
 
@@ -1131,14 +1239,14 @@ inline constexpr OsDesign kOs[3] = {
                                              //      group delay equals kStdLatency within 0.01 samples up to 1 kHz (K2 #11a)
     { 4, kHqLatency, kHqUpDelay },           // HQ : 4× = two cascaded linear-phase FIR halfbands, integer delay by construction
 };
-class Oversampler {
+class Oversampler {                          // FZ0 errata (R-F0 #1): reset/up/down are FCDSP_NONBLOCKING
 public:
     void configure(Quality, int maxBaseBlock, int channels);            // allocates
-    void reset() noexcept;
-    int  up(const float* const* in, int n, float* const* osOut) noexcept;     // returns n·factor; ONCE per chunk
-    void down(const float* const* osIn, int nOs, float* const* out) noexcept;
+    void reset() noexcept FCDSP_NONBLOCKING;
+    int  up(const float* const* in, int n, float* const* osOut) noexcept FCDSP_NONBLOCKING;   // n·factor; ONCE per chunk
+    void down(const float* const* osIn, int nOs, float* const* out) noexcept FCDSP_NONBLOCKING;
 };
-inline int lookaheadSamples(LookaheadBudget b, double fs) noexcept {   // ceil(ms·fs/1000); 0 when off
+inline int lookaheadSamples(LookaheadBudget b, double fs) noexcept FCDSP_NONBLOCKING {   // ceil(ms·fs/1000); 0 when off
     return b == LookaheadBudget::off ? 0 : int(std::ceil(budgetMs(b) * fs / 1000.0)); }
 }
 ```
@@ -1196,10 +1304,10 @@ class Seqlock {
     std::array<std::atomic<uint32_t>, kWords> words_{};
 public:
     // single writer: memcpy→uint32_t[]; seq+1 (release, odd); release fence; relaxed stores; release fence; seq+1 (even)
-    void publish(const T&) noexcept;
+    void publish(const T&) noexcept FCDSP_NONBLOCKING;          // FZ0 errata (R-F0 #1)
     // any reader, ≤ 8 attempts: acquire seq (skip odd); relaxed loads; acquire fence; relaxed re-check; memcpy.
     // false = contention: caller keeps its previous frame
-    bool read(T&) const noexcept;
+    bool read(T&) const noexcept FCDSP_NONBLOCKING;
 };
 }
 ```
@@ -1287,6 +1395,7 @@ static_assert(sizeof(HistoryColumn) == 32);
 class HistoryRing {
 public:
     static constexpr uint32_t kCapacity = 4096;          // 4.1 s; power of two; 128 KiB of atomic words
+    // every member FCDSP_NONBLOCKING (FZ0 errata, R-F0 #1)
     void push(const HistoryColumn&) noexcept;            // audio thread ONLY (claim-word protocol below)
     uint64_t written() const noexcept;                   // acquire
     // Reader (one editor): copies columns [from, written()) into out, oldest first, at most out.size().
@@ -1431,7 +1540,7 @@ namespace fcdsp {
 inline constexpr int kModeCapacity = 128;
 struct ModeEntry {                                        // one per Mode, defined by FCDSP_DEFINE_MODE in the Mode's TU
     const ModeDescriptor* desc;
-    IEngine* (*construct)(void* arena) noexcept;          // placement-new ModeEngine<T>; RT-safe
+    IEngine* (*construct)(void* arena) noexcept FCDSP_NONBLOCKING;   // placement-new ModeEngine<T>; RT-safe (R-F0 #1)
     uint32_t engineBytes, engineAlign;
     void (*staticGr)(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     void (*scShapeDb)(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
@@ -1440,13 +1549,14 @@ struct ModeEntry {                                        // one per Mode, defin
 struct ModeSlot { uint8_t slot; std::string_view key; const ModeEntry* entry; };   // registry-owned
 struct Retired  { uint8_t slot; std::string_view key, successor; };
 
-std::span<const ModeSlot> modeSlots() noexcept;           // assigned slots, slot order (FZ0 errata: was modes(), which clashes with namespace fcdsp::modes)
-const ModeEntry* bySlot(int slot) noexcept;               // nullptr: unassigned or retired
-const ModeEntry* byKey(std::string_view key) noexcept;    // registered keys only
-const ModeSlot&  resolveSlot(int rawSlot) noexcept;       // O(1) constexpr map: retired → successor; unassigned → clean
-const ModeSlot*  resolveKey(std::string_view key) noexcept;   // registered, or retired → successor; nullptr if unknown
-int              slotOf(const ModeEntry&) noexcept;       // for ParamView::slot and telemetry
-std::span<const Retired> retired() noexcept;
+// FZ0 errata (R-F0 #1): every lookup is a constant-table read and FCDSP_NONBLOCKING (Registry.cpp repeats it).
+std::span<const ModeSlot> modeSlots() noexcept FCDSP_NONBLOCKING;   // assigned slots, slot order (FZ0 errata: was modes(), which clashes with namespace fcdsp::modes)
+const ModeEntry* bySlot(int slot) noexcept FCDSP_NONBLOCKING;               // nullptr: unassigned or retired
+const ModeEntry* byKey(std::string_view key) noexcept FCDSP_NONBLOCKING;    // registered keys only
+const ModeSlot&  resolveSlot(int rawSlot) noexcept FCDSP_NONBLOCKING;       // O(1) constexpr map: retired → successor; unassigned → clean
+const ModeSlot*  resolveKey(std::string_view key) noexcept FCDSP_NONBLOCKING;   // registered, or retired → successor; nullptr if unknown
+int              slotOf(const ModeEntry&) noexcept FCDSP_NONBLOCKING;       // for ParamView::slot and telemetry
+std::span<const Retired> retired() noexcept FCDSP_NONBLOCKING;
 }
 
 // Source/fcdsp/modes/DefineMode.h — frozen at FZ0. Used as the last line of modes/<key>/<Traits>.cpp:

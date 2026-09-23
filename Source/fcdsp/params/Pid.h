@@ -43,14 +43,25 @@ inline constexpr std::array<Pid, kNumModeParams> kResolveOrder {
     Pid::s2thr, Pid::s2atk, Pid::s2rel };
 
 // Snap domain for stepped values (E §4.2.3): midpoints in this domain; ties go to the LOWER step.
+//   linear  plain (thr, ratio as S, knee, ...: every Pid not named below)
+//   log     ln(plain): the four times atk, rel, s2atk, s2rel
+//   host    toNorm(pid, plain): schpf (its power map)
+// FZ0 errata (R-F0 #4): keyed by NAME, so regrouping Pid can never move a parameter into another domain. It replaces
+// the positional kSnapDomain table; kSnapDomain remains as a table GENERATED from snapDomain() (snap() may index it).
 enum class SnapDomain : uint8_t { linear, log, host };
-inline constexpr std::array<SnapDomain, kNumModeParams> kSnapDomain {
-    /*thr*/SnapDomain::linear, /*ratio: S*/SnapDomain::linear, /*knee*/SnapDomain::linear, /*range*/SnapDomain::linear,
-    /*atk*/SnapDomain::log, /*rel*/SnapDomain::log, /*tmode*/SnapDomain::linear, /*hold*/SnapDomain::linear,
-    /*look*/SnapDomain::linear, /*det*/SnapDomain::linear, /*schpf*/SnapDomain::host, /*sce*/SnapDomain::linear,
-    /*link*/SnapDomain::linear, /*stmode*/SnapDomain::linear, /*voice*/SnapDomain::linear, /*drive*/SnapDomain::linear,
-    /*makeup*/SnapDomain::linear, /*automu*/SnapDomain::linear, /*mix*/SnapDomain::linear, /*s2thr*/SnapDomain::linear,
-    /*s2atk*/SnapDomain::log, /*s2rel*/SnapDomain::log };
+constexpr SnapDomain snapDomain(Pid p) noexcept {
+    switch (p) {
+        case Pid::atk: case Pid::rel: case Pid::s2atk: case Pid::s2rel: return SnapDomain::log;
+        case Pid::schpf:                                                return SnapDomain::host;
+        default:                                                        return SnapDomain::linear;
+    }
+}
+inline constexpr std::array<SnapDomain, kNumModeParams> kSnapDomain = [] {   // kSnapDomain[idx(p)] == snapDomain(p)
+    std::array<SnapDomain, kNumModeParams> t{};
+    for (std::size_t i = 0; i < kNumModeParams; ++i)
+        t[i] = snapDomain(static_cast<Pid>(i));
+    return t;
+}();
 
 namespace detail {
 // True when `order` names each of the first N Pids exactly once.

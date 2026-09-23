@@ -14,7 +14,9 @@
 //           never delivered.
 // Writer rules: push only while attached; on a 0 -> 1 attach transition the host resets its column accumulator and
 // sets bits.b5 on the next column; written_ is monotonic for the life of the host object and is never reset.
+// Every member is FCDSP_NONBLOCKING (core/Rt.h; FZ0 errata).
 
+#include "fcdsp/core/Rt.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -45,7 +47,7 @@ public:
     static_assert((kCapacity & (kCapacity - 1)) == 0);
 
     // Audio thread ONLY (claim-word protocol above).
-    void push(const HistoryColumn& c) noexcept {
+    void push(const HistoryColumn& c) noexcept FCDSP_NONBLOCKING {
         const uint64_t j = written_.load(std::memory_order_relaxed);
         claim_.store(j, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);          // the claim is ordered before the data
@@ -57,13 +59,13 @@ public:
         written_.store(j + 1, std::memory_order_release);
     }
 
-    uint64_t written() const noexcept { return written_.load(std::memory_order_acquire); }
+    uint64_t written() const noexcept FCDSP_NONBLOCKING { return written_.load(std::memory_order_acquire); }
 
     // Reader (one editor): copies columns [from, written()) into out, oldest first, at most out.size().
     // Returns the index of the first column delivered. It is > from if the writer lapped the reader (gap).
     // Columns the writer may have overwritten during the copy are dropped (claim check above), never delivered torn.
     // The next read starts at the returned index + count.
-    uint64_t read(uint64_t from, std::span<HistoryColumn> out, uint32_t& count) const noexcept {
+    uint64_t read(uint64_t from, std::span<HistoryColumn> out, uint32_t& count) const noexcept FCDSP_NONBLOCKING {
         count = 0;
         const uint64_t w = written_.load(std::memory_order_acquire);
         if (from >= w || out.empty())
@@ -90,7 +92,7 @@ public:
 private:
     static constexpr std::size_t kColumnWords = sizeof(HistoryColumn) / 4;   // 8
 
-    void load(uint64_t i, HistoryColumn& out) const noexcept {
+    void load(uint64_t i, HistoryColumn& out) const noexcept FCDSP_NONBLOCKING {
         uint32_t w[kColumnWords];
         const std::size_t base = static_cast<std::size_t>(i & (kCapacity - 1)) * kColumnWords;
         for (std::size_t k = 0; k < kColumnWords; ++k)
