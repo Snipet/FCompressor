@@ -18,4 +18,16 @@ struct ControlTicker {                      // true every kTickSamples at ABSOLU
 
 inline constexpr int kTickSamples = 16;
 
+// Body (F1, S1). The first call ticks (a new or reset engine designs its coefficients on its first sample, next = 0);
+// after that, ticks fall on the absolute multiples of kTickSamples, whatever the host block size. sampleIndex never
+// decreases between resets (ControlTicker{} starts over); a skipped index still ticks at the next call.
+inline bool ControlTicker::advance(uint64_t sampleIndex) noexcept FCDSP_NONBLOCKING
+{
+    constexpr uint64_t k = static_cast<uint64_t>(kTickSamples);
+    if (sampleIndex < next)
+        return false;
+    next = sampleIndex - sampleIndex % k + k;
+    return true;
+}
+
 } // namespace fcdsp

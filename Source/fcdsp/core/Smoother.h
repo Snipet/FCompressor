@@ -35,4 +35,48 @@ struct LinearRamp {                         // 0...1 amount, linear, fixed lengt
     bool moving() const noexcept FCDSP_NONBLOCKING;
 };
 
+// ---- Bodies (F1, S1) -------------------------------------------------------------------------------------------------
+// prepare() is out of line (Smoother.cpp); the per-sample members are inline here.
+//
+// Smoother4::prepare(fs, tauMs, epsilon) sets a = alphaFromTau(tauMs, fs) in every lane and eps; it does not move cur
+// or tgt. tick() lands a lane exactly on its target when |cur - tgt| < eps OR when the one-pole has stalled: once
+// (1 - a) * |cur - tgt| is below half an ulp of the value, tgt + a*(cur - tgt) rounds back to cur and a float one-pole
+// never gets closer (HR's reason for smoothSnap's eps, there at block rate). Per sample, with a 20 ms tau, that stall
+// sits far above any practical eps (at 48 kHz 1 - a = 1.04e-3: a -40 dB target stalls 1.8e-3 dB short, a slope near 1
+// about 3e-5 short; 4x that at 192 kHz), so without the stall test the smoothers would never land and the settled
+// engine would not match analysis::staticGr bit for bit (01 §5.1). The landing step is below
+// max(eps, ulp(value) / (2 (1 - a))): 0.015 dB for a 60 dB value at 384 kHz (dsp.units).
+//
+// LinearRamp: step = 1000 / (ms * fs), or 1 (instant) when the ramp is shorter than a sample or ms/fs is <= 0 or NaN;
+// prepare() keeps cur and tgt. tick() moves cur toward tgt by step and clamps onto it, so it lands exactly (on 0 and 1,
+// or any target in between) after ms * fs / 1000 samples, give or take one for the float accumulation.
+
+inline simd::f32x4 Smoother4::tick() noexcept FCDSP_NONBLOCKING
+{
+    const simd::f32x4 d = simd::sub(cur, tgt);
+    const simd::f32x4 next = simd::fma(tgt, a, d);                     // tgt + a*(cur - tgt), one rounding
+    const simd::m32x4 stalled = simd::band(simd::ge(next, cur), simd::ge(cur, next));
+    cur = simd::sel(simd::bor(simd::gt(eps, simd::abs(d)), stalled), tgt, next);
+    return cur;
+}
+
+inline void LinearRamp::setTarget(float t) noexcept FCDSP_NONBLOCKING { tgt = t; }
+
+inline float LinearRamp::tick() noexcept FCDSP_NONBLOCKING
+{
+    if (cur < tgt)
+    {
+        const float up = cur + step;
+        cur = up < tgt ? up : tgt;
+    }
+    else if (cur > tgt)
+    {
+        const float down = cur - step;
+        cur = down > tgt ? down : tgt;
+    }
+    return cur;
+}
+
+inline bool LinearRamp::moving() const noexcept FCDSP_NONBLOCKING { return cur != tgt; }
+
 } // namespace fcdsp
