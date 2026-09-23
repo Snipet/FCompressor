@@ -1,8 +1,8 @@
 // FCMP_PROBE layer=dsp name=hostile scope=mode timeout=60
 //
-// dsp.hostile.<key> (F4, S3; D10: 03 §3.4 Host rows, C §5.8; 01 §5.8; K2 #13): hostile input through
-// fcdsp::EngineHost at ECO, each case next to a control instance fed the clean program. The editor is attached, so
-// every block's UiFrame is read back (single-threaded here: the read always succeeds).
+// dsp.hostile.<key> (F4, S3; F7, S6; D10: 03 §3.4 Host rows, C §5.8; 01 §5.8; K2 #13): hostile input through
+// fcdsp::EngineHost at ECO (and, from S6, STD and HQ), each case next to a control instance fed the clean program. The
+// editor is attached, so every block's UiFrame is read back (single-threaded here: the read always succeeds).
 //
 // Program: 1.5 s at 48 kHz, blocks of 512: L = 110 Hz at -6 dBFS, R = 220 Hz at -9 dBFS, at the Mode's defaults
 // (about 9 dB of GR on Clean). Injections start at 0.5 s (sample 24000, inside block 46).
@@ -26,8 +26,9 @@
 //                                  .flagged 1, .recovery_blocks 0 (the next block is processed and finite again),
 //                                  .nonfinite_out 0
 //   hostile.dc.gr_err_db           DC 0.5 for 2 s: the settled GR against the Mode's static curve at -6.02 dBFS
-//                                  (fidelity: a NOTE while the Mode is provisional; skipped with a NOTE when the Mode's
-//                                  SC HPF is on: the host SC filter is F5's)
+//                                  (fidelity: a NOTE while the Mode is provisional); when the Mode's SC HPF is on at
+//                                  its defaults (the host SC filter, F5's, wired by F7) the HPF removes DC instead:
+//                                  hostile.dc.hpf_gr_db, the settled GR, <= 0.01 dB (C §5.8 D10: "SC HPF -> 0 GR")
 //   hostile.plus40.nonfinite_out, hostile.plus40.flagged  a +40 dBFS 110 Hz sine (below the clamp: not flagged)
 //   hostile.silence.nonzero        silence after a 0.5 s noise burst gives exactly 0 (Modes without an active colour
 //                                  stage: !hasColour, or drive n/a)
@@ -37,6 +38,13 @@
 //   hostile.unprepared.mismatches  process() before configure(): input copied to output bit for bit (HR B §1.7)
 //   hostile.zero_length.mismatches 0-length process() calls between blocks change nothing
 //   hostile.oversize.mismatches    configured for 64-sample blocks, fed 1024: identical to 64-sample blocks
+// STD and HQ (F7, S6; spec only, the ECO rows above carry the golden tail rows). <s> = std, hq, hq.la20 (HQ with a
+// 20 ms lookahead budget: NaN and inf pass through no delay line, 01 §5.8, K2 #13):
+//   hostile.<s>.<c>.nonfinite_out, .flagged, .recovery_blocks, .tail_err_db (<= 1 dB but big.*: NOTE) for every case
+//   above, against a control of the same setup;
+//   hostile.<s>.poison.<what>.{dry_mismatches, flagged, recovery_blocks, nonfinite_out}: the poisoned block outputs
+//   the sanitised input delayed by the latency (L_la + kOs[q].latency), bit for bit;
+//   hostile.<s>.plus40.nonfinite_out, hostile.<s>.plus40.flagged.
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -115,16 +123,21 @@ namespace
         std::uint64_t saved_ = 0;
     };
 
-    // ---- host driver (the same small driver as the other F4 probes; one per file, no shared probe file) -------------
-    HostConfig ecoConfig(int keyChans = 0, int maxBlock = kBlock)
+    // ---- host driver (the same small driver as the other host probes; one per file, no shared probe file) -----------
+    HostConfig hostConfig(Quality q, LookaheadBudget b, int keyChans = 0, int maxBlock = kBlock)
     {
         HostConfig c;
         c.fs = kFs;
         c.maxBlock = maxBlock;
-        c.quality = Quality::eco;
-        c.budget = LookaheadBudget::off;
+        c.quality = q;
+        c.budget = b;
         c.keyChans = keyChans;
         return c;
+    }
+
+    HostConfig ecoConfig(int keyChans = 0, int maxBlock = kBlock)
+    {
+        return hostConfig(Quality::eco, LookaheadBudget::off, keyChans, maxBlock);
     }
 
     BlockParams blockOf(const ModeEntry& en, const RawParams& raw)
@@ -291,63 +304,75 @@ FCMP_PROBE(dsp, hostile)
     cleanKey.kl = clean.l;
     cleanKey.kr = clean.r;
 
-    const Run control = render(cfg, bp, clean);
-    const Run controlKey = render(ecoConfig(2), bpKey, cleanKey);
-    std::printf("NOTE     hostile: control GR at the injection point %.4g dB\n",
-                static_cast<double>(control.gr[kInject]));
+    // ---- one setup: non-finite and huge input, the poison fallback, +40 dBFS ----------------------------------------
+    // `prefix` "hostile." (ECO: the S3 keys, with their golden tail rows) or "hostile.<s>." (spec only).
+    const auto setupRows = [&](const std::string& prefix, Quality q, LookaheadBudget b, bool golden) {
+        const HostConfig sc = hostConfig(q, b), scKey = hostConfig(q, b, 2);
+        const Run control = render(sc, bp, clean);
+        const Run controlKey = render(scKey, bpKey, cleanKey);
+        const auto latency = static_cast<std::size_t>(control.latency);
+        std::printf("NOTE     %s: control GR at the injection point %.4g dB (latency %zu)\n", prefix.c_str(),
+                    static_cast<double>(control.gr[kInject]), latency);
 
-    // ---- non-finite and huge input on the main and key inputs ------------------------------------------------------
-    const float kValues[3] = { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), 1e30f };
-    const char* kNames[3] = { "nan", "inf", "big" };
-    for (const bool onKey : { false, true })
-        for (int v = 0; v < 3; ++v)
-            for (const bool wholeBlock : { false, true })
-            {
-                Signal s = onKey ? cleanKey : clean;
-                std::vector<float>& a = onKey ? s.kl : s.l;
-                std::vector<float>& b = onKey ? s.kr : s.r;
-                const std::size_t len = wholeBlock ? static_cast<std::size_t>(kBlock) : 1;
-                for (std::size_t i = kInject; i < kInject + len; ++i)
+        // non-finite and huge input on the main and key inputs
+        const float kValues[3] = { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                   1e30f };
+        const char* kNames[3] = { "nan", "inf", "big" };
+        for (const bool onKey : { false, true })
+            for (int v = 0; v < 3; ++v)
+                for (const bool wholeBlock : { false, true })
                 {
-                    a[i] = kValues[v];
-                    if (wholeBlock)
-                        b[i] = kValues[v];
+                    Signal s = onKey ? cleanKey : clean;
+                    std::vector<float>& x = onKey ? s.kl : s.l;
+                    std::vector<float>& y = onKey ? s.kr : s.r;
+                    const std::size_t len = wholeBlock ? static_cast<std::size_t>(kBlock) : 1;
+                    for (std::size_t i = kInject; i < kInject + len; ++i)
+                    {
+                        x[i] = kValues[v];
+                        if (wholeBlock)
+                            y[i] = kValues[v];
+                    }
+                    const std::string k = prefix + (onKey ? "key." : "") + kNames[v]
+                                        + (wholeBlock ? ".block" : ".sample");
+                    const Run t = onKey ? render(scKey, bpKey, s) : render(sc, bp, s);
+                    const Run& c = onKey ? controlKey : control;
+                    const std::size_t first = blockOfSample(t, kInject), last = blockOfSample(t, kInject + len - 1);
+                    P.eq(k + ".nonfinite_out", t.nonfinite, 0);
+                    P.eq(k + ".flagged", flagged(t, first) ? 1 : 0, 1);
+                    P.le(k + ".recovery_blocks", static_cast<double>(flaggedAfter(t, last)), 1.0);
+                    const double tail = tailErrDb(t, c);
+                    if (v == 2)
+                        std::printf("NOTE     %s.tail_err_db = %.4g dB: clamped +120 dBFS input is compressed as "
+                                    "input; its GR leaves at the Mode's release (not a spec row)\n",
+                                    k.c_str(), tail);
+                    else
+                        P.le(k + ".tail_err_db", tail, 1.0);
+                    if (golden)
+                        P.num(k + ".tail_err_db", tail, Tol::abs(1.0));
                 }
-                const std::string k = std::string("hostile.") + (onKey ? "key." : "") + kNames[v]
-                                    + (wholeBlock ? ".block" : ".sample");
-                const Run t = onKey ? render(ecoConfig(2), bpKey, s) : render(cfg, bp, s);
-                const Run& c = onKey ? controlKey : control;
-                const std::size_t first = blockOfSample(t, kInject), last = blockOfSample(t, kInject + len - 1);
-                P.eq(k + ".nonfinite_out", t.nonfinite, 0);
-                P.eq(k + ".flagged", flagged(t, first) ? 1 : 0, 1);
-                P.le(k + ".recovery_blocks", static_cast<double>(flaggedAfter(t, last)), 1.0);
-                const double tail = tailErrDb(t, c);
-                if (v == 2)
-                    std::printf("NOTE     %s.tail_err_db = %.4g dB: clamped +120 dBFS input is compressed as input; "
-                                "its GR leaves at the Mode's release (not a spec row)\n",
-                                k.c_str(), tail);
-                else
-                    P.le(k + ".tail_err_db", tail, 1.0);
-                P.num(k + ".tail_err_db", tail, Tol::abs(1.0));
-            }
 
-    // ---- the poison fallback (01 §5.8), forced through a non-finite parameter for one block ------------------------
-    {
+        // the poison fallback (01 §5.8), forced through a non-finite parameter for one block
         const std::size_t poisonAt = static_cast<std::size_t>(kBlock) * (kInject / static_cast<std::size_t>(kBlock));
         for (const int what : { 0, 1 })
         {
-            const std::string k = std::string("hostile.poison.") + (what == 0 ? "thr" : "makeup");
+            const std::string k = prefix + "poison." + (what == 0 ? "thr" : "makeup");
             const ParamsAt at = [&](std::size_t off) {
-                BlockParams b = bp;
+                BlockParams p = bp;
                 if (off == poisonAt)
-                    (what == 0 ? b.eng.thrDb : b.eng.makeupDb) = std::numeric_limits<float>::quiet_NaN();
-                return b;
+                    (what == 0 ? p.eng.thrDb : p.eng.makeupDb) = std::numeric_limits<float>::quiet_NaN();
+                return p;
             };
-            const Run t = render(cfg, at, clean);
+            const Run t = render(sc, at, clean);
             const std::size_t blk = blockOfSample(t, poisonAt);
             const std::size_t end = poisonAt + static_cast<std::size_t>(kBlock);
-            P.eq(k + ".dry_mismatches",
-                 mismatches(t.l, clean.l, poisonAt, end) + mismatches(t.r, clean.r, poisonAt, end), 0);
+            std::int64_t dry = 0;
+            for (std::size_t i = poisonAt; i < end; ++i)
+            {
+                const float wl = i >= latency ? clean.l[i - latency] : 0.0f;
+                const float wr = i >= latency ? clean.r[i - latency] : 0.0f;
+                dry += (t.l[i] == wl ? 0 : 1) + (t.r[i] == wr ? 0 : 1);
+            }
+            P.eq(k + ".dry_mismatches", dry, 0);
             P.eq(k + ".flagged", flagged(t, blk) ? 1 : 0, 1);
             P.eq(k + ".recovery_blocks", flaggedAfter(t, blk), 0);
             P.eq(k + ".nonfinite_out", t.nonfinite, 0);
@@ -355,46 +380,53 @@ FCMP_PROBE(dsp, hostile)
                         "control %.4g dB\n",
                         k.c_str(), static_cast<double>(t.gr[end + 480]), static_cast<double>(control.gr[end + 480]));
         }
-    }
 
-    // ---- DC: the settled GR follows the static curve ----------------------------------------------------------------
-    if (bp.eng.scHpfHz > 0.0f)
-        std::printf("NOTE     hostile.dc: %s's SC HPF is on (%.4g Hz) at its defaults; the host SC filter is F5's; "
-                    "skipped\n",
-                    desc.name.data(), static_cast<double>(bp.eng.scHpfHz));
-    else
-    {
-        const std::size_t m = static_cast<std::size_t>(2.0f * kFs);
-        Signal dc;
-        dc.l.assign(m, 0.5f);
-        dc.r.assign(m, 0.5f);
-        const Run t = render(cfg, bp, dc);
-        const float x = static_cast<float>(measure::dbFromAmplitude(0.5)) + bp.eng.preGainDb;
-        float want = 0.0f;
-        en.staticGr(bp.eng, &x, &want, 1);
-        const float got = t.gr.back();
-        std::printf("NOTE     hostile.dc: settled GR %.6g dB, static curve %.6g dB at %.4g dB (detector domain)\n",
-                    static_cast<double>(got), static_cast<double>(want), static_cast<double>(x));
-        F.near("hostile.dc.gr_err_db", static_cast<double>(got - want), 0.0, tol.curveOutsideKneeDb);
-        P.eq("hostile.dc.nonfinite_out", t.nonfinite, 0);
-    }
-
-    // ---- +40 dBFS --------------------------------------------------------------------------------------------------
-    {
+        // +40 dBFS
         const std::size_t m = static_cast<std::size_t>(0.5f * kFs);
         Signal loud;
         loud.l.resize(m);
         loud.r.resize(m);
         for (std::size_t i = 0; i < m; ++i)
             loud.l[i] = loud.r[i] = sig::sineAt(static_cast<std::int64_t>(i), 110.0, kFs, 100.0);
-        const Run t = render(cfg, bp, loud);
+        const Run t = render(sc, bp, loud);
         std::int64_t flags = 0;
-        for (std::size_t b = 0; b < t.blocks.size(); ++b)
-            flags += flagged(t, b) ? 1 : 0;
-        P.eq("hostile.plus40.nonfinite_out", t.nonfinite, 0);
-        P.eq("hostile.plus40.flagged", flags, 0);
-    }
+        for (std::size_t blk = 0; blk < t.blocks.size(); ++blk)
+            flags += flagged(t, blk) ? 1 : 0;
+        P.eq(prefix + "plus40.nonfinite_out", t.nonfinite, 0);
+        P.eq(prefix + "plus40.flagged", flags, 0);
+        return control;
+    };
 
+    const Run control = setupRows("hostile.", Quality::eco, LookaheadBudget::off, true);
+    (void) setupRows("hostile.std.", Quality::std, LookaheadBudget::off, false);
+    (void) setupRows("hostile.hq.", Quality::hq, LookaheadBudget::off, false);
+    (void) setupRows("hostile.hq.la20.", Quality::hq, LookaheadBudget::ms20, false);
+
+    // ---- DC: the settled GR follows the static curve (or the SC HPF removes it) ------------------------------------
+    {
+        const std::size_t m = static_cast<std::size_t>(2.0f * kFs);
+        Signal dc;
+        dc.l.assign(m, 0.5f);
+        dc.r.assign(m, 0.5f);
+        const Run t = render(cfg, bp, dc);
+        const float got = t.gr.back();
+        if (bp.eng.scHpfHz > 0.0f)
+        {
+            std::printf("NOTE     hostile.dc: %s's SC HPF is on (%.4g Hz) at its defaults: settled GR %.6g dB\n",
+                        desc.name.data(), static_cast<double>(bp.eng.scHpfHz), static_cast<double>(got));
+            P.le("hostile.dc.hpf_gr_db", static_cast<double>(got), 0.01);
+        }
+        else
+        {
+            const float x = static_cast<float>(measure::dbFromAmplitude(0.5)) + bp.eng.preGainDb;
+            float want = 0.0f;
+            en.staticGr(bp.eng, &x, &want, 1);
+            std::printf("NOTE     hostile.dc: settled GR %.6g dB, static curve %.6g dB at %.4g dB (detector domain)\n",
+                        static_cast<double>(got), static_cast<double>(want), static_cast<double>(x));
+            F.near("hostile.dc.gr_err_db", static_cast<double>(got - want), 0.0, tol.curveOutsideKneeDb);
+        }
+        P.eq("hostile.dc.nonfinite_out", t.nonfinite, 0);
+    }
     // ---- silence after a burst: exactly 0, and no denormal tail cost ------------------------------------------------
     {
         const std::size_t burst = static_cast<std::size_t>(0.5f * kFs), m = static_cast<std::size_t>(1.5f * kFs);

@@ -38,6 +38,14 @@
 // Coefficients are designed on control ticks at ABSOLUTE sample-index multiples of kTickSamples (01 §5.1 "per tick:
 // the SC filter coefficients (host, via tanPi)"), and only when a target or the slewed sigma moved, so the output does
 // not depend on the host block size. setTarget() per block; snap() (configure, requestSnap) designs at once.
+// Glide (F7, S6; flagged in the F7 handoff): a new tick design of a filter that was engaged and stays engaged is not
+// applied as a step; the applied coefficients move linearly, per sample, from the ones in use to the new design over
+// the next kTickSamples samples (the tilt's a, c and gain; the HPF's warped cutoff g, a1-a3 recomputed from it),
+// landing on the design exactly. Wired into EngineHost, the per-tick staircase of the slewed tilt (0.1 dB/oct per
+// tick, about 0.3 dB per tick at 110 Hz) and the HPF's cutoff jumps reached the detector as a 3 kHz staircase, and
+// dsp.zipper's schpf/sce edge rows read it as a click (+4.7 to +32 dB against clean controls); the glide removes it.
+// At rest the applied design IS the tick design, so the static response, the exact bypasses and every settled output
+// are unchanged.
 //
 // Real time: header-inline, allocation-free, FCDSP_NONBLOCKING throughout; prepare() is too (it only stores the rate).
 
@@ -186,12 +194,13 @@ public:
     }
 
     // Silence: every state 0 and the control ticker restarted (the next process() sample ticks). Keeps the targets
-    // and the current design.
+    // and the current design (a glide lands at once).
     void reset() noexcept FCDSP_NONBLOCKING
     {
         ic1_ = ic2_ = simd::set1(0.0f);
         s_.fill(simd::set1(0.0f));
         tick_ = ControlTicker{};
+        land();
     }
 
     // Per block: EngineParams::scHpfHz (0 = OFF) and ::sceDbOct. They apply at the next control tick.
@@ -206,6 +215,7 @@ public:
     {
         tiltCur_ = tiltTgt_;
         redesign();
+        land();
     }
 
     // Filters n samples in place or out of place (out may alias in); sampleIndex is the absolute index of in[0].
@@ -215,10 +225,12 @@ public:
         {
             if (tick_.advance(sampleIndex + static_cast<uint64_t>(i)))
                 onTick();
+            if (glide_ > 0)
+                glideStep();
             simd::f32x4 v = in[i];
-            if (d_.hpf)
+            if (a_.hpf)
                 v = hpf(v);
-            if (d_.tilt)
+            if (a_.tilt)
                 v = tilt(v);
             out[i] = v;
         }
@@ -284,11 +296,70 @@ private:
             ic1_ = ic2_ = simd::set1(0.0f);
         if (tiltWas && !d_.tilt)
             s_.fill(simd::set1(0.0f));
+        // Glide (header): from the coefficients in use to this design, for a filter engaged before and after.
+        from_ = a_;
+        glideHpf_ = hpfWas && d_.hpf;
+        glideTilt_ = tiltWas && d_.tilt;
+        glide_ = glideHpf_ || glideTilt_ ? kTickSamples : 0;
+        if (!glideHpf_)
+            applyHpf(d_.svfG);
+        if (!glideTilt_)
+            applyTilt(d_.a, d_.c, d_.gain);
+        a_.hpf = d_.hpf;
+        a_.tilt = d_.tilt;
+    }
+
+    // The applied coefficients jump to the design (snap, reset, the end of a glide).
+    void land() noexcept FCDSP_NONBLOCKING
+    {
+        a_ = d_;
+        glide_ = 0;
+    }
+
+    // One sample of a glide: the applied coefficients at (kTickSamples - glide_ + 1) / kTickSamples of the way.
+    void glideStep() noexcept FCDSP_NONBLOCKING
+    {
+        --glide_;
+        if (glide_ == 0)
+        {
+            land();
+            return;
+        }
+        const float t = static_cast<float>(kTickSamples - glide_) * (1.0f / static_cast<float>(kTickSamples));
+        const auto lerp = [t](float x, float y) noexcept FCDSP_NONBLOCKING { return x + t * (y - x); };
+        if (glideHpf_)
+            applyHpf(lerp(from_.svfG, d_.svfG));
+        if (glideTilt_)
+        {
+            std::array<float, kTiltSections> a{}, c{};
+            for (std::size_t u = 0; u < a.size(); ++u)
+            {
+                a[u] = lerp(from_.a[u], d_.a[u]);
+                c[u] = lerp(from_.c[u], d_.c[u]);
+            }
+            applyTilt(a, c, lerp(from_.gain, d_.gain));
+        }
+    }
+
+    void applyHpf(float g) noexcept FCDSP_NONBLOCKING
+    {
+        a_.svfG = g;
+        a_.svfA1 = 1.0f / (1.0f + g * (g + kScSvfK));
+        a_.svfA2 = g * a_.svfA1;
+        a_.svfA3 = g * a_.svfA2;
+    }
+
+    void applyTilt(const std::array<float, kTiltSections>& a, const std::array<float, kTiltSections>& c,
+                   float gain) noexcept FCDSP_NONBLOCKING
+    {
+        a_.a = a;
+        a_.c = c;
+        a_.gain = gain;
     }
 
     simd::f32x4 hpf(simd::f32x4 v0) noexcept FCDSP_NONBLOCKING
     {
-        const simd::f32x4 a1 = simd::set1(d_.svfA1), a2 = simd::set1(d_.svfA2), a3 = simd::set1(d_.svfA3);
+        const simd::f32x4 a1 = simd::set1(a_.svfA1), a2 = simd::set1(a_.svfA2), a3 = simd::set1(a_.svfA3);
         const simd::f32x4 v3 = simd::sub(v0, ic2_);
         const simd::f32x4 v1 = simd::fma(simd::mul(a1, ic1_), a2, v3);                     // a1 ic1 + a2 v3
         const simd::f32x4 v2 = simd::fma(simd::fma(ic2_, a2, ic1_), a3, v3);               // ic2 + a2 ic1 + a3 v3
@@ -303,15 +374,18 @@ private:
         for (int i = 0; i < kTiltSections; ++i)
         {
             const auto u = static_cast<std::size_t>(i);
-            const simd::f32x4 v = simd::mul(simd::sub(y, s_[u]), simd::set1(d_.a[u]));    // TPT one-pole
+            const simd::f32x4 v = simd::mul(simd::sub(y, s_[u]), simd::set1(a_.a[u]));    // TPT one-pole
             const simd::f32x4 lp = simd::add(v, s_[u]);
             s_[u] = simd::add(lp, v);
-            y = simd::fma(y, simd::set1(d_.c[u]), lp);                                      // hp + (gz/gp) lp
+            y = simd::fma(y, simd::set1(a_.c[u]), lp);                                      // hp + (gz/gp) lp
         }
-        return simd::mul(y, simd::set1(d_.gain));
+        return simd::mul(y, simd::set1(a_.gain));
     }
 
-    ScDesign d_{};
+    ScDesign d_{};                                       // the tick design (targets, slewed sigma)
+    ScDesign a_{}, from_{};                              // the coefficients applied now; a glide's start
+    int glide_ = 0;                                      // samples left in the current glide
+    bool glideHpf_ = false, glideTilt_ = false;
     float fs_ = 48000.0f;
     float hpfTgt_ = 0.0f, tiltTgt_ = 0.0f, tiltCur_ = 0.0f;
     simd::f32x4 ic1_{}, ic2_{};

@@ -40,6 +40,19 @@
 //                                  descriptor's declared words (K3 #11)
 //   golden (rel:0.1; candidates while provisional): time.rel.after_<1s|10s>.<t50|t90>_ms, the release after 1 s
 //     and 10 s of GR at the Mode's defaults (C §5.3: program-dependent release shows up here)
+//   Quality (F7, S6; 01 §5.6; K2 #11b; 03 §3.7 "tau across ECO/STD/HQ <= 1.5 base samples"), through the Host
+//     (fcdsp::EngineHost at ECO, STD and HQ, no lookahead): the attack and the release are measured from the AUDIO, so
+//     the row sees where the gain lands on the (upsampled) signal, which is what D_up in the side-chain delay aligns.
+//     The detector runs on an external key (a 2-channel bus carrying D2's 1 kHz square steps at T - 20 / T + 20 /
+//     T - 20 dB, T = the detector-domain threshold: a key is never pre-gained), so both SC lanes are equal and every
+//     lane takes the same GR (whatever the link law; an FB kernel evaluates FF on a key, E §2.6). The main input is a
+//     quadrature pair, L = a sin, R = a cos at 500 Hz and -20 dBFS, so the envelope sqrt(yL^2 + yR^2) never crosses 0:
+//     against a mix-0 render of the same Quality (the OS round trip of the pair) it is the applied gain sample by
+//     sample, GR = -20 log10(env / env0), read at output index n + L (L = latencySamples()). stmode is set to STEREO
+//     and mix to 1 for the renders (a probe-level choice: the row judges the host's alignment, not the Mode's routing).
+//     Configurations: the Mode's defaults ("def") and its fastest attack ("fast": the lowest detent or range end).
+//     time.quality.<cfg>.<atk|rel>.<q>_s  the measured time by the declared law (NOTE)
+//     time.quality.<cfg>.<atk|rel>.spread_samples  max over Qualities - min, in base samples: <= 1.5 (spec)
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -51,19 +64,24 @@
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Simd.h"
 #include "fcdsp/core/Units.h"
+#include "fcdsp/engine/EngineHost.h"
 #include "fcdsp/engine/IEngine.h"
 #include "fcdsp/modes/ModeDescriptor.h"
+#include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/EngineParams.h"
 #include "fcdsp/params/HostParams.h"
 #include "fcdsp/params/ParamSpec.h"
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Resolve.h"
+#include "fcdsp/params/Setup.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -134,6 +152,106 @@ namespace
         rig.process(in.data() + edge, in.data() + edge, r.out.data() + edge, outR.data() + edge, n - edge);
         r.gr = rig.tap().lane(rig.tap().grDb, 0);
         return r;
+    }
+
+    // ---- the Quality row: the audio-derived GR of a keyed step through EngineHost (file comment) --------------------
+    constexpr Quality kQualities[3] = { Quality::eco, Quality::std, Quality::hq };
+
+    struct KeyedRun
+    {
+        std::vector<float> l, r;
+        int latency = 0;
+    };
+
+    KeyedRun renderKeyed(Quality q, const BlockParams& bp, const std::vector<float>& ml, const std::vector<float>& mr,
+                         const std::vector<float>& key)
+    {
+        HostConfig cfg;
+        cfg.fs = kFs;
+        cfg.maxBlock = 512;
+        cfg.quality = q;
+        cfg.budget = LookaheadBudget::off;
+        cfg.keyChans = 2;
+        auto host = std::make_unique<EngineHost>();
+        host->configure(cfg, bp);
+        const std::size_t n = ml.size();
+        KeyedRun run;
+        run.l.assign(n, 0.0f);
+        run.r.assign(n, 0.0f);
+        run.latency = host->latencySamples();
+        for (std::size_t off = 0; off < n; off += 512)
+        {
+            const std::size_t len = std::min<std::size_t>(512, n - off);
+            const float* ins[2] = { ml.data() + off, mr.data() + off };
+            const float* keys[2] = { key.data() + off, key.data() + off };
+            float* outs[2] = { run.l.data() + off, run.r.data() + off };
+            ProcessIo io;
+            io.in = ins;
+            io.numIn = 2;
+            io.key = keys;
+            io.numKey = 2;
+            io.out = outs;
+            io.numOut = 2;
+            io.n = static_cast<int>(len);
+            host->process(io, bp);
+        }
+        return run;
+    }
+
+    // Per Quality: {attack, release} in seconds by the declared laws, from the audio of a keyed D2 step.
+    struct QualityTimes
+    {
+        double atk[3]{}, rel[3]{};
+    };
+
+    QualityTimes qualityTimes(const ModeEntry& en, const Resolution& res)
+    {
+        const ModeDescriptor& desc = *en.desc;
+        BlockParams bp;
+        bp.slot = static_cast<std::uint8_t>(slotOf(en));
+        bp.eng = res.eng;
+        bp.eng.stmode = 0;
+        bp.eng.mix = 1.0f;
+        bp.extKey = true;
+        BlockParams dry = bp;
+        dry.eng.mix = 0.0f;
+        const TimeLaw atkLaw = desc.attackSpec(res.view, res.eng).law, relLaw = desc.releaseSpec(res.view, res.eng).law;
+
+        const double t = static_cast<double>(res.eng.thrDb);           // the key is never pre-gained
+        const double tauA = static_cast<double>(res.eng.atkTauMs) / 1000.0;
+        const double tauR = static_cast<double>(res.eng.relTauMs) / 1000.0;
+        const std::size_t e1 = static_cast<std::size_t>(0.5f * kFs);
+        const std::size_t e2 = e1 + static_cast<std::size_t>(std::max(0.5, 10.0 * tauA) * kFs);
+        const std::size_t n = e2 + static_cast<std::size_t>(std::max(1.0, 10.0 * tauR) * kFs);
+        std::vector<float> key(n), ml(n), mr(n);
+        const auto lo = static_cast<float>(fcmp::probe::measure::amplitudeFromDb(t - 20.0));
+        const auto hi = static_cast<float>(fcmp::probe::measure::amplitudeFromDb(t + 20.0));
+        for (std::size_t k = 0; k < n; ++k)
+        {
+            const float a = k >= e1 && k < e2 ? hi : lo;
+            key[k] = (k / 24) % 2 == 0 ? a : -a;                      // 1 kHz square at 48 kHz, edges on the steps
+            ml[k] = fcmp::probe::sig::sineAt(static_cast<std::int64_t>(k), 500.0, kFs, 0.1);
+            mr[k] = fcmp::probe::sig::sineAt(static_cast<std::int64_t>(k), 500.0, kFs, 0.1, 0.25);
+        }
+        QualityTimes out;
+        for (int qi = 0; qi < 3; ++qi)
+        {
+            const KeyedRun y = renderKeyed(kQualities[qi], bp, ml, mr, key);
+            const KeyedRun y0 = renderKeyed(kQualities[qi], dry, ml, mr, key);
+            const auto L = static_cast<std::size_t>(y.latency);
+            std::vector<float> gr(n - L);
+            for (std::size_t k = 0; k + L < n; ++k)
+            {
+                const double env = std::hypot(static_cast<double>(y.l[k + L]), static_cast<double>(y.r[k + L]));
+                const double env0 = std::hypot(static_cast<double>(y0.l[k + L]), static_cast<double>(y0.r[k + L]));
+                gr[k] = static_cast<float>(-fcmp::probe::measure::dbFromAmplitude(env / std::max(env0, 1e-30)));
+            }
+            const std::span<const float> tr(gr);
+            namespace measure = fcmp::probe::measure;
+            out.atk[qi] = measure::lawSeconds(tr.subspan(e1, e2 - e1), gr[e1 - 1], gr[e2 - 1], kFs, atkLaw);
+            out.rel[qi] = measure::lawSeconds(tr.subspan(e2), gr[e2 - 1], gr[gr.size() - 1], kFs, relLaw);
+        }
+        return out;
     }
 } // namespace
 
@@ -340,6 +458,41 @@ FCMP_PROBE(dsp, time)
                   Tol::rel(tol.tauGoldenRel));
             P.num(k + ".t90_ms", 1000.0 * fcmp::probe::measure::crossingSeconds(trace, from, 0.0, 0.9, kFs),
                   Tol::rel(tol.tauGoldenRel));
+        }
+    }
+
+    // ---- the Quality row: tau at ECO, STD and HQ agree within 1.5 base samples (K2 #11b) ---------------------------
+    {
+        std::vector<std::pair<std::string, RawParams>> cfgs{ { "def", base } };
+        if (const ParamSpec* as = view.spec[idx(Pid::atk)];
+            as != nullptr && (as->kind == Kind::stepped || as->kind == Kind::continuous || as->kind == Kind::hybrid))
+        {
+            RawParams fast = base;
+            fast[Pid::atk] = as->kind == Kind::stepped ? as->steps.front().plain : as->lo;
+            if (fast[Pid::atk] != base[Pid::atk])
+                cfgs.emplace_back("fast", fast);
+        }
+        for (const auto& [name, raw] : cfgs)
+        {
+            const Resolution res = fcmp::probe::resolveRaw(en, raw);
+            const QualityTimes qt = qualityTimes(en, res);
+            for (const bool attack : { true, false })
+            {
+                const double* v = attack ? qt.atk : qt.rel;
+                const std::string k = "time.quality." + name + (attack ? ".atk" : ".rel");
+                double lo = v[0], hi = v[0];
+                for (int qi = 0; qi < 3; ++qi)
+                {
+                    lo = std::min(lo, v[qi]);
+                    hi = std::max(hi, v[qi]);
+                }
+                std::printf("NOTE     %s: eco %.9g s, std %.9g s, hq %.9g s (tau %.6g ms)\n", k.c_str(), v[0], v[1],
+                            v[2], static_cast<double>(attack ? res.eng.atkTauMs : res.eng.relTauMs));
+                const bool measured = lo > 0.0;
+                P.eq(k + ".measured", measured ? 1 : 0, 1);
+                P.le(k + ".spread_samples", measured ? (hi - lo) * kFs : 1e9,
+                     fcmp::probe::tol::kTauAcrossQualitySamples);
+            }
         }
     }
 
