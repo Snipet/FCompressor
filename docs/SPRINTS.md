@@ -181,7 +181,8 @@ chain                            F6 ──────────┴───�
    `tools/verify.sh <build>` (it wipes stale candidates/results) and `FUNKGUI_ALLOW_BLESS=1 tools/golden.py adopt <build> …
    --reason …` (FZ0 errata: adopt only right after a wiping verify, R-G1 #4); bump
    `project(FunkGui VERSION 0.x.0)` and `CHANGELOG.md` (with its golden impact); commit; `git tag -a v0.x.0`.
-3. **Bump the pin** (`FCMP_FUNKGUI_TAG/_SHA/_VERSION`); `rm -rf build-lead/_deps/funkgui-*`.
+3. **Bump the pin** (`FCMP_FUNKGUI_TAG/_SHA/_VERSION`); `rm -rf build-lead/_deps/funkgui-* build-lead/CMakeFiles/fc-{tmp,stamp}/funkgui*`
+   (FZ0 errata: the fetch state must go too, or the update step runs in a missing checkout).
 4. **Merge FCompressor cards**: commit each worktree on its branch; `git merge --no-ff s<N>/<code>` in card order.
 5. **Integration verify**: `cmake --workflow --preset lead-verify`, then `Scripts/verify.sh --integration build-lead`
    (fails on any FunkGui override; K2 #26c). No blocking result is accepted.
