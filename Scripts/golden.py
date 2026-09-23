@@ -7,8 +7,10 @@
 
 FunkGui owns the golden format v2 and its tooling; this wrapper runs the golden.py of the FunkGui this build was
 configured against (the FunkGui row of <build>/fcmp-deps.txt, so a pin bump brings the matching tool) with
-FCompressor's defaults: --allow-env FCMP_ALLOW_BLESS (adopt refuses unless FCMP_ALLOW_BLESS=1, and refuses in a linked
-worktree) and --golden-root <this repository>/tests/golden. Every other argument passes through unchanged.
+FCompressor's defaults: --golden-root <this repository>/tests/golden for every subcommand, and for `adopt` only
+--allow-env FCMP_ALLOW_BLESS (adopt refuses unless FCMP_ALLOW_BLESS=1, and refuses in a linked worktree). Before
+FunkGui v0.1.0 only adopt's parser defines --allow-env, so passing it to report or diff made them exit 2 with
+"unrecognized arguments" (FZ0 errata, R-B0 #2 / R-G1 #1). Every other argument passes through unchanged.
 Agents never run `adopt`; Scripts/verify.sh classifies results itself (SPRINTS §7 D8).
 """
 import os
@@ -38,8 +40,10 @@ def main(argv):
     tool = os.path.join(funkgui_dir(build), "tools", "golden.py")
     if not os.path.isfile(tool):
         sys.exit("golden.py: %s does not exist (FunkGui v0.1.0 and later ship tools/golden.py)" % tool)
-    args = [sys.executable, tool, argv[0], build, "--allow-env", "FCMP_ALLOW_BLESS",
-            "--golden-root", os.path.join(ROOT, "tests", "golden")] + argv[2:]
+    args = [sys.executable, tool, argv[0], build]
+    if argv[0] == "adopt":
+        args += ["--allow-env", "FCMP_ALLOW_BLESS"]
+    args += ["--golden-root", os.path.join(ROOT, "tests", "golden")] + argv[2:]
     os.execv(sys.executable, args)
     return 2
 

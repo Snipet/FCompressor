@@ -81,11 +81,11 @@
     },
     {
       "name": "asan",
-      "displayName": "asan: DSP-only, RelWithDebInfo, AddressSanitizer + UBSan (lead, milestones)",
+      "displayName": "asan: DSP-only, RelWithDebInfo, AddressSanitizer + UBSan, both halting (lead, milestones)",
       "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ],
       "cacheVariables": {
-        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
-        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
       }

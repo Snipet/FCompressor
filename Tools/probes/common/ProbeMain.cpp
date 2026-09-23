@@ -8,7 +8,10 @@
 //
 // It dispatches the subcommand over the FCMP_PROBE registration list, passes --mode to the probe as Ctx::key, creates
 // the sandbox directories named by FCMP_PREFS_DIR / FCMP_PRESETS_DB (the probe's own; never the user's real
-// ~/Library/Application Support/FCompressor), and runs the body under funkgui::test::ScopedFtz. An exception escaping
+// ~/Library/Application Support/FCompressor), and runs the body under funkgui::test::ScopedFtz. A sandbox directory
+// below a `sandbox` path component (CTest's <build>/sandbox/<test>, cmake/FcmpProbes.cmake) is emptied first, so every
+// run starts without the previous run's prefs and presets.db (FZ0 errata, R-B0 #7); any other directory (a human's
+// FCMP_PREFS_DIR) is only created, never emptied. An exception escaping
 // the body is a harness error (exit 4). finish() is called whether or not the body called it, and the process exit
 // code is always finish()'s (0 pass, 1 spec_fail, 2 golden_drift, 3 golden_missing, 4 harness_error; 03 §3.2.4). An
 // unknown subcommand, a duplicate registration or a missing subcommand exits 4 without a RESULT line.
@@ -79,24 +82,53 @@ namespace
             std::fprintf(f, "%s\n", r->name);
     }
 
-    // The probe's own sandbox (03 §2.9: "created by the probe itself").
+    // True for an absolute path with a component after a "sandbox" component (lexically normalised first, so
+    // <build>/sandbox/../x is not one): the only directories makeSandbox() empties.
+    bool isResettableSandbox(const std::filesystem::path& p)
+    {
+        const std::filesystem::path n = p.lexically_normal();
+        if (!n.is_absolute())
+            return false;
+        bool afterSandbox = false;
+        for (const std::filesystem::path& part : n)
+        {
+            if (afterSandbox && !part.empty())
+                return true;
+            if (part == "sandbox")
+                afterSandbox = true;
+        }
+        return false;
+    }
+
+    // The probe's own sandbox (03 §2.9: "created by the probe itself"), reset to empty when it is a CTest sandbox.
     std::string makeSandbox()
     {
         namespace fs = std::filesystem;
-        std::error_code ec;
+        struct Dir
+        {
+            fs::path path;
+            std::string what;
+        };
+        std::vector<Dir> dirs;
         if (const char* dir = std::getenv("FCMP_PREFS_DIR"); dir != nullptr && *dir != '\0')
-        {
-            fs::create_directories(dir, ec);
-            if (ec)
-                return std::string("cannot create FCMP_PREFS_DIR ") + dir + ": " + ec.message();
-        }
+            dirs.push_back({ fs::path(dir), std::string("FCMP_PREFS_DIR ") + dir });
         if (const char* db = std::getenv("FCMP_PRESETS_DB"); db != nullptr && *db != '\0')
+            if (fs::path parent = fs::path(db).parent_path(); !parent.empty())
+                dirs.push_back({ parent, "the directory of FCMP_PRESETS_DB " + std::string(db) });
+
+        std::error_code ec;
+        for (const Dir& d : dirs)                        // empty every CTest sandbox first, then create them all
+            if (isResettableSandbox(d.path))
+            {
+                fs::remove_all(d.path, ec);
+                if (ec)
+                    return "cannot empty " + d.what + ": " + ec.message();
+            }
+        for (const Dir& d : dirs)
         {
-            const fs::path parent = fs::path(db).parent_path();
-            if (!parent.empty())
-                fs::create_directories(parent, ec);
+            fs::create_directories(d.path, ec);
             if (ec)
-                return "cannot create the directory of FCMP_PRESETS_DB " + std::string(db) + ": " + ec.message();
+                return "cannot create " + d.what + ": " + ec.message();
         }
         return {};
     }

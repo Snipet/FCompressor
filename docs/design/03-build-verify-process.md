@@ -8,6 +8,9 @@ appendix owns build, verification and process, and uses their spellings (`ModeDe
 `funkgui::Canvas`, `analysis::staticGain`, …; K1 #18). The top-level document is `docs/ARCHITECTURE.md`; decisions and
 rejected options are in `docs/DECISIONS.md`.
 
+**FZ0 errata** (S0 review `docs/sprints/s0-review.md` R-B0 #1-#13 and R-G1 #1, applied by card FX-B before FZ0) are
+marked "FZ0 errata" in place: §1.1, §2.3, §2.6, §2.9, §2.10, §3.2.4, §3.2.5, §4.7 and §4.8.
+
 Evidence tags:
 - **[M]** measured on this Mac (Apple M5, 10 cores, macOS 27, Xcode 27.0, CMake 4.3.3, Ninja 1.13.2, git 2.54.0).
   The build-time numbers come from HardwareReverb's own `.ninja_log` files, parsed read-only on 2026-09-22.
@@ -108,6 +111,8 @@ FCompressor/
     FcmpPlugin.cmake             juce_add_plugin(FCompressor ...), resources, xattr hook, editor choice
     FcmpProbes.cmake             probe executables, self-registered CTest tests (§2.9), verify / verify-gui-live
     FcmpProduct.h.in             configure_file -> ${binary}/generated/FcmpProduct.h (name, version, codes, env prefix)
+    FcmpBuiltFrom.cmake          -P script: built-from-{probes,plugin}.txt, the tree a build came from (FZ0 errata, §2.9)
+    LintDeps.cmake               -P script: the lint.deps test (01 §2.2 include, libm and static rules)
   Source/                        01 §2.1: fcdsp/ (core params engine modes telemetry analysis), plugin/, editor/ (+ gpu/)
   Tools/
     probes/common/               ProbeMain.cpp (subcommand dispatch over the self-registration list, Mode loop,
@@ -128,7 +133,7 @@ FCompressor/
   Scripts/
     deps.sh                      populate ~/audio/.deps (§2.4), build shaderc (§2.5) and pluginval (§4.8)
     verify.sh                    DoD gate: ctest -L verify + classification report (§4.7); --integration for the lead
-    validate.sh                  auval -strict + pluginval (§4.8)
+    validate.sh                  auval -strict + pluginval (§4.8); --install puts <build>'s bundles in place first
     check-headers.sh             clang++ -std=c++20 -fsyntax-only on every frozen header (CTest lint.headers)
     golden.py                    5-line wrapper: runs FunkGui's tools/golden.py (the format owner, located through
                                  build-*/fcmp-deps.txt) with FCompressor defaults; report | diff | adopt (§3.2.5)
@@ -310,6 +315,9 @@ set(FCMP_BGFX_API  153)
 set(FCMP_BGFX_SUB_SHAS bgfx=c7684e20da1e385edc439ef39cdb42b8c661016f bx=0b001f5f36579e8aea07efa5af139ca18dad9505
                        bimg=3b4baab0128ac499c5c3bc37202781bf54084049)
 set(FCMP_FUNKGUI_TAG v0.0.1) ; set(FCMP_FUNKGUI_SHA <set by the lead when tagging>) ; set(FCMP_FUNKGUI_VERSION 0.0.1)
+# FZ0 errata (R-B0 #10): FCMP_FUNKGUI_SHA is the tagged COMMIT, `git rev-parse v0.1.0^{commit}`. FunkGui's tags are
+# annotated, so a bare `git rev-parse v0.1.0` prints the tag object; every check peels the pin with <sha>^{commit}, so
+# either value works, and fcmp-deps.txt records the commit.
 # The first pin is v0.0.1, the lead's G0 snapshot with a harness-only CMake and empty placeholder core/gpu/presets
 # targets (§4.9), so FCompressor configures from day one; B0's probe main uses only ScopedFtz until v0.1.0 (Harness v2)
 # is pinned at the end of S0 (K3 #5).
@@ -326,7 +334,9 @@ fcmp_default_source_dir(BGFX bgfx.cmake-${FCMP_BGFX_TAG})
 
 # 2. Declarations. These are identical to HR's for JUCE and bgfx (HR CMakeLists.txt:112-117, 229-241).
 FetchContent_Declare(JUCE GIT_REPOSITORY https://github.com/juce-framework/JUCE.git GIT_TAG ${FCMP_JUCE_TAG} GIT_SHALLOW TRUE)
-FetchContent_Declare(bgfx GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git GIT_TAG ${FCMP_BGFX_TAG} GIT_SHALLOW TRUE)
+FetchContent_Declare(bgfx GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git GIT_TAG ${FCMP_BGFX_TAG} GIT_SHALLOW TRUE
+                     SYSTEM EXCLUDE_FROM_ALL)   # FZ0 errata (R-B0 #13): ours is declared first and wins over FunkGui's;
+                                                # without it every GPU `all` build compiled bimg_encode/_decode too
 FetchContent_Declare(FunkGui GIT_REPOSITORY ${FCOMPRESSOR_FUNKGUI_REPO} GIT_TAG ${FCMP_FUNKGUI_TAG} GIT_SHALLOW FALSE)
 
 # 3. Make available in dependency order, then assert.
@@ -360,6 +370,9 @@ Assertion rules:
   directory only if it is its own repository root. That rule stops `build/_deps/x-src` from resolving to the enclosing
   FCompressor worktree. A SHA mismatch is `FATAL_ERROR`. A directory that is not a git checkout gets a `WARNING`, and
   the version checks still apply.
+  - **FZ0 errata (R-B0 #10):** HEAD is compared with `rev-parse -q --verify <SHA>^{commit}`, not with `<SHA>` itself,
+    so a pin that names an annotated tag object is peeled to its commit (a commit SHA peels to itself). A pin that is
+    not in DIR is `FATAL_ERROR` too. The override ancestry check uses `<SHA>^{commit}` the same way.
   - `.deps` checkouts are read-only, so only commands that do not write are used. Never `describe --dirty`, which
     refreshes the index.
 - **Why assertions are needed.** `FETCHCONTENT_SOURCE_DIR_*` bypasses `GIT_TAG` completely (B §7.2). Without these
@@ -452,9 +465,19 @@ if(FCOMPRESSOR_LTO)
   target_compile_options(fcmp_lto INTERFACE $<$<CONFIG:Release>:-flto>)
   target_link_options(fcmp_lto INTERFACE $<$<CONFIG:Release>:-flto>)
 endif()
-add_library(fcmp_warnings INTERFACE)         # our sources only
-target_compile_options(fcmp_warnings INTERFACE -Wall -Wextra -Wshadow -Wpedantic $<$<BOOL:${FCOMPRESSOR_WERROR}>:-Werror>)
+# FZ0 errata (R-B0 #6): ONE warning list for every TU of ours (fcdsp, probes, bench, plugin and editor sources, per
+# file where JUCE module TUs share the target) and for check-headers.sh: JUCE 8.0.4's clang list
+# (juce_recommended_warning_flags, JUCEHelperTargets.cmake:51-86) + -Wextra (first, so JUCE's -Wno-ignored-qualifiers
+# wins), without -Wfloat-equal (-Wno-float-equal last; exact float compares are intended in fcdsp, the probes and
+# FunkGui's Harness.h). Before, the plugin's sources alone faced JUCE's list, so an fcdsp header could build in fcdsp
+# and the probes and then break the plugin.
+set(FCMP_WARNING_FLAGS -Wextra <JUCE's clang list> -Wno-float-equal [-Werror])
+add_library(fcmp_warnings INTERFACE)         # fcdsp only; the per-file form is fcmp_warn_sources()
+target_compile_options(fcmp_warnings INTERFACE ${FCMP_WARNING_FLAGS}
+    -Wglobal-constructors -Wexit-time-destructors)   # FZ0 errata (R-B0 #3): no static constructors in fcdsp (C D12)
 # FCMP_CAN_RUN_PROBES: try_run of a 1-line program built for FCMP_RUN_ARCH. OFF -> probe tests are DISABLED (§3.3).
+# FZ0 errata (R-B0 #9): only ON is cached; an OFF result is checked again on every configure (about 1 s), so installing
+# Rosetta and reconfiguring enables the probes.
 ```
 
 Rules:
@@ -581,7 +604,12 @@ endforeach()
 function(fcmp_probe_test layer exe probe mode timeout)
   if(mode) set(name ${layer}.${probe}.${mode}) ; set(margs --mode ${mode}) ; set(mlabel mode:${mode})
   else()   set(name ${layer}.${probe})         ; set(margs "")            ; set(mlabel global) endif()
-  add_test(NAME ${name} COMMAND $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
+  # FZ0 errata (R-B0 #1): the verdict is the exit code, through a /bin/sh wrapper (_fcmp_probe_sh): exit 0 passes, and
+  # exit 2 / 3 pass only when this run's results JSON reports golden_drift / golden_missing; any other code, a signal
+  # or a timeout fails. B0's PASS_REGULAR_EXPRESSION on the RESULT line made CTest ignore the exit code, so a
+  # sanitizer report after a passing RESULT line (TSan exits 66) passed.
+  add_test(NAME ${name} COMMAND /bin/sh -c "${_fcmp_probe_sh}" fcmp-probe ${CMAKE_BINARY_DIR}/probe-results/${name}.json
+           $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
            --golden-root ${PROJECT_SOURCE_DIR}/tests/golden --arch ${FCMP_RUN_ARCH}
            --bless-to ${CMAKE_BINARY_DIR}/golden-candidates --results ${CMAKE_BINARY_DIR}/probe-results)
   set(sb ${CMAKE_BINARY_DIR}/sandbox/${name})
@@ -645,7 +673,20 @@ Rules for the test set:
 - **Probes are `EXCLUDE_FROM_ALL`.** The owner's `cmake --build` stays fast. Agent build presets list `fcmp_probes`
   explicitly (§2.10).
 - **The sandbox directory** is created by the probe itself. No probe ever touches the real
-  `~/Library/Application Support/FCompressor` (C §6.6).
+  `~/Library/Application Support/FCompressor` (C §6.6). **FZ0 errata (R-B0 #7):** ProbeMain empties a sandbox below a
+  `sandbox` path component before the run, and `verify.sh` deletes `<build>/sandbox`, so no run sees the previous run's
+  prefs or `presets.db` (`dsp.selftest` leaves a marker file and checks that its sandbox starts empty).
+- **FZ0 errata (R-B0 #12): `built-from-probes.txt`.** The `fcmp_probes` target ends by writing
+  `<build>/built-from-probes.txt` = `probes <HEAD sha> <clean|dirty> <UTC>` (`cmake/FcmpBuiltFrom.cmake`), and every
+  build deletes it before the probe executables compile, so it exists only after a successful build. In JUCE
+  configurations `fcmp_plugin_built_from` (in `all`) does the same for the AU/VST3/Standalone bundles
+  (`built-from-plugin.txt`). `verify.sh` writes `verify-passed-<sha>` only when the probes' line names that HEAD and a
+  clean tree, and `validate.sh` appends its result only when the plugin's line does: a commit, merge or checkout
+  without a rebuild can no longer certify stale binaries.
+- **FZ0 errata (R-B0 #3, #4): `lint.deps`.** The libm rule uses the regex in 01 §2.2 rule 4 as widened at FZ0
+  (`cmake/LintDeps.cmake` `_libm_re`: adds `log10`, `log2`, `exp2`, `expm1`, the inverse and hyperbolic functions,
+  the `f` forms, `cbrt`, `hypot`, `erf`, the gamma functions). The static rule scans `static` lines at any
+  indentation and treats `static T x(<literal>...)` as a variable.
 
 ### 2.10 Presets (`CMakePresets.json`, schema version 6)
 
@@ -659,7 +700,7 @@ Rules for the test set:
 | `agent` | `${sourceDir}/build-agent` | **headless**, RelWithDebInfo, install OFF | default for FCompressor agents |
 | `agent-gui` | `${sourceDir}/build-agent-gui` | GPU, RelWithDebInfo, install OFF | GPU editor work (`EditorHost`, shaders) |
 | `dsp` | `${sourceDir}/build-dsp` | DSP-only, RelWithDebInfo | inner loop for `fcdsp` tasks |
-| `asan` / `tsan` | `${sourceDir}/build-{asan,tsan}` | DSP-only, RelWithDebInfo + `-fsanitize=address,undefined` / `thread` | lead at milestones (S4, S8, S12; §4.8) |
+| `asan` / `tsan` | `${sourceDir}/build-{asan,tsan}` | DSP-only, RelWithDebInfo + `-fsanitize=address,undefined -fno-sanitize-recover=undefined` (FZ0 errata, R-B0 #5: UBSan halts instead of printing `runtime error:` and exiting 0) / `thread` | lead at milestones (S4, S8, S12; §4.8) |
 | `tsan-agent` | `${sourceDir}/build-tsan-agent` | **headless**, RelWithDebInfo + `-fsanitize=thread`; runs `proc.*` and `ui.*` too, including a scripted editor attach/detach and the message-thread `SetupWatcher` | lead at milestones (K2 #18) |
 | `rtsan` | `${sourceDir}/build-rtsan` | headless, RelWithDebInfo, `FCOMPRESSOR_RTSAN=ON` (`-fsanitize=realtime`; `[[clang::nonblocking]]` on `EngineHost::process`, the `IEngine` per-chunk calls and `Processor::processBlock`; `-Wfunction-effects` on `fcdsp` only, because JUCE functions carry no effect annotations). If unsupported, `fcmp_probe_plugin` interposes `malloc`, `free`, `pthread_mutex_lock`, `os_unfair_lock_lock`, `write` and `mach_msg` and counts calls on the audio thread | lead at milestones (K2 #18) |
 
@@ -853,10 +894,18 @@ Every run:
 - With `--bless-to`, writes the full measured row set as `<dir>/<arch>/<scope>/<probe>.txt`. It writes a temp file
   and then renames it (C §1 item 3), and adds `<probe>.diff` when there is drift.
 
+**FZ0 errata (R-B0 #1): how CTest sees these codes.** The CTest test wraps the probe (§2.9): exit 0 passes; exit 2 or 3
+passes only when the probe's own results JSON (deleted before the run) reports `golden_drift` or `golden_missing`, so
+the workflow presets still succeed with candidates; everything else (1, 4, a sanitizer's code such as TSan's 66, a
+signal, a timeout) fails. A probe that prints a passing `RESULT` line and then dies is therefore blocking, and
+`verify.sh` reports it as "status pass but the process failed".
+
 #### 3.2.5 Blessing: `golden.py`
 
 `golden.py` is FunkGui's `tools/golden.py`. FCompressor calls it through `Scripts/golden.py`. It takes
-`--allow-env <NAME>`: FCompressor uses `FCMP_ALLOW_BLESS`, FunkGui uses `FUNKGUI_ALLOW_BLESS`.
+`--allow-env <NAME>`: FCompressor uses `FCMP_ALLOW_BLESS`, FunkGui uses `FUNKGUI_ALLOW_BLESS`. **FZ0 errata (R-B0 #2,
+R-G1 #1):** `Scripts/golden.py` passes `--allow-env FCMP_ALLOW_BLESS` to `adopt` only (FunkGui v0.1.0's `report` and
+`diff` did not accept it and exited 2); `--golden-root` goes to every subcommand.
 
 - **`report <build>`** reads `probe-results/*.json` and prints four groups:
   - BLOCKING: `spec_fail`, `harness_error`, missing results.
@@ -1263,6 +1312,11 @@ Every task:
    - Tasks that add or change a frozen header: `Scripts/check-headers.sh` (CTest `lint.headers`) passes — every frozen
      header compiles standalone with `clang++ -std=c++20 -fsyntax-only`, every `constexpr` helper is inline, and the
      size asserts are live (`EngineParams` 116, `UiFrame` 288, `HistoryColumn` 32, `Prim` 84; K3 #20).
+     **FZ0 errata (R-B0 #6, #8, #3):** the header check uses the same warning list as every TU of ours (§2.6:
+     JUCE's clang list + `-Wextra`, without `-Wfloat-equal`), so a header that passes also compiles in the plugin;
+     `-Wmissing-prototypes -Wmissing-variable-declarations` make a non-inline function or variable definition an error
+     ("every helper is inline" is now checked, not assumed); `Source/fcdsp` headers also get `-Wglobal-constructors
+     -Wexit-time-destructors`. CTest passes CMake's list to the script, which fails if its own copy differs.
 3. **Verify.**
    - `Scripts/verify.sh <build>` exits 0. That means **0 spec failures, 0 harness errors, 0 crashes or timeouts, 0
      disabled tests** (a disabled test on arm64 means the configuration is broken).
@@ -1307,7 +1361,9 @@ Every task:
    ```
 
 3. **Bump the pin** in `cmake/FcmpDeps.cmake`: `FCMP_FUNKGUI_TAG v0.2.0`, `FCMP_FUNKGUI_SHA <tag sha>`,
-   `FCMP_FUNKGUI_VERSION 0.2.0`.
+   `FCMP_FUNKGUI_VERSION 0.2.0`. **FZ0 errata (R-B0 #10):** `<tag sha>` is the tagged commit,
+   `git -C "$FG" rev-parse v0.2.0^{commit}`; FunkGui's tags are annotated, and a bare `rev-parse v0.2.0` prints the tag
+   object. FcmpDeps.cmake peels either to the commit, so both configure.
 4. **Merge the FCompressor tasks.**
    - For each worktree: `git -C <wt> add -A && git -C <wt> commit -m "s1/<task>: <summary>"`, then in the main
      checkout `git merge --no-ff s1/<task>`.
@@ -1321,11 +1377,19 @@ Every task:
      group. `adopt` refuses rows of `provisional` Modes, and `ui.geometry` rows before FZ5 (K3 #9, #21).
    - Rerun `verify.sh`. It must be **fully green, with 0 candidates** (other than the expected pre-FZ5
      `ui.geometry` and provisional-Mode `golden_missing` rows, listed by name in `docs/sprints/s<N>.md`).
-7. **Host validation, every sprint end** (K2 #19): `Scripts/validate.sh build-lead` against the installed bundles:
+   - **FZ0 errata (R-B0 #12):** `verify.sh` writes `verify-passed-<sha>` only for a clean tree whose HEAD is the one
+     `build-lead/built-from-probes.txt` names (§2.9). After committing (step 10), run `cmake --build --preset lead`
+     again (a no-op build that rewrites the built-from files) before the stamping `verify.sh` and `validate.sh` runs.
+7. **Host validation, every sprint end** (K2 #19): `Scripts/validate.sh --install build-lead` (**FZ0 errata, R-B0
+   #11**: `--install` first replaces the installed VST3 and AU bundles with `build-lead`'s; without it validate.sh
+   refuses unless the installed `Contents/MacOS/FCompressor` binaries are byte-identical to
+   `build-lead/FCompressor_artefacts/Release/`'s, so last sprint's install is never validated in this build's name;
+   step 9's owner install replaces them again), against the installed bundles:
    1. `killall -9 AudioComponentRegistrar; auval -strict -v aufx Fcmp Funk`;
    2. `pluginval --strictness-level 10 --repeat 2 --randomise --timeout-ms 900000` on the `.vst3` and the
       `.component` (pluginval from `~/audio/.deps/tools`, built by `deps.sh` from a pinned tag);
-   3. it writes its result into the `verify-passed-<sha>` stamp. It exercises Mode fuzzing (the crossfade latch),
+   3. it writes its result into the `verify-passed-<sha>` stamp, only when `build-lead/built-from-plugin.txt` names
+      that HEAD and a clean tree (R-B0 #12). It exercises Mode fuzzing (the crossfade latch),
       setup-parameter fuzzing (`SetupWatcher`), state restore into a non-fresh instance, editor open/close ×N (attach
       count, ObjC classes) and `getText` from background threads. GarageBand (sandboxed host) is a manual release
       check.

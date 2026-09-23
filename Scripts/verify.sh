@@ -4,22 +4,27 @@
 #
 #   1. Refuses --quick (the gate always runs the full grids). With --integration (the lead's sprint-end run) it refuses a
 #      build configured with any dependency override in fcmp-deps.txt (K2 #26c); otherwise it prints the override.
-#   2. Wipes <build>/golden-candidates, <build>/probe-results and any old verify-passed-* stamp.
-#   3. Runs `ctest -L verify -j4` once; it never stops at the first failure.
+#   2. Wipes <build>/golden-candidates, <build>/probe-results, <build>/sandbox (the probes' prefs and presets.db, so no
+#      run sees the previous one's; R-B0 #7) and any old verify-passed-* stamp.
+#   3. Runs `ctest -L verify -j4` once; it never stops at the first failure. It never builds: build first.
 #   4. Classifies every test itself, from CTest's JUnit report and probe-results/*.json (Harness v2 statuses):
-#        BLOCKING  spec_fail, harness_error, crash or timeout, missing results, disabled or not run, a failed lint
+#        BLOCKING  spec_fail, harness_error, crash or timeout, missing results, disabled or not run, a failed lint, a
+#                  RESULT line followed by a failing exit (a sanitizer report after finish(); R-B0 #1)
 #        DRIFT     golden_drift (with its <probe>.diff)          } candidates: allowed only with a one-line reason
 #        MISSING   golden_missing (candidate files to review)     } per key group in the handoff
 #        IMPROVED  le:/ge: golden rows that moved the good way (informational)
 #   5. Prints the counts, every non-pass test and the 10 slowest tests.
-#   6. Writes <build>/verify-passed-<HEAD sha> only when fully green (no blocking, no drift, no missing) and the source
-#      tree has no uncommitted changes (release.sh requires it; validate.sh appends its result to it).
+#   6. Writes <build>/verify-passed-<HEAD sha> only when fully green (no blocking, no drift, no missing), the source
+#      tree has no uncommitted changes, and <build>/built-from-probes.txt (written by the last successful build of
+#      fcmp_probes, cmake/FcmpBuiltFrom.cmake) says the probes were built from that same HEAD with a clean tree, so a
+#      commit, merge or checkout without a rebuild cannot certify stale binaries (FZ0 errata, R-B0 #12). release.sh
+#      requires the stamp; validate.sh appends its result to it.
 #
 # Exit: 0 = no blocking results (candidates allowed), 1 = blocking results, 2 = usage or setup error.
 set -u
 
 usage() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 INTEGRATION=0
@@ -75,7 +80,7 @@ if [ -n "$OVERRIDES" ]; then
   fi
 fi
 
-rm -rf "$BUILD/golden-candidates" "$BUILD/probe-results"
+rm -rf "$BUILD/golden-candidates" "$BUILD/probe-results" "$BUILD/sandbox"
 rm -f "$BUILD"/verify-passed-* "$BUILD/verify-junit.xml" "$BUILD/verify-tests.json"
 mkdir -p "$BUILD/probe-results"
 
@@ -201,7 +206,8 @@ for t in listed:
     if status in ("spec_fail", "harness_error"):
         groups["BLOCKING"].append((name, "%s (spec_fail %s)" % (status, res.get("spec_fail"))))
     elif not ok:
-        groups["BLOCKING"].append((name, "status %s but the process failed (crash after its results?%s)"
+        groups["BLOCKING"].append((name, "status %s but the process failed (a sanitizer report or crash after its "
+                                   "RESULT line, or an exit code that does not match it?%s)"
                                    % (status, " " + j["message"] if j["message"] else "")))
     elif status == "pass":
         groups["PASS"].append(name)
@@ -240,17 +246,31 @@ RC=$?
 
 case "$RC" in
   0)
-    SHA="$(git -C "$SRC" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null || true)"
-    DIRTY="$(git -C "$SRC" status --porcelain 2>/dev/null | head -1)"
-    if [ -n "$SHA" ] && [ -z "$DIRTY" ]; then
+    SHA="$(git --no-optional-locks -C "$SRC" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null || true)"
+    DIRTY="$(git --no-optional-locks -C "$SRC" status --porcelain 2>/dev/null | head -1)"
+    # "probes <sha> <clean|dirty> <time>", written by the last successful build of fcmp_probes (R-B0 #12).
+    BUILT="$(head -1 "$BUILD/built-from-probes.txt" 2>/dev/null || true)"
+    read -r _ BUILT_SHA BUILT_STATE _ <<< "$BUILT"
+    WHY=""
+    if [ -z "$SHA" ]; then
+      WHY="$SRC is not a git checkout"
+    elif [ -n "$DIRTY" ]; then
+      WHY="the source tree has uncommitted changes"
+    elif [ -z "$BUILT" ]; then
+      WHY="no $BUILD/built-from-probes.txt: the last build of fcmp_probes did not finish; build, then rerun"
+    elif [ "$BUILT_SHA" != "$SHA" ] || [ "$BUILT_STATE" != "clean" ]; then
+      WHY="the probes were built from $BUILT_SHA ($BUILT_STATE tree) but HEAD is $SHA; build, then rerun"
+    fi
+    if [ -z "$WHY" ]; then
       {
         echo "verify.sh: fully green at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "source $SRC @ $SHA"
+        echo "built-from $BUILT"
         cat "$DEPS"
       } > "$BUILD/verify-passed-$SHA"
       echo "== fully green: wrote $BUILD/verify-passed-$SHA"
     else
-      echo "== fully green (no stamp: the source tree has uncommitted changes)"
+      echo "== fully green (no stamp: $WHY)"
     fi
     exit 0 ;;
   3)
