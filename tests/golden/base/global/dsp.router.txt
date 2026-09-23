@@ -1,0 +1,30 @@
+# funkgui-golden 2  probe=dsp.router  scope=global
+# key	value	tolerance
+router.e2e.stereo.a.m_gain_db	-7.55921629	abs:0.01
+router.e2e.stereo.a.s_gain_db	-7.56093084	abs:0.01
+router.e2e.stereo.b.m_gain_db	-7.50449337	abs:0.01
+router.e2e.stereo.b.s_gain_db	-7.5043708	abs:0.01
+router.e2e.ms.a.m_gain_db	-7.49984832	abs:0.01
+router.e2e.ms.a.s_gain_db	3.21288015e-06	abs:0.01
+router.e2e.ms.b.m_gain_db	2.42380808e-06	abs:0.01
+router.e2e.ms.b.s_gain_db	-7.49935782	abs:0.01
+router.e2e.mid.a.m_gain_db	-7.49984832	abs:0.01
+router.e2e.mid.a.s_gain_db	3.21288015e-06	abs:0.01
+router.e2e.mid.b.m_gain_db	2.42380808e-06	abs:0.01
+router.e2e.mid.b.s_gain_db	0	abs:0.01
+router.e2e.side.a.m_gain_db	0	abs:0.01
+router.e2e.side.a.s_gain_db	3.21288015e-06	abs:0.01
+router.e2e.side.b.m_gain_db	2.42380808e-06	abs:0.01
+router.e2e.side.b.s_gain_db	-7.49935782	abs:0.01
+router.e2e.mks.a.m_gain_db	0	abs:0.01
+router.e2e.mks.a.s_gain_db	-7.49983427	abs:0.01
+router.e2e.mks.b.m_gain_db	2.42380808e-06	abs:0.01
+router.e2e.mks.b.s_gain_db	0	abs:0.01
+router.e2e.skm.a.m_gain_db	0	abs:0.01
+router.e2e.skm.a.s_gain_db	3.21288015e-06	abs:0.01
+router.e2e.skm.b.m_gain_db	-7.49933043	abs:0.01
+router.e2e.skm.b.s_gain_db	0	abs:0.01
+router.e2e.ms_linked.a.m_gain_db	-7.49984832	abs:0.01
+router.e2e.ms_linked.a.s_gain_db	-7.49983615	abs:0.01
+router.e2e.ms_linked.b.m_gain_db	-7.49933875	abs:0.01
+router.e2e.ms_linked.b.s_gain_db	-7.49935782	abs:0.01
