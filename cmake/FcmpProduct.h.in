@@ -1,0 +1,25 @@
+// FcmpProduct.h: generated from cmake/FcmpProduct.h.in by cmake/FcmpSources.cmake. Do not edit.
+//
+// Product constants for Source/plugin and Source/editor code, which never use JucePlugin_* (01 §2.2, 03 §1.1): the
+// same values reach juce_add_plugin and funkgui_configure_product from cmake/FcmpSources.cmake, so there is one source
+// of truth. JUCE-free and header-only; include it as "FcmpProduct.h".
+#pragma once
+
+namespace fcmp::product
+{
+    inline constexpr char kName[]             = "@FCMP_PRODUCT_NAME@";        // PRODUCT_NAME, getName()
+    inline constexpr char kCompany[]          = "@FCMP_COMPANY_NAME@";        // COMPANY_NAME
+    inline constexpr char kCopyright[]        = "@FCMP_COMPANY_COPYRIGHT@";   // COMPANY_COPYRIGHT
+    inline constexpr char kVersion[]          = "@PROJECT_VERSION@";          // project(FCompressor VERSION ...)
+    inline constexpr int  kVersionMajor       = @PROJECT_VERSION_MAJOR@;
+    inline constexpr int  kVersionMinor       = @PROJECT_VERSION_MINOR@;
+    inline constexpr int  kVersionPatch       = @PROJECT_VERSION_PATCH@;
+    inline constexpr char kManufacturerCode[] = "@FCMP_MANUFACTURER_CODE@";   // PLUGIN_MANUFACTURER_CODE (AU manu)
+    inline constexpr char kPluginCode[]       = "@FCMP_PLUGIN_CODE@";         // PLUGIN_CODE (AU subtype)
+    inline constexpr char kBundleId[]         = "@FCMP_BUNDLE_ID@";           // BUNDLE_ID
+    inline constexpr char kEnvPrefix[]        = "@FCMP_ENV_PREFIX@";          // FCMP_PREFS_DIR, FCMP_PRESETS_DB, ...
+    inline constexpr char kObjcPrefix[]       = "@FCMP_OBJC_PREFIX@";         // FunkGui ObjC class-name root (02 §1.8)
+    inline constexpr char kPrefsFolder[]      = "@FCMP_PREFS_FOLDER@";        // ~/Library/Application Support/<this>
+
+    static_assert(sizeof(kManufacturerCode) == 5 && sizeof(kPluginCode) == 5, "four-character codes");
+} // namespace fcmp::product

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Audio input only (03 §5 step 1). The Standalone records from the input device the user picks; under the
+         hardened runtime that access must be declared here as well as explained in Info.plist
+         (NSMicrophoneUsageDescription, from MICROPHONE_PERMISSION_TEXT in cmake/FcmpPlugin.cmake). The AU and VST3
+         run inside a host, whose entitlements apply; Scripts/release.sh signs them with this file too, and the key is
+         inert there. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

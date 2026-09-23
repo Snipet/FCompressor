@@ -1,0 +1,172 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 30, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-${presetName}",
+      "cacheVariables": { "FCOMPRESSOR_INSTALL_AFTER_BUILD": "OFF" }
+    },
+    {
+      "name": "gpu",
+      "hidden": true,
+      "cacheVariables": { "FCOMPRESSOR_HEADLESS": "OFF", "FCOMPRESSOR_DSP_ONLY": "OFF" }
+    },
+    {
+      "name": "headless",
+      "hidden": true,
+      "cacheVariables": { "FCOMPRESSOR_HEADLESS": "ON", "FCOMPRESSOR_DSP_ONLY": "OFF" }
+    },
+    {
+      "name": "dsponly",
+      "hidden": true,
+      "cacheVariables": { "FCOMPRESSOR_DSP_ONLY": "ON" }
+    },
+    {
+      "name": "cfg-release",
+      "hidden": true,
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "FCOMPRESSOR_LTO": "ON" }
+    },
+    {
+      "name": "cfg-relwithdebinfo",
+      "hidden": true,
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "owner",
+      "displayName": "owner: GPU, Release, LTO, installs into ~/Library/Audio/Plug-Ins (the user's tree; lead install smoke test)",
+      "inherits": [ "gpu", "cfg-release", "base" ],
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": { "FCOMPRESSOR_INSTALL_AFTER_BUILD": "ON" }
+    },
+    {
+      "name": "lead",
+      "displayName": "lead: GPU, Release, LTO (integration verify, blessing, verify-gui-live)",
+      "inherits": [ "gpu", "cfg-release", "base" ]
+    },
+    {
+      "name": "lead-x86",
+      "displayName": "lead-x86: headless, Release, x86_64 (the x86 overlay; its tests need Rosetta 2)",
+      "inherits": [ "headless", "cfg-release", "base" ],
+      "cacheVariables": { "CMAKE_OSX_ARCHITECTURES": "x86_64" }
+    },
+    {
+      "name": "universal",
+      "displayName": "universal: GPU, Release, LTO, arm64 + x86_64, FCOMPRESSOR_RELEASE (release.sh, after lead-x86 passed)",
+      "inherits": [ "gpu", "cfg-release", "base" ],
+      "cacheVariables": { "FCOMPRESSOR_UNIVERSAL": "ON", "FCOMPRESSOR_RELEASE": "ON" }
+    },
+    {
+      "name": "release",
+      "displayName": "release: GPU, Release, LTO, arm64, FCOMPRESSOR_RELEASE (release.sh; the v1 default)",
+      "inherits": [ "gpu", "cfg-release", "base" ],
+      "cacheVariables": { "CMAKE_OSX_ARCHITECTURES": "arm64", "FCOMPRESSOR_RELEASE": "ON" }
+    },
+    {
+      "name": "agent",
+      "displayName": "agent: headless, RelWithDebInfo (the default agent tree and the DoD build)",
+      "inherits": [ "headless", "cfg-relwithdebinfo", "base" ]
+    },
+    {
+      "name": "agent-gui",
+      "displayName": "agent-gui: GPU, RelWithDebInfo (GPU editor work)",
+      "inherits": [ "gpu", "cfg-relwithdebinfo", "base" ]
+    },
+    {
+      "name": "dsp",
+      "displayName": "dsp: DSP-only, no JUCE, RelWithDebInfo (the fcdsp inner loop)",
+      "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ]
+    },
+    {
+      "name": "asan",
+      "displayName": "asan: DSP-only, RelWithDebInfo, AddressSanitizer + UBSan (lead, milestones)",
+      "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "tsan: DSP-only, RelWithDebInfo, ThreadSanitizer (lead, milestones)",
+      "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "tsan-agent",
+      "displayName": "tsan-agent: headless, RelWithDebInfo, ThreadSanitizer over proc.* and ui.* too (lead, milestones)",
+      "inherits": [ "headless", "cfg-relwithdebinfo", "base" ],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "rtsan",
+      "displayName": "rtsan: headless, RelWithDebInfo, RealtimeSanitizer or the RtInterposer fallback (lead, milestones)",
+      "inherits": [ "headless", "cfg-relwithdebinfo", "base" ],
+      "cacheVariables": { "FCOMPRESSOR_RTSAN": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "owner",      "configurePreset": "owner",      "targets": [ "all" ] },
+    { "name": "lead",       "configurePreset": "lead",       "targets": [ "all", "fcmp_probes" ] },
+    { "name": "lead-x86",   "configurePreset": "lead-x86",   "targets": [ "all", "fcmp_probes" ] },
+    { "name": "universal",  "configurePreset": "universal",  "targets": [ "all" ] },
+    { "name": "release",    "configurePreset": "release",    "targets": [ "all" ] },
+    { "name": "agent",      "configurePreset": "agent",      "targets": [ "all", "fcmp_probes" ], "jobs": 4, "nativeToolOptions": [ "-l", "12" ] },
+    { "name": "agent-probes", "configurePreset": "agent",    "targets": [ "fcmp_probes" ],        "jobs": 4, "nativeToolOptions": [ "-l", "12" ] },
+    { "name": "agent-gui",  "configurePreset": "agent-gui",  "targets": [ "all", "fcmp_probes" ], "jobs": 4, "nativeToolOptions": [ "-l", "12" ] },
+    { "name": "dsp",        "configurePreset": "dsp",        "targets": [ "all", "fcmp_probes" ], "jobs": 4, "nativeToolOptions": [ "-l", "12" ] },
+    { "name": "asan",       "configurePreset": "asan",       "targets": [ "all", "fcmp_probes" ] },
+    { "name": "tsan",       "configurePreset": "tsan",       "targets": [ "all", "fcmp_probes" ] },
+    { "name": "tsan-agent", "configurePreset": "tsan-agent", "targets": [ "all", "fcmp_probes" ] },
+    { "name": "rtsan",      "configurePreset": "rtsan",      "targets": [ "all", "fcmp_probes" ] }
+  ],
+  "testPresets": [
+    { "name": "test-base", "hidden": true,
+      "filter": { "include": { "label": "verify" } },
+      "execution": { "jobs": 4 },
+      "output": { "outputOnFailure": true } },
+    { "name": "lead",       "configurePreset": "lead",       "inherits": [ "test-base" ] },
+    { "name": "lead-x86",   "configurePreset": "lead-x86",   "inherits": [ "test-base" ] },
+    { "name": "agent",      "configurePreset": "agent",      "inherits": [ "test-base" ] },
+    { "name": "agent-gui",  "configurePreset": "agent-gui",  "inherits": [ "test-base" ] },
+    { "name": "dsp",        "configurePreset": "dsp",        "inherits": [ "test-base" ] },
+    { "name": "asan",       "configurePreset": "asan",       "inherits": [ "test-base" ] },
+    { "name": "tsan",       "configurePreset": "tsan",       "inherits": [ "test-base" ] },
+    { "name": "tsan-agent", "configurePreset": "tsan-agent", "inherits": [ "test-base" ] },
+    { "name": "rtsan",      "configurePreset": "rtsan",      "inherits": [ "test-base" ] }
+  ],
+  "workflowPresets": [
+    { "name": "lead-verify", "steps": [
+      { "type": "configure", "name": "lead" }, { "type": "build", "name": "lead" }, { "type": "test", "name": "lead" } ] },
+    { "name": "lead-x86-verify", "steps": [
+      { "type": "configure", "name": "lead-x86" }, { "type": "build", "name": "lead-x86" }, { "type": "test", "name": "lead-x86" } ] },
+    { "name": "agent-verify", "steps": [
+      { "type": "configure", "name": "agent" }, { "type": "build", "name": "agent" }, { "type": "test", "name": "agent" } ] },
+    { "name": "agent-gui-verify", "steps": [
+      { "type": "configure", "name": "agent-gui" }, { "type": "build", "name": "agent-gui" }, { "type": "test", "name": "agent-gui" } ] },
+    { "name": "dsp-verify", "steps": [
+      { "type": "configure", "name": "dsp" }, { "type": "build", "name": "dsp" }, { "type": "test", "name": "dsp" } ] },
+    { "name": "asan-verify", "steps": [
+      { "type": "configure", "name": "asan" }, { "type": "build", "name": "asan" }, { "type": "test", "name": "asan" } ] },
+    { "name": "tsan-verify", "steps": [
+      { "type": "configure", "name": "tsan" }, { "type": "build", "name": "tsan" }, { "type": "test", "name": "tsan" } ] },
+    { "name": "tsan-agent-verify", "steps": [
+      { "type": "configure", "name": "tsan-agent" }, { "type": "build", "name": "tsan-agent" }, { "type": "test", "name": "tsan-agent" } ] },
+    { "name": "rtsan-verify", "steps": [
+      { "type": "configure", "name": "rtsan" }, { "type": "build", "name": "rtsan" }, { "type": "test", "name": "rtsan" } ] }
+  ]
+}
