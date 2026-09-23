@@ -2216,7 +2216,7 @@ public:
 - The processor constructs one `funkgui::JuceParamPort` per APVTS parameter at construction and returns them from
   `port()`. The Panel's `SlotModel`s hold references to them.
 - There is **no `apvts()`** (UI code never needs the APVTS), **no `beginUndoTransaction`** (no `UndoManager`, 01 §9.1;
-  K2 #7) and **no `registry()`**: the UI uses 01's free functions (`modes()`, `bySlot()`, `resolveSlot()`).
+  K2 #7) and **no `registry()`**: the UI uses 01's free functions (`modeSlots()`, `bySlot()`, `resolveSlot()`).
 - `FakeFacade` (`Tools/probes/plugin/FakeFacade.{h,cpp}`, owned by U1a) implements the same interface with in-memory
   ports, scripted `UiFrame`s and a real `HistoryRing`.
 

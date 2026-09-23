@@ -1440,7 +1440,7 @@ struct ModeEntry {                                        // one per Mode, defin
 struct ModeSlot { uint8_t slot; std::string_view key; const ModeEntry* entry; };   // registry-owned
 struct Retired  { uint8_t slot; std::string_view key, successor; };
 
-std::span<const ModeSlot> modes() noexcept;               // assigned slots, slot order
+std::span<const ModeSlot> modeSlots() noexcept;           // assigned slots, slot order (FZ0 errata: was modes(), which clashes with namespace fcdsp::modes)
 const ModeEntry* bySlot(int slot) noexcept;               // nullptr: unassigned or retired
 const ModeEntry* byKey(std::string_view key) noexcept;    // registered keys only
 const ModeSlot&  resolveSlot(int rawSlot) noexcept;       // O(1) constexpr map: retired → successor; unassigned → clean
@@ -1451,9 +1451,15 @@ std::span<const Retired> retired() noexcept;
 
 // Source/fcdsp/modes/DefineMode.h — frozen at FZ0. Used as the last line of modes/<key>/<Traits>.cpp:
 #define FCDSP_DEFINE_MODE(Traits)                                                                           \
+    namespace fcdsp::modes {                                                                                \
     static_assert(sizeof(::fcdsp::ModeEngine<Traits>) <= ::fcdsp::kArenaBytes &&                            \
                   alignof(::fcdsp::ModeEngine<Traits>) <= 64, #Traits " does not fit the engine arena");    \
-    constinit const ::fcdsp::ModeEntry kEntry_##Traits = ::fcdsp::makeModeEntry<Traits>();
+    extern const ::fcdsp::ModeEntry kEntry_##Traits;                                                        \
+    constinit const ::fcdsp::ModeEntry kEntry_##Traits = ::fcdsp::makeModeEntry<Traits>();                  \
+    }                                                                                                       \
+    static_assert(sizeof(::fcdsp::modes::kEntry_##Traits) != 0, "use FCDSP_DEFINE_MODE at global scope")
+// FZ0 errata: a namespace-scope const has internal linkage, so the entry is declared extern and defined constinit
+// inside namespace fcdsp::modes; the macro is used at GLOBAL scope and ends with a semicolon: FCDSP_DEFINE_MODE(Clean);
 // makeModeEntry<T>() is a constexpr inline template in DefineMode.h that fills the ModeEntry from ModeEngine<T>.
 ```
 
@@ -1475,7 +1481,7 @@ no generated `ModeIncludes.h` (K3 #2, #6; this supersedes Draft 1's §8.3 and K1
 
 **The `dsp.registry` lint** — spec rows only, no golden rows (K3 #17). This is the canonical list; 03 §3.4 refers to
 it. It asserts:
-- The CMake key list equals `modes()`. Keys are unique and match `[a-z0-9-]{1,24}`; each Mode's directory name equals its key and `desc.key`. No key or slot is reused against `tests/fixtures/modes-ever.tsv`, retired ones included. Slots are unique and < 128. Retired keys have a registered successor.
+- The CMake key list equals `modeSlots()`. Keys are unique and match `[a-z0-9-]{1,24}`; each Mode's directory name equals its key and `desc.key`. No key or slot is reused against `tests/fixtures/modes-ever.tsv`, retired ones included. Slots are unique and < 128. Retired keys have a registered successor.
 - `kApvtsOrder` is a permutation of every `Pid` (K2 #9).
 - Every step list is strictly increasing with non-empty labels; a label > 6 glyphs prints a **warning** (the gate is `ui.textfit`, K1 #24). Every non-live spec has a `reason`.
 - Variant drivers come earlier in `kResolveOrder`. Derived specs do not depend on derived specs.

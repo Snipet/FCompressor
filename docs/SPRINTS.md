@@ -318,7 +318,7 @@ its whole build and verification skeleton and its frozen DSP contracts. Nothing 
     `kFadeMs`, `kMinFadeGapMs`).
   - `modes/`: `ModeDescriptor.h` (`revision`, `provisional`), `ModeKit.h` (all helpers inline constexpr, `allNa`,
     time-spec helpers), `DefineMode.h` (`FCDSP_DEFINE_MODE`, `makeModeEntry<T>`), `Registry.{h,cpp}` — `Registry.cpp`
-    expands `Modes.def` three times and is **empty-registry safe** (`modes()` empty; `resolveSlot` returns a null
+    expands `Modes.def` three times and is **empty-registry safe** (`modeSlots()` empty; `resolveSlot` returns a null
     `ModeSlot{0, "", nullptr}` until slot 0 is active), so probe executables link from S1 on.
   - `telemetry/`: `Seqlock.h`, `UiFrame.h` (288 B; `overlaySmoothed` inline), `HistoryRing.h` (32 B columns, claim-word
     protocol), all implemented header-only.
@@ -1365,7 +1365,7 @@ The lead applies these to 03 (and where noted 01/02) as revisions at the next fr
 | D2 | G4 (shapes) runs **before** G5 (RuleSlider): v0.4.0 = shapes, v0.5.0 = RuleSlider | `RuleSlider`'s locked track is `Canvas::dotted`, which G4 implements (02 §4.2) |
 | D3 | U1a split into **U1a (skeleton)** and **U1s (slots)**; the skeleton stubs every plot as well as every sub-view, and `Band`/`CharScreen` compose their plots from S5 | U1a was more than one session; plot stubs make U2/U3/U4 order-independent and file-disjoint |
 | D4 | `ProcessorFacade.h` is written by the **lead at FZ1** (end of S1), not by F0 | it cannot compile before v0.2.0 declares `ParamPort`; no uncompilable file ever sits in the tree |
-| D5 | `Registry.cpp` moves from F3 to **F0** and is empty-registry safe | probe files that call `byKey`/`modes()` must link in S1, before any Mode is registered |
+| D5 | `Registry.cpp` moves from F3 to **F0** and is empty-registry safe | probe files that call `byKey`/`modeSlots()` must link in S1, before any Mode is registered |
 | D6 | F2's S1 evidence is the global `dsp.resolve`/`dsp.format`/`dsp.hostparams`; `dsp.quant` moves to F3; FZ1's evidence changes accordingly (03 §4.9.4 named `dsp.quant.clean`) | Clean is registered only in S2 (it needs `ModeEngine`), and D3 includes a D1 row that needs `EngineRig` |
 | D7 | `Scripts/check-headers.sh` → B0 (03 gave it to F0 while B0 owned `Scripts/`) | an ownership overlap inside S0 |
 | D8 | `Scripts/verify.sh` classifies `probe-results/*.json` itself; `golden.py report` stays a lead tool (03 §3.2.5 had verify call it) | B0 cannot reach FunkGui's `golden.py` in S0; the DoD gate should not depend on another repo's tool version |
