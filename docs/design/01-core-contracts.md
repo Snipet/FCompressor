@@ -731,6 +731,12 @@ This is safe from any thread (E §4.3; `getText` from background threads is exer
 
 ### 5.1 Core (Source/fcdsp/core)
 
+> **S2 lead revision — ramp shape.** Every 20 ms gain transition that can land on a waveform peak (GR OFF, Stage-2
+> OFF, and — for F4/F7 — bypass, listen, delta and kernel crossfades) runs a `LinearRamp` whose value passes through
+> smoothstep `3t² − 2t³` before it is applied. A straight linear fade measured +40/+48 dB on the C §5.0 click test
+> (limit +3); the shaped fade +0.8/+1.3 dB (F3). `oneMinusAlpha(tauMs, fs)` lives in `core/Units.h`, and
+> `BallisticsPolicy`/`Stage2Policy` require `grDb(const State&)` for `Carry` (S2 lead revisions).
+
 **`Rt.h`** (FZ0 errata, R-F0 #1) holds `FCDSP_NONBLOCKING` (§2.2 rule 6), so `core/` can annotate without including
 `engine/`. Every function declared in `core/` is `FCDSP_NONBLOCKING`; F1 (S1) adds the bodies and may define the
 non-SIMD ones inline in their headers (preferred for the per-sample `Smoother4::tick`, `LinearRamp::tick` and
@@ -1254,6 +1260,13 @@ inline int lookaheadSamples(LookaheadBudget b, double fs) noexcept FCDSP_NONBLOC
 - **Policy (E §5.2):** `latency = lookaheadSamples(budget, fs) + kOs[quality].latency`. It is reported through `setLatencySamples` from `prepareToPlay` (right after `configure`) and from `SetupWatcher` — never from the audio thread (K2 #6). `proc.latency.<key>` sets `quality` from a non-message thread while processing and requires `getLatencySamples()` to be correct within 100 ms, with 0 allocations and 0 locks on the audio thread.
 - **`dUp`** is the integer base-rate delay of the up stage (ECO 0, STD 2, HQ per design). The SC delay adds it (§5.4 c), so GR for base sample n lands on the upsampled audio that represents sample n at every Quality; `dsp.time.<key>` requires τ measured at ECO, STD and HQ to agree within 1.5 base samples (K2 #11b).
 - **`kStdLatency`, `kStdUpDelay`, `kHqLatency`, `kHqUpDelay` are frozen at FZ2** (end of the oversampler spike, F6, 03 §4.9) and are v1-forever from then.
+- **FZ2 values (lead revision, 2026-09-23, from F6):** `kStdLatency = 4`, `kStdUpDelay = 2`, `kHqLatency = 61`,
+  `kHqUpDelay = 33`. STD: 2× polyphase IIR (up 8 coefficients, 103.7 dB; down 7, 90.8 dB; passband to 20 kHz at
+  44.1 kHz) plus a centred first-order Thiran section (D = 0.5365); group-delay error ≤ 0.00502 samples to 1 kHz at
+  44.1–192 kHz; τg(10 kHz) = 5.227 samples at 44.1 kHz. HQ: two cascaded linear-phase FIR halfbands,
+  (61+51)/2 + (11+9)/4 = 61 exactly; worst images 94.2 dB, aliases 79.9 dB to 20 kHz. Rounding the up-stage delays moves
+  side-chain alignment by 0.16 (STD) / 0.25 (HQ) samples. **Latency probes must measure STD by LF phase or group delay,
+  never by impulse peak (it peaks at sample 5) or broadband cross-correlation.**
   - Targets are ≤ 4 and ≤ 64 samples, from E's measurements of JUCE's equivalents: 4 (3.14 + Thiran) and 61.
   - `dsp.os` asserts measured == `kOs[q].latency` and reports τg at 10 kHz; `proc.osref` compares passband and image rejection with JUCE only, never latency (K1 #29).
 - **Why not JUCE [DECIDED].** Mix, crossfade and colour all run at the OS rate inside `EngineHost`. Putting `juce::dsp::Oversampling` there would make `fcdsp` depend on JUCE, and probes would stop testing the shipped object code. Owning the filters also keeps the coefficients constexpr, which is bit-exact across arches.

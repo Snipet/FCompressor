@@ -86,6 +86,7 @@ requires (const typename B::Coeffs& c, typename B::State& s, simd::f32x4 v, deta
     { B::commitFb(c, s, v) } noexcept;                                                  // FB: accept the LINKED r,
                                                                                         //     advance every internal state
     { B::seed(s, v) } noexcept;                                                         // from Carry::grDb
+    { B::grDb(std::as_const(s)) } noexcept -> std::same_as<simd::f32x4>;               // for Carry::grDb (S2 lead revision)
     { B::attackNowMs (c, std::as_const(s)) } noexcept -> std::same_as<simd::f32x4>;
     { B::releaseNowMs(c, std::as_const(s)) } noexcept -> std::same_as<simd::f32x4>;
     { B::status(std::as_const(s)) } noexcept -> std::same_as<uint8_t>;   // ControlIo::bits b0-1 phase (max lane), b2 auto-slow
@@ -96,6 +97,7 @@ requires (const typename S2::Coeffs& c, typename S2::State& s, simd::f32x4 r1, s
     { S2::combine(c, s, r1, xDb, l) } noexcept -> std::same_as<simd::f32x4>;   // combine(c, s, r1, xDb, l) -> r;
                                                                                //   s2 GR in aux lanes
     { S2::seed(s, r1) } noexcept;                                              // from Carry::s2GrDb (FZ0 errata)
+    { S2::grDb(std::as_const(s)) } noexcept -> std::same_as<simd::f32x4>;     // for Carry::s2GrDb (S2 lead revision)
 };
 
 // Mode-internal side-chain shaping (FZ0 errata, R-F0 #3): Flat, R37Shelf, SlowHp (Diode 609), Thrust. It runs per

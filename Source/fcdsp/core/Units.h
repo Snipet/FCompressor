@@ -46,4 +46,27 @@ inline float alphaFromTau(float tauMs, float fs) noexcept FCDSP_NONBLOCKING {
     return fcdsp::exp2(-1000.0f / (tauMs * fs * kLn2));
 }
 
+// S2 lead revision (from F3): the well-conditioned complement, for long time constants where alphaFromTau's
+// float alpha near 1 loses resolution (F1: 0.3 % tau error at 1e5 samples). Ballistics carry 1 - alpha.
+// 1 - alpha for a one-pole of time constant tauMs at rate fs: 1 - e^(-x), x = 1000 / (tauMs * fs). For x < 1/8 the
+// Taylor series x(1 - x/2(1 - x/3(1 - x/4(1 - x/5(1 - x/6))))) (truncation below 1e-9 relative), else
+// 1 - exp2(-x log2 e) (1 - alpha >= 0.11 there, so the subtraction costs at most 5e-7 relative). tauMs <= 0 (or NaN),
+// or fs <= 0: 1, an instantaneous pole, as alphaFromTau gives 0 there.
+inline float oneMinusAlpha(float tauMs, float fs) noexcept FCDSP_NONBLOCKING
+{
+    if (!(tauMs > 0.0f) || !(fs > 0.0f))
+        return 1.0f;
+    const float x = 1000.0f / (tauMs * fs);
+    if (x < 0.125f)
+    {
+        float p = 1.0f - x * (1.0f / 6.0f);
+        p = 1.0f - x * (1.0f / 5.0f) * p;
+        p = 1.0f - x * (1.0f / 4.0f) * p;
+        p = 1.0f - x * (1.0f / 3.0f) * p;
+        p = 1.0f - x * 0.5f * p;
+        return x * p;
+    }
+    return 1.0f - fcdsp::exp2(-x * 1.44269504f);
+}
+
 } // namespace fcdsp

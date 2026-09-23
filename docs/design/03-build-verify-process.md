@@ -957,6 +957,10 @@ R-G1 #1):** `Scripts/golden.py` passes `--allow-env FCMP_ALLOW_BLESS` to `adopt`
 
 ### 3.4 DSP probes (`fcmp_probe_dsp`, JUCE-free)
 
+> **S2 lead revision.** D2 (`dsp.time`) drives the detector with a 1 kHz **square** wave, not a sine: with GR-domain
+> peak ballistics a sine makes the measured attack a property of the waveform (F3). D1 (`dsp.static`) runs at the
+> fastest attack and slowest release. Latency rows (D7) use LF phase / group delay (01 §5.6 FZ2 note).
+
 The methods are C §5.2–5.8 unless stated otherwise. "Spec" rows cannot be blessed. "Golden" rows can. The tolerances
 are §3.7. The **Driver** column says what each probe runs (K3 #10):
 - **Rig** = `Tools/probes/common/EngineRig`: constructs a `ModeEntry` into an arena, calls `prepare`, `setParams`,
