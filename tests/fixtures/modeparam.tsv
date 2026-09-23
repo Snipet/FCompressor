@@ -1,0 +1,2 @@
+# modeparam.tsv: for each released stateVersion, the Mode slot, its normalised host value (slot/127) and the key it must resolve to (proc.modeparam, 03 §3.5; C §5.7.4). Append-only, write-once rows. Lead-owned. Lines starting with # are comments.
+# stateVersion	slot	norm	key

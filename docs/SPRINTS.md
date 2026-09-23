@@ -325,7 +325,7 @@ its whole build and verification skeleton and its frozen DSP contracts. Nothing 
   - `analysis/Analysis.h`: 01 §7 declarations (`inputThresholdDb` inline).
 - **Acceptance** (in the worktree, no CMake):
   `cd "$WT" && for h in $(find Source/fcdsp -name '*.h'); do clang++ -std=c++20 -fsyntax-only -Wall -Wextra -Wshadow
-  -Wpedantic -Werror -ffp-contract=off -I Source -x c++ "$h" || exit 1; done`;
+  -Wpedantic -Werror -ffp-contract=off -I Source -x c++-header "$h" || exit 1; done`;
   `cd "$WT" && clang++ -std=c++20 -O3 -Wall -Wextra -Wshadow -Wpedantic -Werror -ffp-contract=off -I Source -c
   Source/fcdsp/params/HostParams.cpp -o /dev/null` and the same for `Source/fcdsp/modes/Registry.cpp`;
   `grep -rn 'FCMP_TEST_TAP\|#include <juce\|funkgui/' Source/fcdsp` → no hits. At integration: `lint.headers`,

@@ -1,0 +1,2 @@
+# modes-ever.tsv: every Mode slot/key ever released (01 §8.3, 03 §1.1). Append-only, write-once rows; retired Modes stay listed. Lead-owned. Lines starting with # are comments.
+# slot	key

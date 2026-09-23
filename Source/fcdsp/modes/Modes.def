@@ -1,0 +1,33 @@
+// Source/fcdsp/modes/Modes.def — ONE line per slot, APPEND ONLY. A slot and a key are never reused.
+// Edited ONLY by the lead in a sprint base, or by that sprint's single descriptor-wave task (K3 #8). A slot is fixed
+// the moment its line first appears; Mode DSP tasks never touch this file.
+//
+// Grammar (01 §8.1, 03 §2.9): FCMP_MODE(<slot>, "<key>", <Traits>) or FCMP_RETIRED(<slot>, "<key>", "<successor-key>")
+// starting at column 0; anything else is a comment or blank. A malformed FCMP_ line is a configure error. No
+// preprocessor directives: the includer (Registry.cpp) defines both FCMP_MODE and FCMP_RETIRED before each #include
+// and #undefs them after. Slots are 0..127 (kModeCapacity); keys match [a-z0-9-]{1,24} and equal the directory name
+// modes/<key>/. Released slots/keys are listed in tests/fixtures/modes-ever.tsv and may never be reused.
+//
+// Reservations: the eight slots below are reserved, commented out, so that nothing is registered before its Mode
+// exists (the registry is empty-registry safe). A reservation becomes active when its owner deletes the leading "// "
+// and nothing else: slot 0 in F3 (S2), slots 1-7 in the descriptor wave DW (S4). A commented line is skipped by the
+// ^FCMP_ regex.
+//
+//        slot  key            Traits   (files: modes/<key>/<Traits>.h, <Traits>Desc.cpp, <Traits>.cpp)
+// FCMP_MODE(0, "clean", Clean)
+
+// FCMP_MODE(1, "bus-g", BusG)
+
+// FCMP_MODE(2, "fet-76", Fet76)
+
+// FCMP_MODE(3, "opto-2a", Opto2A)
+
+// FCMP_MODE(4, "mu-67", Mu67)
+
+// FCMP_MODE(5, "diode-609", Diode609)
+
+// FCMP_MODE(6, "bus-25", Bus25)
+
+// FCMP_MODE(7, "brickwall", Brickwall)
+
+// Retired Modes keep their slot:  FCMP_RETIRED(slot, "key", "successor-key")
