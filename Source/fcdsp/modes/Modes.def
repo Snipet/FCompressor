@@ -14,7 +14,7 @@
 // ^FCMP_ regex.
 //
 //        slot  key            Traits   (files: modes/<key>/<Traits>.h, <Traits>Desc.cpp, <Traits>.cpp)
-// FCMP_MODE(0, "clean", Clean)
+FCMP_MODE(0, "clean", Clean)
 
 // FCMP_MODE(1, "bus-g", BusG)
 
