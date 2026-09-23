@@ -79,6 +79,22 @@ foreach(_fmt AU VST3)
   endif()
 endforeach()
 
+# built-from-plugin.txt (cmake/FcmpBuiltFrom.cmake; FZ0 errata, R-B0 #11/#12): deleted before the shared code compiles,
+# rewritten after every format target built. Scripts/validate.sh appends its result to verify-passed-<sha> only when it
+# names that <sha> and a clean tree, i.e. when the bundles it validated are HEAD's.
+set(FCMP_BUILT_FROM_PLUGIN ${CMAKE_BINARY_DIR}/built-from-plugin.txt)
+add_custom_target(fcmp_plugin_building COMMAND ${CMAKE_COMMAND} -E rm -f ${FCMP_BUILT_FROM_PLUGIN} VERBATIM)
+add_dependencies(FCompressor fcmp_plugin_building)
+add_custom_target(fcmp_plugin_built_from ALL
+    COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR} -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+            -DFCMP_OUT=${FCMP_BUILT_FROM_PLUGIN} -DFCMP_WHAT=plugin -P ${PROJECT_SOURCE_DIR}/cmake/FcmpBuiltFrom.cmake
+    VERBATIM)
+foreach(_fmt AU VST3 Standalone)
+  if(TARGET FCompressor_${_fmt})
+    add_dependencies(fcmp_plugin_built_from FCompressor_${_fmt})
+  endif()
+endforeach()
+
 # PRIVATE-link assertion (K2 #26e). On a static library a PRIVATE dependency is recorded as $<LINK_ONLY:...>, which
 # carries no usage requirements (no INTERFACE_SOURCES) to the wrappers; anything else naming FunkGui is a PUBLIC or
 # INTERFACE link and fails the configure.

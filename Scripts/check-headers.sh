@@ -7,12 +7,20 @@
 #   Source/editor/{SubView,Panel,Layout,Tags}.h           when present
 #
 # Each header is compiled alone with
-#   $CXX -std=c++20 -fsyntax-only -Wall -Wextra -Wshadow -Wpedantic -Werror -ffp-contract=off -I Source -x c++-header
+#   $CXX -std=c++20 -fsyntax-only <WARN> -Wmissing-variable-declarations -Werror -ffp-contract=off -I Source -x c++-header
+# where <WARN> is the one warning list of every translation unit of ours (cmake/FcmpArch.cmake FCMP_WARNING_FLAGS:
+# JUCE 8.0.4's clang list + -Wextra, without -Wfloat-equal), so a header that passes here also compiles inside the
+# plugin, which builds with that list (FZ0 errata, R-B0 #6). -Wmissing-prototypes (in <WARN>) and
+# -Wmissing-variable-declarations make a non-inline function or variable definition in a header an error: every helper
+# is inline (03 §4.7; R-B0 #8). Source/fcdsp headers also get -Wglobal-constructors -Wexit-time-destructors (no static
+# constructors in fcdsp, C D12; R-B0 #3). CTest's lint.headers passes FcmpArch.cmake's list in FCMP_HEADER_CHECK_FLAGS,
+# and the script fails (exit 2) if its own copy below differs.
 # (-x c++-header, not -x c++: a #pragma once header compiled as a plain TU fails -Wpragma-once-outside-header; S0 lead
 # revision 1). That also makes every size static_assert and every constexpr helper live. The plugin and editor headers
-# also get <build>/generated (FcmpProduct.h), FunkGui's include/ and JUCE's modules/ (as a system directory), located
-# through <build>/fcmp-deps.txt; in a DSP-only build (no JUCE) they are skipped with a note, and the JUCE builds check
-# them. $CXX defaults to clang++ (CTest passes CMake's compiler); SDKROOT defaults to xcrun's.
+# also get <build>/generated (FcmpProduct.h), and FunkGui's include/ and JUCE's modules/ as system directories (their
+# headers are checked by their own projects), located through <build>/fcmp-deps.txt; in a DSP-only build (no JUCE)
+# they are skipped with a note, and the JUCE builds check them. $CXX defaults to clang++ (CTest passes CMake's
+# compiler); SDKROOT defaults to xcrun's.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -22,7 +30,25 @@ if [ -z "${SDKROOT:-}" ]; then
   SDKROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
 fi
 
-COMMON=(-std=c++20 -fsyntax-only -Wall -Wextra -Wshadow -Wpedantic -Werror -ffp-contract=off
+# Keep identical to cmake/FcmpArch.cmake's FCMP_WARNING_FLAGS (its C++ part, FCMP_HEADER_CHECK_FLAGS), same order.
+WARN=(-Wextra
+      -Wall -Wshadow-all -Wshorten-64-to-32 -Wstrict-aliasing -Wuninitialized -Wunused-parameter -Wconversion
+      -Wsign-compare -Wint-conversion -Wconditional-uninitialized -Wconstant-conversion -Wsign-conversion
+      -Wbool-conversion -Wextra-semi -Wunreachable-code -Wcast-align -Wshift-sign-overflow -Wmissing-prototypes
+      -Wnullable-to-nonnull-conversion -Wno-ignored-qualifiers -Wswitch-enum -Wpedantic -Wdeprecated
+      -Wmissing-field-initializers
+      -Wzero-as-null-pointer-constant -Wunused-private-field -Woverloaded-virtual -Wreorder
+      -Winconsistent-missing-destructor-override
+      -Wno-float-equal)
+if [ -n "${FCMP_HEADER_CHECK_FLAGS:-}" ] && [ "$FCMP_HEADER_CHECK_FLAGS" != "${WARN[*]}" ]; then
+  echo "check-headers: the warning list differs from cmake/FcmpArch.cmake's FCMP_WARNING_FLAGS; update both together" >&2
+  echo "  cmake: $FCMP_HEADER_CHECK_FLAGS" >&2
+  echo "  here:  ${WARN[*]}" >&2
+  exit 2
+fi
+FCDSP_ONLY=(-Wglobal-constructors -Wexit-time-destructors)
+
+COMMON=(-std=c++20 -fsyntax-only "${WARN[@]}" -Wmissing-variable-declarations -Werror -ffp-contract=off
         "-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-14.0}")
 if [ -n "$SDKROOT" ]; then
   COMMON+=(-isysroot "$SDKROOT")
@@ -58,7 +84,7 @@ if [ "${#OTHER[@]}" -gt 0 ]; then
     echo "check-headers: NOTE: DSP-only build (no JUCE): skipping ${OTHER[*]}; the JUCE builds check them"
     OTHER=()
   else
-    EXTRA=(-I "$BUILD/generated" -I "$FUNKGUI/include" -isystem "$JUCE/modules" -DNDEBUG=1
+    EXTRA=(-I "$BUILD/generated" -isystem "$FUNKGUI/include" -isystem "$JUCE/modules" -DNDEBUG=1
            -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=1
            -DJUCE_WEB_BROWSER=0 -DJUCE_USE_CURL=0)
   fi
@@ -80,7 +106,7 @@ check() {  # check <header> <extra flags...>
 }
 
 for h in ${FCDSP[@]+"${FCDSP[@]}"}; do
-  check "$h"
+  check "$h" "${FCDSP_ONLY[@]}"
 done
 for h in ${OTHER[@]+"${OTHER[@]}"}; do
   check "$h" "${EXTRA[@]}"

@@ -25,6 +25,8 @@ set(FCMP_BGFX_SUB_SHAS bgfx=c7684e20da1e385edc439ef39cdb42b8c661016f
                        bimg=3b4baab0128ac499c5c3bc37202781bf54084049)
 # FunkGui: the lead bumps these three together at a sprint boundary (03 §4.8 step 3). v0.0.1 = the G0 snapshot with
 # Harness v2 and placeholder core/gpu/presets targets and placeholder funkgui_* functions (SPRINTS §7 D1, D19).
+# FCMP_FUNKGUI_SHA is the tagged COMMIT (`git rev-parse v0.1.0^{commit}`); the annotated tag object's SHA (what a bare
+# `git rev-parse v0.1.0` prints) is accepted too and peeled to its commit by every check below (R-B0 #10).
 set(FCMP_FUNKGUI_TAG     v0.0.1)
 set(FCMP_FUNKGUI_SHA     99ef118d584ecfe6cf3c31027edccc3971120a40)
 set(FCMP_FUNKGUI_VERSION 0.0.1)
@@ -58,16 +60,32 @@ function(fcmp_git_root out dir)
 endfunction()
 
 # fcmp_assert_git(<dir> <sha> <name>): FATAL on a SHA mismatch; WARNING if <dir> is not its own git checkout (the
-# version checks still apply). Read-only commands only.
+# version checks still apply). Read-only commands only. The pin is peeled with <sha>^{commit} (FZ0 errata, R-B0 #10):
+# FunkGui's tags are annotated, so `git rev-parse v0.1.0` gives the tag OBJECT, whose SHA is never a HEAD; a commit SHA
+# peels to itself. A pin that is not in <dir> at all is FATAL too.
 function(fcmp_assert_git dir sha name)
   fcmp_git_root(_is_root "${dir}")
   if(NOT _is_root)
     message(WARNING "FCompressor: ${name} at ${dir} is not a git checkout; its SHA cannot be verified")
     return()
   endif()
+  fcmp_git(_want "${dir}" rev-parse -q --verify "${sha}^{commit}")
+  if(NOT _want_RESULT EQUAL 0 OR _want STREQUAL "")
+    message(FATAL_ERROR "FCompressor: ${name} at ${dir} does not contain the pinned object ${sha} (or it is not a "
+                        "commit or a tag of one). A stale cache or a mistyped pin? (.deps: rerun Scripts/deps.sh; a "
+                        "populated _deps/<name>-src: delete it)")
+  endif()
   fcmp_git(_head "${dir}" rev-parse -q --verify "HEAD^{commit}")
-  if(NOT _head STREQUAL "${sha}")
-    message(FATAL_ERROR "FCompressor: ${name} at ${dir} is at ${_head}, the pin is ${sha}. A stale cache or a mistyped "
+  if(NOT _head STREQUAL "${_want}")
+    fcmp_git(_type "${dir}" cat-file -t "${sha}")
+    if(_type STREQUAL "tag")
+      set(_pin "${sha} (an annotated tag of commit ${_want})")
+    elseif(_want STREQUAL "${sha}")
+      set(_pin "${sha}")
+    else()
+      set(_pin "${sha} (commit ${_want})")
+    endif()
+    message(FATAL_ERROR "FCompressor: ${name} at ${dir} is at ${_head}, the pin is ${_pin}. A stale cache or a mistyped "
                         "override? (.deps: rerun Scripts/deps.sh; a populated _deps/<name>-src: delete it)")
   endif()
 endfunction()
@@ -98,10 +116,15 @@ endmacro()
 fcmp_default_source_dir(JUCE JUCE-${FCMP_JUCE_TAG})
 fcmp_default_source_dir(BGFX bgfx.cmake-${FCMP_BGFX_TAG})
 
-# 2. Declarations, identical to HR's for JUCE and bgfx (HR CMakeLists.txt:112-117, 236-241). FunkGui: GIT_TAG stays the
-#    tag (user decision); the SHA assertion after population refuses a moved tag. No GIT_SHALLOW for a local path.
+# 2. Declarations, identical to HR's for JUCE and bgfx (HR CMakeLists.txt:112-117, 236-241), except that bgfx is
+#    SYSTEM EXCLUDE_FROM_ALL (FZ0 errata, R-B0 #13): FCompressor declares bgfx first, so this declaration wins over
+#    FunkGui's own SYSTEM EXCLUDE_FROM_ALL one, and without it every GPU `all` build also compiled bimg_encode,
+#    bimg_decode and their bundled third-party code; now only what FunkGui::gpu (and a from-source shaderc) link is
+#    built, and bgfx's headers are system headers to our -Werror sources. FunkGui: GIT_TAG stays the tag (user
+#    decision); the SHA assertion after population refuses a moved tag. No GIT_SHALLOW for a local path.
 FetchContent_Declare(JUCE    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git     GIT_TAG ${FCMP_JUCE_TAG} GIT_SHALLOW TRUE)
-FetchContent_Declare(bgfx    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git    GIT_TAG ${FCMP_BGFX_TAG} GIT_SHALLOW TRUE)
+FetchContent_Declare(bgfx    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git    GIT_TAG ${FCMP_BGFX_TAG} GIT_SHALLOW TRUE
+                             SYSTEM EXCLUDE_FROM_ALL)
 FetchContent_Declare(FunkGui GIT_REPOSITORY ${FCOMPRESSOR_FUNKGUI_REPO}                     GIT_TAG ${FCMP_FUNKGUI_TAG} GIT_SHALLOW FALSE)
 
 set(FCMP_DEPS_ROWS "")        # name|tag|sha|dir|override|note, one list item per dependency, for fcmp-deps.txt
@@ -212,7 +235,7 @@ if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)
     message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} is not the root of a git checkout. Allowed overrides: "
                         "your own FunkGui worktree, or a lead-made FunkGui.wt/pin-<sha7> (03 §4.5)")
   endif()
-  fcmp_git(_anc "${_dir}" merge-base --is-ancestor ${FCMP_FUNKGUI_SHA} HEAD)
+  fcmp_git(_anc "${_dir}" merge-base --is-ancestor "${FCMP_FUNKGUI_SHA}^{commit}" HEAD)
   fcmp_git(_head "${_dir}" rev-parse -q --verify "HEAD^{commit}")
   if(NOT _anc_RESULT EQUAL 0)
     message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} (HEAD ${_head}) does not descend from the pin "
@@ -236,7 +259,7 @@ else()
     message(FATAL_ERROR "FCompressor: FunkGui ${FCMP_FUNKGUI_TAG} reports FUNKGUI_VERSION '${FUNKGUI_VERSION}', "
                         "the pin says ${FCMP_FUNKGUI_VERSION}")
   endif()
-  fcmp_deps_row(FunkGui ${FCMP_FUNKGUI_TAG} ${FCMP_FUNKGUI_SHA} "${FCMP_FUNKGUI_DIR}" no "version ${FUNKGUI_VERSION}")
+  fcmp_deps_row(FunkGui ${FCMP_FUNKGUI_TAG} ${_fg_head} "${FCMP_FUNKGUI_DIR}" no "version ${FUNKGUI_VERSION}")   # the commit
 endif()
 
 # The target and function names FCompressor links against freeze at FZ0 (SPRINTS §0.3); fail here, not at link time.

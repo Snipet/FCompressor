@@ -6,15 +6,22 @@
 #   fcdsp.juce      Source/fcdsp/** includes no JUCE header (<juce_*>, JuceHeader.h)
 #   fcdsp.funkgui   Source/fcdsp/** includes no funkgui/* header
 #   fcdsp.layer     Source/fcdsp/** includes nothing under plugin/ or editor/
-#   fcdsp.libm      Source/fcdsp/{core,engine,modes}/** calls no libm function: the regex
-#                   \b(std::)?(tan|tanh|exp|expf|log|logf|log1p|pow|powf|sin|cos|tanf|tanhf)\s*\( on comment-stripped
-#                   code, except the fcdsp replacements themselves: a call qualified `fcdsp::` (e.g. fcdsp::tanh(x)), a
-#                   declaration or definition whose return type is float/double/f32x4/auto (FastMath.h's
+#   fcdsp.libm      Source/fcdsp/{core,engine,modes}/** calls no libm function: _libm_re below on comment-stripped
+#                   code (FZ0 errata, R-B0 #4: 01 §2.2 rule 4's first regex missed log10, log2, exp2, expm1, the inverse
+#                   and hyperbolic functions, the f-suffixed forms, cbrt, hypot, erf and the gamma functions), except
+#                   the fcdsp replacements themselves: a call qualified `fcdsp::` (e.g. fcdsp::tanh(x)), a declaration
+#                   or definition whose return type is float/double/f32x4/auto (FastMath.h's
 #                   `simd::f32x4 tanh(simd::f32x4)`), and a member call (x.log(...), p->exp(...)). Inside fcdsp, call
 #                   the replacements qualified. params/ and analysis/ are exempt (01 §2.2 rule 4).
-#   fcdsp.static    Source/fcdsp/**: no indented `static` variable, i.e. no function-local static and no
-#                   non-constexpr static data member (C D12: no lazy initialisation, no static constructors).
-#                   `static constexpr`/`consteval`/`constinit`/`static_assert` and static member functions pass.
+#   fcdsp.static    Source/fcdsp/**: no `static` variable, i.e. no function-local static, no non-constexpr static data
+#                   member and no namespace-scope static variable (C D12: no lazy initialisation, no static
+#                   constructors). `static constexpr`/`consteval`/`constinit`/`static_assert` and static (member)
+#                   functions pass. FZ0 errata (R-B0 #3): lines at any indentation are scanned (B0 scanned indented
+#                   lines only, and fcdsp writes namespace scope at column 0), and a `static T x(...)` whose first
+#                   argument is a literal (a digit, a quote, '-', '+', '.', '{', true, false or nullptr) is a variable,
+#                   not a function declaration (`static std::vector<float> t(8);`). A namespace-scope object without
+#                   `static` (`std::vector<float> g(64);`) is a compile error instead (-Wglobal-constructors
+#                   -Wexit-time-destructors on fcdsp, FcmpArch.cmake).
 #   test-tap        FCMP_TEST_TAP appears nowhere under Source/ or Tools/, comments included (the test tap is a
 #                   runtime pointer, K2 #2)
 #   editor.facade   Source/editor/** reaches the processor only through plugin/ProcessorFacade.h: no other plugin/
@@ -75,7 +82,9 @@ macro(_lint_strip line inblock)
   string(REGEX REPLACE "//.*$" "" ${line} "${${line}}")
 endmacro()
 
-set(_libm_re "(^|[^A-Za-z0-9_])((std::)?(tanhf|tanh|tanf|tan|expf|exp|logf|log1p|log|powf|pow|sin|cos))[ \t]*\\(")
+# The libm names (FZ0 errata, R-B0 #4; 01 §2.2 rule 4 quotes this regex). None of them contains a character that
+# _lint_read neutralises.
+set(_libm_re "(^|[^A-Za-z0-9_])((std::)?(a?(sin|cos|tan)h?f?|atan2f?|exp(2|m1)?f?|log(2|10|1p)?f?|powf?|cbrtf?|hypotf?|erfc?f?|[lt]gammaf?))[ \t]*\\(")
 
 # _lint_libm(<file> <lineno> <code>)
 function(_lint_libm file n code)
@@ -107,9 +116,10 @@ function(_lint_libm file n code)
   endwhile()
 endfunction()
 
-# _lint_static(<file> <lineno> <code>): an indented `static` that declares a variable.
+# _lint_static(<file> <lineno> <code>): a line starting with `static` (at any indentation: B0 scanned indented lines
+# only, and fcdsp writes namespace scope at column 0) that declares a variable.
 function(_lint_static file n code)
-  if(NOT code MATCHES "^[ \t]+static[ \t]+(.*)$")
+  if(NOT code MATCHES "^[ \t]*static[ \t]+(.*)$")
     return()
   endif()
   set(_decl "${CMAKE_MATCH_1}")
@@ -126,11 +136,19 @@ function(_lint_static file n code)
       string(REGEX REPLACE "<[^<>]*>" "" _decl "${_decl}")
     endwhile()
     string(REGEX MATCH "[(={,]" _first "${_decl}")                # '[' was mapped to '{', ';' to ','
-    if(_first STREQUAL "(" OR _first STREQUAL "")
-      return()                                                  # a function declaration (or an unfinished line)
+    if(_first STREQUAL "")
+      return()                                                  # an unfinished line
+    endif()
+    if(_first STREQUAL "(")                                     # a function declaration, unless the first argument is
+      string(FIND "${_decl}" "(" _p)                            # a literal: static std::vector<float> t(8);
+      math(EXPR _p "${_p} + 1")
+      string(SUBSTRING "${_decl}" ${_p} -1 _args)
+      if(NOT _args MATCHES "^[ \t]*([-+.0-9'\"{]|(u8|u|U|L)['\"]|(true|false|nullptr)([^A-Za-z0-9_]|$))")
+        return()
+      endif()
     endif()
   endif()
-  _lint_fail("${file}" ${n} fcdsp.static "indented static variable (function-local static or non-constexpr static member): ${code}")
+  _lint_fail("${file}" ${n} fcdsp.static "static variable (function-local, non-constexpr static member or namespace-scope static; make it constexpr/constinit or per-instance): ${code}")
 endfunction()
 
 # ---- walk the trees ---------------------------------------------------------------------------------------------------

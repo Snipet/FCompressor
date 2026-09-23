@@ -10,9 +10,17 @@
 #   fcmp_flags            INTERFACE: ISA flags, -O3 -fno-math-errno -fno-trapping-math -ffp-contract=off, never
 #                         -ffast-math. Linked by fcdsp (PUBLIC), the plugin and every probe.
 #   fcmp_lto              INTERFACE: -flto (compile + link) in Release when FCOMPRESSOR_LTO; fcdsp only (PRIVATE)
-#   fcmp_warnings         INTERFACE: FCMP_WARNING_FLAGS, target-wide on targets made only of our sources (fcdsp)
-#   FCMP_WARNING_FLAGS    -Wall -Wextra -Wshadow -Wpedantic [+ -Werror]
-#   fcmp_warn_sources(<file>...)  the same flags per source file, for targets that also compile JUCE module TUs
+#   fcmp_warnings         INTERFACE: FCMP_WARNING_FLAGS + FCMP_WARNING_FLAGS_FCDSP, target-wide on fcdsp (made only of
+#                         our sources)
+#   FCMP_WARNING_FLAGS    the ONE warning list of every translation unit of ours: JUCE 8.0.4's clang list
+#                         (juce_recommended_warning_flags) + -Wextra, without -Wfloat-equal [+ -Werror]. The same list
+#                         is Scripts/check-headers.sh's (lint.headers), so a header that builds in fcdsp or a probe also
+#                         builds in the plugin (R-B0 #6)
+#   FCMP_WARNING_FLAGS_FCDSP  fcdsp only: -Wglobal-constructors -Wexit-time-destructors (no static constructors, C D12;
+#                         R-B0 #3) [+ -Wfunction-effects in the rtsan configuration]
+#   FCMP_HEADER_CHECK_FLAGS  FCMP_WARNING_FLAGS as check-headers.sh must repeat them (no -Werror, no generator
+#                         expressions); lint.headers passes it and the script fails if its own copy differs
+#   fcmp_warn_sources(<file>...)  FCMP_WARNING_FLAGS per source file, for targets that also compile JUCE module TUs
 #                         (the plugin, fcmp_probe_plugin): JUCE's own TUs never get -Werror (03 §2.2)
 include_guard(GLOBAL)
 
@@ -71,10 +79,37 @@ if(FCOMPRESSOR_LTO)
   target_link_options(fcmp_lto INTERFACE $<$<CONFIG:Release>:-flto>)
 endif()
 
-set(FCMP_WARNING_FLAGS -Wall -Wextra -Wshadow -Wpedantic)
+# Warnings (FZ0 errata, R-B0 #6). Before FZ0 the plugin's own sources compiled with JUCE's strict list (the plugin links
+# juce::juce_recommended_warning_flags) plus our -Werror, while fcdsp, the probes and lint.headers used only
+# -Wall -Wextra -Wshadow -Wpedantic: an fcdsp header could build everywhere except in the plugin. Now every TU of ours
+# and every checked header gets the same list:
+# - JUCE 8.0.4's clang list, verbatim and in its order (extras/Build/CMake/JUCEHelperTargets.cmake:51-86), with the
+#   Objective-C-only pair behind a generator expression as JUCE has it;
+# - plus -Wextra, first, so that JUCE's -Wno-ignored-qualifiers after it still wins;
+# - minus -Wfloat-equal (-Wno-float-equal last, which also overrides the plugin target's own copy of JUCE's list, since
+#   per-file options follow target options): exact float comparisons are intended in fcdsp (HostParams.cpp's table
+#   checks), in probes (bit-exact checks) and in FunkGui's Harness.h, which our probe TUs include as a user header.
+set(FCMP_WARNING_FLAGS
+    -Wextra
+    -Wall -Wshadow-all -Wshorten-64-to-32 -Wstrict-aliasing -Wuninitialized -Wunused-parameter -Wconversion
+    -Wsign-compare -Wint-conversion -Wconditional-uninitialized -Wconstant-conversion -Wsign-conversion
+    -Wbool-conversion -Wextra-semi -Wunreachable-code -Wcast-align -Wshift-sign-overflow -Wmissing-prototypes
+    -Wnullable-to-nonnull-conversion -Wno-ignored-qualifiers -Wswitch-enum -Wpedantic -Wdeprecated
+    -Wmissing-field-initializers
+    -Wzero-as-null-pointer-constant -Wunused-private-field -Woverloaded-virtual -Wreorder
+    -Winconsistent-missing-destructor-override
+    -Wno-float-equal)
+set(FCMP_HEADER_CHECK_FLAGS ${FCMP_WARNING_FLAGS})          # check-headers.sh compiles C++ headers only
+list(APPEND FCMP_WARNING_FLAGS
+    $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-Wunguarded-availability>
+    $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-Wunguarded-availability-new>)
 if(FCOMPRESSOR_WERROR)
   list(APPEND FCMP_WARNING_FLAGS -Werror)
 endif()
+# fcdsp only: a namespace-scope object with a dynamic initialiser or an exit-time destructor (std::vector<float> g(64);,
+# static std::vector<float> g = ...;) or a function-local static with a destructor is a compile error (R-B0 #3; LintDeps
+# covers the trivially destructible function-local statics).
+set(FCMP_WARNING_FLAGS_FCDSP -Wglobal-constructors -Wexit-time-destructors)
 add_library(fcmp_warnings INTERFACE)
 target_compile_options(fcmp_warnings INTERFACE ${FCMP_WARNING_FLAGS})
 
@@ -123,7 +158,9 @@ string(REPLACE "SHELL:" "" FCMP_FLAGS_LINE "${FCMP_FLAGS_LINE}")
 # ---- can the probes run here? ----------------------------------------------------------------------------------------
 # A one-line program built for FCMP_RUN_ARCH. On an Apple-silicon Mac without Rosetta 2 an x86_64 binary fails with
 # "bad CPU type in executable": the probe tests are then DISABLED (03 §3.3), which verify.sh reports as blocking.
-if(NOT DEFINED FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH})
+# Only a success is cached (FZ0 errata, R-B0 #9): after an OFF result every configure checks again (about 1 s), so
+# installing Rosetta and reconfiguring enables the probes without deleting a cache entry.
+if(NOT FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH})
   try_run(_fcmp_run_result _fcmp_compile_result
           SOURCE_FROM_CONTENT fcmp_can_run.c "int main(void) { return 0; }\n"
           CMAKE_FLAGS "-DCMAKE_OSX_ARCHITECTURES=${FCMP_RUN_ARCH}"
@@ -136,7 +173,7 @@ if(NOT DEFINED FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH})
     set(_fcmp_can_run OFF)
   endif()
   set(FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH} ${_fcmp_can_run} CACHE INTERNAL
-      "A program built for ${FCMP_RUN_ARCH} runs on this machine")
+      "A program built for ${FCMP_RUN_ARCH} runs on this machine (only ON is kept; OFF is checked again)")
 endif()
 set(FCMP_CAN_RUN_PROBES ${FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH}})
 if(NOT FCMP_CAN_RUN_PROBES)

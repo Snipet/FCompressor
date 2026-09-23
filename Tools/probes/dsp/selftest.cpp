@@ -3,8 +3,9 @@
 // dsp.selftest (B0; 03 §2.9): the probe plumbing itself, so a later probe's failure is never the harness's. It checks
 // registration and dispatch, the context ProbeMain passes, that the body runs under ScopedFtz, Harness v2's spec rows,
 // the deterministic signal generators (Signals.h), the tolerance table (Tolerances.h), the thread-scoped allocation
-// counter (AllocCounter.cpp), the RtInterposer wiring and the sandbox. Spec rows only: it has no golden rows, so it
-// never produces a candidate (Sprint 0 expects none). FZ0's evidence with lint.headers and fg.harness.self.
+// counter (AllocCounter.cpp), the RtInterposer wiring and the sandbox (created, and emptied before each run). Spec rows
+// only: it has no golden rows, so it never produces a candidate (Sprint 0 expects none). FZ0's evidence with
+// lint.headers and fg.harness.self.
 #include "ProbeRegistry.h"
 #include "Signals.h"
 #include "Tolerances.h"
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <numbers>
 #include <stdexcept>
@@ -158,7 +160,8 @@ FCMP_PROBE(dsp, selftest)
         P.eq("sine.quarter_cycle_exact", whole[12] == 0.5f && whole[36] == -0.5f && whole[48] == 0.0f ? 1 : 0, 1);
         double err = 0;
         for (std::size_t n = 0; n < whole.size(); ++n)
-            err = std::max(err, std::abs(static_cast<double>(whole[n]) - 0.5 * std::sin(kTwoPi * 1000.0 * n / fs)));
+            err = std::max(err, std::abs(static_cast<double>(whole[n])
+                                         - 0.5 * std::sin(kTwoPi * 1000.0 * static_cast<double>(n) / fs)));
         P.le("sine.max_abs_err", err, 3e-8);                // float rounding of the output (2^-25 at 0.5)
         P.near("sine.at_long_offset", sig::sineAt(48000LL * 3600 + 12, 1000.0, fs), 1.0, 0.0);   // one hour in
     }
@@ -191,7 +194,7 @@ FCMP_PROBE(dsp, selftest)
         P.eq("tol.rigor_count", tol::kRigorCount, 3);
         P.near("tol.clean.curve_outside_knee_db", tol::forRigor(0).curveOutsideKneeDb, 0.05, 0.0);
         P.near("tol.character.curve_inside_knee_db", tol::forRigor(2).curveInsideKneeDb, 0.75, 0.0);
-        P.eq("tol.character.no_textbook_check", tol::forRigor(2).textbookApplies ? 1 : 0, 0);
+        P.eq("tol.character.no_textbook_check", static_cast<int>(tol::forRigor(2).textbookApplies), 0);
         P.near("tol.tau_floor_s", tol::tauToleranceSeconds(tol::forRigor(0), 1e-4, 48000.0), 1.5 / 48000.0, 1e-18);
         P.near("tol.tau_rel_s", tol::tauToleranceSeconds(tol::forRigor(1), 0.1, 48000.0), 0.01, 1e-15);
         enum class RigorLike : std::uint8_t { clean, modelled, character };
@@ -283,8 +286,17 @@ FCMP_PROBE(dsp, selftest)
     // ---- 11. sandbox and build flags --------------------------------------------------------------------------------------
     if (const char* dir = std::getenv("FCMP_PREFS_DIR"); dir != nullptr && *dir != '\0')
     {
+        namespace fs = std::filesystem;
         std::error_code ec;
-        P.eq("sandbox.prefs_dir_created", std::filesystem::is_directory(dir, ec) ? 1 : 0, 1);
+        P.eq("sandbox.prefs_dir_created", fs::is_directory(dir, ec) ? 1 : 0, 1);
+        // A CTest sandbox is emptied before every run (ProbeMain; R-B0 #7). The marker file this run leaves behind makes
+        // the next run fail here if that ever stops.
+        if (std::string_view(dir).find("/sandbox/") != std::string_view::npos)
+        {
+            const bool empty = fs::is_empty(dir, ec);
+            P.eq("sandbox.starts_empty", empty && !ec ? 1 : 0, 1);
+            std::ofstream(fs::path(dir) / "selftest-leftover.txt") << "left by the previous dsp.selftest run\n";
+        }
     }
     P.in("build.release_flag", FCOMPRESSOR_RELEASE, 0, 1);
 

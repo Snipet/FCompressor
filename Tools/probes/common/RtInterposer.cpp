@@ -91,6 +91,12 @@ namespace
 
 extern "C"
 {
+    // The exported C API (declared first: the dylib builds with FCMP_WARNING_FLAGS, -Wmissing-prototypes included).
+    [[gnu::visibility("default")]] void fcmp_rt_interposer_v1_arm(void);
+    [[gnu::visibility("default")]] void fcmp_rt_interposer_v1_disarm(void);
+    [[gnu::visibility("default")]] void fcmp_rt_interposer_v1_reset(void);
+    [[gnu::visibility("default")]] void fcmp_rt_interposer_v1_counts(std::uint64_t* out6);
+
     [[gnu::visibility("default")]] void fcmp_rt_interposer_v1_arm(void)
     {
         gArmed.store(pthread_self(), std::memory_order_relaxed);

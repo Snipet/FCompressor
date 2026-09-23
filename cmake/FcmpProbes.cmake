@@ -12,11 +12,20 @@
 # every workflow runs.
 #
 # Test properties: labels verify;<layer>;global|mode:<key>;probe:<layer>.<name>; TIMEOUT from the line; the sandbox
-# environment (FCMP_PREFS_DIR, FCMP_PRESETS_DB, FCMP_UI_THEME=0); DISABLED when the probes cannot run on this machine
-# (FcmpArch.cmake). CTest passes a probe when its RESULT line reports pass, golden_drift or golden_missing (the Harness v2
-# statuses that are not blocking, 03 §3.2.4), so the workflow presets succeed with golden candidates and CTest's
-# failures are exactly the blocking ones; a crash or timeout still fails (no RESULT line, or a signal).
-# Scripts/verify.sh then classifies probe-results/*.json into BLOCKING / DRIFT / MISSING / IMPROVED.
+# environment (FCMP_PREFS_DIR, FCMP_PRESETS_DB, FCMP_UI_THEME=0; ProbeMain empties <build>/sandbox/<test> before each
+# run); DISABLED when the probes cannot run on this machine (FcmpArch.cmake).
+#
+# CTest's verdict comes from the EXIT CODE (FZ0 errata, R-B0 #1). B0 used PASS_REGULAR_EXPRESSION on the RESULT line,
+# which makes CTest ignore the exit code: a sanitizer report after a passing RESULT line (by default TSan exits 66, ASan
+# and UBSan with -fno-sanitize-recover exit 1) still passed. Each probe test now runs the probe under
+# /bin/sh (_fcmp_probe_sh), which passes exit 0, and exit 2 or 3 only when the probe's own results JSON (deleted before
+# the run, so it is this run's) reports golden_drift or golden_missing: the two non-blocking Harness v2 statuses
+# (03 §3.2.4), so the workflow presets still succeed with golden candidates. Every other exit code, a signal, a timeout
+# and a missing JSON fail. Scripts/verify.sh then classifies probe-results/*.json into BLOCKING / DRIFT / MISSING /
+# IMPROVED, and reports "status X but the process failed" for a RESULT line followed by a failing exit.
+#
+# fcmp_probes (the probe executables) ends by writing <build>/built-from-probes.txt (cmake/FcmpBuiltFrom.cmake; R-B0
+# #12): the source state the probes were built from, which verify.sh checks before it writes a verify-passed-<sha> stamp.
 include_guard(GLOBAL)
 
 set(FCMP_PROBE_COMMON_DIR ${FCMP_TOOLS_ROOT}/probes/common)
@@ -51,9 +60,15 @@ endfunction()
 if(FCMP_RTSAN_MODE STREQUAL "interposer")
   add_library(fcmp_rt_interposer SHARED ${FCMP_PROBE_COMMON_DIR}/RtInterposer.cpp)
   target_compile_definitions(fcmp_rt_interposer PRIVATE FCMP_RT_INTERPOSER_DYLIB=1)
+  target_compile_options(fcmp_rt_interposer PRIVATE ${FCMP_WARNING_FLAGS})
   target_link_libraries(fcmp_rt_interposer PRIVATE fcmp_flags)
   set_target_properties(fcmp_rt_interposer PROPERTIES EXCLUDE_FROM_ALL TRUE CXX_VISIBILITY_PRESET hidden)
 endif()
+
+# built-from-probes.txt is deleted before the probe executables compile and rewritten by fcmp_probes after they all
+# linked (R-B0 #12): a failed or partial build leaves no file, so verify.sh cannot stamp it.
+set(FCMP_BUILT_FROM_PROBES ${CMAKE_BINARY_DIR}/built-from-probes.txt)
+add_custom_target(fcmp_probes_building COMMAND ${CMAKE_COMMAND} -E rm -f ${FCMP_BUILT_FROM_PROBES} VERBATIM)
 
 # ---- fcmp_probe_dsp: fcdsp + harness, no JUCE -----------------------------------------------------------------------
 add_executable(fcmp_probe_dsp ${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_DSP_SOURCES})
@@ -87,10 +102,18 @@ if(FCMP_BENCH_SOURCES)
   fcmp_warn_sources(${FCMP_BENCH_SOURCES})
 endif()
 
-add_custom_target(fcmp_probes)
+add_custom_target(fcmp_probes
+    COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR} -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+            -DFCMP_OUT=${FCMP_BUILT_FROM_PROBES} -DFCMP_WHAT=probes -P ${PROJECT_SOURCE_DIR}/cmake/FcmpBuiltFrom.cmake
+    VERBATIM)
 add_dependencies(fcmp_probes ${_fcmp_probe_exes})
+foreach(_e IN LISTS _fcmp_probe_exes)
+  add_dependencies(${_e} fcmp_probes_building)
+endforeach()
 
 # ---- self-registered tests -------------------------------------------------------------------------------------------
+# The probe wrapper (see the top of this file): /bin/sh -c <this> fcmp-probe <results json> <probe command...>.
+set(_fcmp_probe_sh [=[r=$1; shift; rm -f "$r"; "$@"; rc=$?; case $rc in 2) s=golden_drift ;; 3) s=golden_missing ;; *) exit $rc ;; esac; if grep -q "\"status\":\"$s\"" "$r" 2>/dev/null; then exit 0; fi; echo "fcmp-probe: exit $rc, but $r does not report $s" >&2; exit 1]=])
 set(FCMP_TEST_NAMES "")
 function(fcmp_probe_test layer exe probe mode timeout)
   if(mode)
@@ -106,16 +129,17 @@ function(fcmp_probe_test layer exe probe mode timeout)
     message(FATAL_ERROR "FCompressor: duplicate test ${name} (two probe files declare ${layer}.${probe}?)")
   endif()
   set(FCMP_TEST_NAMES ${FCMP_TEST_NAMES} ${name} PARENT_SCOPE)
+  # The results JSON is <results>/<probe>[.<mode>].json (Harness v2), i.e. <test name>.json.
   add_test(NAME ${name}
-           COMMAND $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
+           COMMAND /bin/sh -c "${_fcmp_probe_sh}" fcmp-probe ${CMAKE_BINARY_DIR}/probe-results/${name}.json
+                   $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
                    --golden-root ${PROJECT_SOURCE_DIR}/tests/golden --arch ${FCMP_RUN_ARCH}
                    --bless-to ${CMAKE_BINARY_DIR}/golden-candidates --results ${CMAKE_BINARY_DIR}/probe-results)
   set(sb ${CMAKE_BINARY_DIR}/sandbox/${name})
   set_tests_properties(${name} PROPERTIES
       LABELS "verify;${layer};${mlabel};probe:${layer}.${probe}"
       TIMEOUT ${timeout}
-      ENVIRONMENT "FCMP_PREFS_DIR=${sb};FCMP_PRESETS_DB=${sb}/presets.db;FCMP_UI_THEME=0"
-      PASS_REGULAR_EXPRESSION "RESULT {[^\n]*\"status\":\"(pass|golden_drift|golden_missing)\"")
+      ENVIRONMENT "FCMP_PREFS_DIR=${sb};FCMP_PRESETS_DB=${sb}/presets.db;FCMP_UI_THEME=0")
   if(NOT FCMP_CAN_RUN_PROBES)
     set_tests_properties(${name} PROPERTIES DISABLED TRUE)
   endif()
@@ -158,7 +182,10 @@ endif()
 # ---- lints (no probe executable; exit code only) --------------------------------------------------------------------
 add_test(NAME lint.deps COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}
                                 -P ${PROJECT_SOURCE_DIR}/cmake/LintDeps.cmake)
+# lint.headers hands check-headers.sh FcmpArch.cmake's warning list; the script fails if its own copy differs (R-B0 #6).
+string(JOIN " " _fcmp_hdr_flags ${FCMP_HEADER_CHECK_FLAGS})
 add_test(NAME lint.headers COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
+                                   "FCMP_HEADER_CHECK_FLAGS=${_fcmp_hdr_flags}"
                                    /bin/bash ${PROJECT_SOURCE_DIR}/Scripts/check-headers.sh ${CMAKE_BINARY_DIR})
 set_tests_properties(lint.deps lint.headers PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
 
