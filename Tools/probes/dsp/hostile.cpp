@@ -462,7 +462,16 @@ FCMP_PROBE(dsp, hostile)
             ratio = tailCost / std::max(burstCost, 1e-15);
         }
         std::printf("NOTE     hostile.silence.tail_cost_ratio = %.4g (flush-to-zero off in the caller)\n", ratio);
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#    define FCMP_HOSTILE_SANITIZED 1
+#  endif
+#endif
+#ifdef FCMP_HOSTILE_SANITIZED   // S4 lead fix: a CPU-cost ratio is meaningless under a sanitizer (03 §3.1: no timing gates)
+        std::printf("NOTE     hostile.silence.tail_cost_ratio not judged in a sanitizer build\n");
+#else
         P.le("hostile.silence.tail_cost_ratio", ratio, 2.0);
+#endif
     }
 
     // ---- unprepared, zero-length, oversize blocks -------------------------------------------------------------------
