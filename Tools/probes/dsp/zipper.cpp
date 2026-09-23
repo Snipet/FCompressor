@@ -1,7 +1,8 @@
 // FCMP_PROBE layer=dsp name=zipper scope=mode timeout=60
 //
-// dsp.zipper.<key> (F4, S3; D5: 03 §3.4 Host rows, C §5.6; K2 #4 iv, #20; 01 §5.1): parameter automation through
-// fcdsp::EngineHost at ECO, 48 kHz. <p> is the host parameter id (kHostParams[].id).
+// dsp.zipper.<key> (F4, S3; F7, S6; D5: 03 §3.4 Host rows, C §5.6; K2 #4 iv, #20, #21d, #22; 01 §5.1, §5.5):
+// parameter automation through fcdsp::EngineHost, 48 kHz: ECO (sections 1-5, the S3 rows) and STD/HQ (section 6).
+// <p> is the host parameter id (kHostParams[].id).
 //
 // 1. Step edge (C §5.6.1), every parameter the Mode leaves continuous (live and continuous or hybrid at its defaults):
 //    a 110 Hz tone at -6 dBFS, the threshold 8 dB below it (about 6 dB of GR), attack and release at their slowest;
@@ -16,9 +17,9 @@
 //    own transition, and a fast attack (DW, S4: FET 76's 0.8 ms maximum, Bus 25's 1 ms and Diode 609's 3 ms defaults)
 //    reads the compressor's legitimate reaction to a new static curve, GR steps at the next waveform peak, as a click.
 //      zipper.detent.<p>.<i>-<j>.hf_ratio_db  <= +3 dB
-//    A pair whose detents resolve to different kernel keys (det, stmode, voice, topo: 01 §5.5) is a kernel swap, which
-//    S3 runs snapped: the 20 ms crossfade is F7's. Those rows are measured and printed as NOTE lines with their verdict
-//    ("pending F7"), not judged, until kKernelCrossfade is true (F7 flips it with the crossfade).
+//    A pair whose detents resolve to different kernel keys (det, stmode, voice, topo: 01 §5.5) is a kernel swap: the
+//    host crossfades the two engine paths over 20 ms (F7), and those rows are judged like the others
+//    (kKernelCrossfade; S3 printed them as "pending F7" NOTE lines while the swap was snapped).
 // 3. Block-rate ramp (C §5.6.2), every continuous parameter: 0 -> 1 of its range (host-normalised) over 2 s, set once
 //    per block at bs = 512 (the ramp's value at the block's centre, so a half-block automation lag does not count)
 //    against the same ramp set per sample (bs = 1); a 1 kHz tone at -12 dBFS, the Mode's defaults.
@@ -33,6 +34,9 @@
 //    sample (thr from -60 dB at 30 dB/s) passes through with NO lag, while a block staircase is smoothed with the full
 //    20 ms lag. E(y512 - y1) then measures that lag difference (thr: -33 dB on Clean), not zipper; the lines measure
 //    the staircase itself (Clean: thr -73 dB, makeup -86 dB; the makeup staircase applied unsmoothed: -42 dB).
+//    look (K2 #21d; 01 §5.4 step 2c), with a 20 ms lookahead budget, where `look` is live under it: its step edge and
+//    its block-rate ramp as above (zipper.edge.look.hf_ratio_db, zipper.ramp.look.zipper_db, spec only): the SC read
+//    position slews one sample per control tick and the latency never moves.
 // 4. Block-size invariance (C §5.6.3): static parameters, a 1 s program (1 kHz at T + 10 dB, noise bursts, silence),
 //    rendered at bs {1, 17, 64, 128, 512, 4096}, with the editor attached and the tap set, and once detached:
 //      zipper.bs.mismatches            output samples differing from the bs = 512 render: 0
@@ -44,6 +48,12 @@
 //      zipper.snap.mismatches          with requestSnap() before the second block, every sample of it equals
 //                                      x * linFromDb(new makeup) bit for bit (the smoothers jumped): 0
 //      zipper.snap.glides              without it, the second block's first sample differs (the smoothers glide): 1
+// 6. STD and HQ (F7: the gains interpolated to the OS rate, the kernel crossfade per OS sample, the delay lines), spec
+//    only (no golden rows: the ECO rows above carry the drift detection):
+//      zipper.<q>.edge.<p>.hf_ratio_db  every step edge of 1. at Quality q: <= +3 dB
+//      zipper.<q>.detent.<p>.<i>-<j>.hf_ratio_db  every detent edge of 2. at STD, the kernel-key ones at HQ: <= +3 dB
+//      zipper.<q>.bs.mismatches, .tap_mismatches, .key.mismatches  4. at Quality q with a lookahead budget (STD 5 ms,
+//                                      HQ 20 ms): 0
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -54,6 +64,7 @@
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Simd.h"
 #include "fcdsp/engine/EngineHost.h"
+#include "fcdsp/engine/Oversampler.h"
 #include "fcdsp/engine/TestTap.h"
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
@@ -86,16 +97,24 @@ namespace
     constexpr std::size_t kEdge = 48000;              // t = 1 s: a zero crossing of 110 Hz (C §5.6)
     constexpr float kDetentAttackMs = 50.0f;          // the detent renders' attack floor (header, 2.)
 
-    // F7 sets this with the kernel crossfade (01 §5.5 step 4): kernel-key detent edges become judged spec rows.
-    constexpr bool kKernelCrossfade = false;
+    // F7 set this with the kernel crossfade (01 §5.5 step 4): kernel-key detent edges are judged spec rows.
+    constexpr bool kKernelCrossfade = true;
 
-    HostConfig ecoConfig(int keyChans = 0)
+    const char* nameOf(Quality q) { return q == Quality::eco ? "eco" : q == Quality::std ? "std" : "hq"; }
+
+    struct Setup
+    {
+        Quality quality = Quality::eco;
+        LookaheadBudget budget = LookaheadBudget::off;
+    };
+
+    HostConfig hostConfig(Setup su, int keyChans = 0)
     {
         HostConfig c;
         c.fs = kFs;
         c.maxBlock = kBlock;
-        c.quality = Quality::eco;
-        c.budget = LookaheadBudget::off;
+        c.quality = su.quality;
+        c.budget = su.budget;
         c.keyChans = keyChans;
         return c;
     }
@@ -124,10 +143,10 @@ namespace
     // A fresh host over the signal in blocks of bs (split at `splitAt` when non-zero); paramsAt(off, len) gives each
     // block's parameters.
     Run render(const ParamsAt& paramsAt, const Signal& s, int bs, std::size_t splitAt = 0, bool attached = false,
-               int keyChans = 0)
+               int keyChans = 0, Setup su = Setup{})
     {
         auto host = std::make_unique<EngineHost>();
-        host->configure(ecoConfig(keyChans), paramsAt(0, 0));
+        host->configure(hostConfig(su, keyChans), paramsAt(0, 0));
         if (attached)
             host->setUiAttached(true);
         const std::size_t n = s.l.size();
@@ -163,9 +182,10 @@ namespace
     }
 
     // Held parameters: `first` before kEdge, `second` from it on.
-    Run renderEdge(const BlockParams& first, const BlockParams& second, const Signal& s)
+    Run renderEdge(const BlockParams& first, const BlockParams& second, const Signal& s, Setup su = Setup{})
     {
-        return render([&](std::size_t off, std::size_t) { return off < kEdge ? first : second; }, s, kBlock, kEdge);
+        return render([&](std::size_t off, std::size_t) { return off < kEdge ? first : second; }, s, kBlock, kEdge,
+                      false, 0, su);
     }
 
     float lane(simd::f32x4 v, int ln)
@@ -229,6 +249,95 @@ namespace
             }
         return lines <= 0.0 ? -400.0 : 10.0 * std::log10(lines / std::max(f0Amp * f0Amp, 1e-300));
     }
+
+    // The detents of stepped parameters and hybrid steps, per adjacent pair and direction: the edge's parameters.
+    struct DetentEdge
+    {
+        std::string key;
+        BlockParams a, b;
+    };
+
+    std::vector<DetentEdge> detentEdges(const ModeEntry& en, const ParamView& view, const RawParams& edgeBase)
+    {
+        std::vector<DetentEdge> out;
+        for (std::size_t i = 0; i < kNumModeParams; ++i)
+        {
+            const auto pid = static_cast<Pid>(i);
+            const ParamSpec* s = view.spec[i];
+            if (s == nullptr || (s->kind != Kind::stepped && s->kind != Kind::hybrid) || s->steps.size() < 2)
+                continue;
+            for (std::size_t d = 0; d + 1 < s->steps.size(); ++d)
+                for (const bool up : { true, false })
+                {
+                    const std::size_t from = up ? d : d + 1, to = up ? d + 1 : d;
+                    RawParams ra = edgeBase, rb = edgeBase;
+                    ra[pid] = s->steps[from].plain;
+                    rb[pid] = s->steps[to].plain;
+                    DetentEdge e;
+                    e.a = blockOf(en, ra);
+                    e.b = blockOf(en, rb);
+                    if (pid != Pid::atk)
+                    {
+                        e.a.eng.atkTauMs = std::max(e.a.eng.atkTauMs, kDetentAttackMs);
+                        e.b.eng.atkTauMs = std::max(e.b.eng.atkTauMs, kDetentAttackMs);
+                    }
+                    e.key = pidName(pid) + "." + std::to_string(from) + "-" + std::to_string(to);
+                    out.push_back(e);
+                }
+        }
+        return out;
+    }
+
+    // The block-size invariance program of 4. (1 s: 1 kHz at T + 10 dB, noise bursts, silence; a key).
+    Signal bsProgram(double thrIn, double peakOff)
+    {
+        const std::size_t n = static_cast<std::size_t>(1.0f * kFs);
+        Signal s;
+        s.l.resize(n);
+        s.r.resize(n);
+        s.kl.resize(n);
+        s.kr.resize(n);
+        sig::Pcg32 rng(0x7a697070, 11);
+        const double amp = measure::amplitudeFromDb(thrIn + 10.0 + peakOff);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::size_t seg = i / 6000;
+            s.l[i] = seg % 4 == 3 ? 0.0f : sig::sineAt(static_cast<std::int64_t>(i), 1000.0, kFs, amp);
+            s.r[i] = seg % 3 == 1 ? static_cast<float>(amp) * rng.bipolar() : 0.25f * s.l[i];
+            s.kl[i] = sig::sineAt(static_cast<std::int64_t>(i), 70.0, kFs, 0.6);
+            s.kr[i] = seg % 2 == 0 ? 0.4f * rng.bipolar() : 0.0f;
+        }
+        return s;
+    }
+
+    struct BsCounts
+    {
+        std::int64_t out = 0, tap = 0, key = 0, telemetry = 0;
+    };
+
+    BsCounts blockSizeRows(const BlockParams& bp, const Signal& s, Setup su)
+    {
+        Signal noKey = s;
+        noKey.kl.clear();
+        noKey.kr.clear();
+        BlockParams bpKey = bp;
+        bpKey.extKey = true;
+        const auto held = [](const BlockParams& b) { return [b](std::size_t, std::size_t) { return b; }; };
+        const Run ref = render(held(bp), noKey, 512, 0, true, 0, su);
+        const Run refKey = render(held(bpKey), s, 512, 0, true, 2, su);
+        BsCounts c;
+        for (const int bs : { 1, 17, 64, 128, 4096 })
+        {
+            const Run r = render(held(bp), noKey, bs, 0, true, 0, su);
+            c.out += mismatches(r.l, ref.l) + mismatches(r.r, ref.r);
+            c.tap += tapMismatches(r, ref);
+            const Run rk = render(held(bpKey), s, bs, 0, true, 2, su);
+            c.key += mismatches(rk.l, refKey.l) + mismatches(rk.r, refKey.r) + tapMismatches(rk, refKey);
+        }
+        const Run detached = render(held(bp), noKey, 512, 0, false, 0, su);
+        c.telemetry = mismatches(detached.l, ref.l) + mismatches(detached.r, ref.r);
+        return c;
+    }
 } // namespace
 
 FCMP_PROBE(dsp, zipper)
@@ -263,7 +372,7 @@ FCMP_PROBE(dsp, zipper)
     {
         const auto pid = static_cast<Pid>(i);
         if (pid == Pid::look || !continuousLive(view, pid))
-            continue;                                   // look: no lookahead delay at S3 (F7); locked at budget OFF
+            continue;                                   // look: locked at budget OFF (its rows need a budget: below)
         const ParamSpec& s = *view.spec[i];
         RawParams lo = edgeBase, hi = edgeBase;
         lo[pid] = atFraction(pid, s, 0.25f);
@@ -294,46 +403,30 @@ FCMP_PROBE(dsp, zipper)
         P.ge("zipper.edge.metric_sensitivity_db", bestSplice, 20.0);
 
     // ---- 2. detent edges --------------------------------------------------------------------------------------------
-    int pending = 0, pendingMiss = 0;
-    for (std::size_t i = 0; i < kNumModeParams; ++i)
+    const std::vector<DetentEdge> detents = detentEdges(en, view, edgeBase);
     {
-        const auto pid = static_cast<Pid>(i);
-        const ParamSpec* s = view.spec[i];
-        if (s == nullptr || (s->kind != Kind::stepped && s->kind != Kind::hybrid) || s->steps.size() < 2)
-            continue;
-        for (std::size_t d = 0; d + 1 < s->steps.size(); ++d)
-            for (const bool up : { true, false })
+        int pending = 0, pendingMiss = 0;
+        for (const DetentEdge& d : detents)
+        {
+            const Run ctlA = renderEdge(d.a, d.a, tone), ctlB = renderEdge(d.b, d.b, tone),
+                      test = renderEdge(d.a, d.b, tone);
+            const std::string k = "zipper.detent." + d.key + ".hf_ratio_db";
+            const double hf = measure::hfRatioDb(test.l, ctlA.l, ctlB.l, kEdge, kFs);
+            if (kKernelCrossfade || sameKernel(d.a.eng, d.b.eng))
+                P.le(k, hf, fcmp::probe::tol::kClickHfRatioDb);
+            else if (P.wants(k))
             {
-                const std::size_t from = up ? d : d + 1, to = up ? d + 1 : d;
-                RawParams ra = edgeBase, rb = edgeBase;
-                ra[pid] = s->steps[from].plain;
-                rb[pid] = s->steps[to].plain;
-                BlockParams a = blockOf(en, ra), b = blockOf(en, rb);
-                if (pid != Pid::atk)
-                {
-                    a.eng.atkTauMs = std::max(a.eng.atkTauMs, kDetentAttackMs);
-                    b.eng.atkTauMs = std::max(b.eng.atkTauMs, kDetentAttackMs);
-                }
-                const Run ctlA = renderEdge(a, a, tone), ctlB = renderEdge(b, b, tone), test = renderEdge(a, b, tone);
-                const std::string k = "zipper.detent." + pidName(pid) + "." + std::to_string(from) + "-"
-                                    + std::to_string(to) + ".hf_ratio_db";
-                const double hf = measure::hfRatioDb(test.l, ctlA.l, ctlB.l, kEdge, kFs);
-                if (kKernelCrossfade || sameKernel(a.eng, b.eng))
-                    P.le(k, hf, fcmp::probe::tol::kClickHfRatioDb);
-                else if (P.wants(k))
-                {
-                    const bool ok = hf <= fcmp::probe::tol::kClickHfRatioDb;
-                    ++pending;
-                    pendingMiss += ok ? 0 : 1;
-                    std::printf("NOTE     pending F7 %s  %s  got %.9g  <= %g  (kernel-key change: a snapped swap until "
-                                "the crossfade; not judged)\n",
-                                ok ? "PASS" : "MISS", k.c_str(), hf, fcmp::probe::tol::kClickHfRatioDb);
-                }
+                const bool ok = hf <= fcmp::probe::tol::kClickHfRatioDb;
+                ++pending;
+                pendingMiss += ok ? 0 : 1;
+                std::printf("NOTE     pending %s  %s  got %.9g  <= %g  (kernel-key change: not judged)\n",
+                            ok ? "PASS" : "MISS", k.c_str(), hf, fcmp::probe::tol::kClickHfRatioDb);
             }
+        }
+        if (pending > 0)
+            std::printf("NOTE     zipper.detent: %d kernel-key edge(s) not judged, %d over the limit\n", pending,
+                        pendingMiss);
     }
-    if (pending > 0)
-        std::printf("NOTE     zipper.detent: %d kernel-key edge(s) pending F7's crossfade, %d over the limit today\n",
-                    pending, pendingMiss);
 
     // ---- 3. block-rate ramps ----------------------------------------------------------------------------------------
     {
@@ -396,51 +489,63 @@ FCMP_PROBE(dsp, zipper)
             P.le(k + ".zipper_db", zipDb, -40.0);
             P.num(k + ".err_db", errDb, Tol::abs(1.0));
         }
+
+        // look, under a 20 ms budget (spec only)
+        const RawParams laDefaults = fcmp::probe::modeRaw(en, LookaheadBudget::ms20);
+        ParamView laView;
+        resolveView(desc, laDefaults, laView);
+        if (continuousLive(laView, Pid::look))
+        {
+            const Setup la{ Quality::eco, LookaheadBudget::ms20 };
+            const ParamSpec& spec = *laView.spec[idx(Pid::look)];
+            RawParams lo = laDefaults, hi = laDefaults;
+            for (const Pid p : { Pid::atk, Pid::rel })
+                if (continuousLive(laView, p))
+                    lo[p] = hi[p] = laView.spec[idx(p)]->hi;
+            if (continuousLive(laView, Pid::thr))
+                lo[Pid::thr] = hi[Pid::thr] = edgeBase[Pid::thr];
+            lo[Pid::look] = atFraction(Pid::look, spec, 0.25f);
+            hi[Pid::look] = atFraction(Pid::look, spec, 0.75f);
+            const BlockParams a = blockOf(en, lo), b = blockOf(en, hi);
+            const Run ctlA = renderEdge(a, a, tone, la), ctlB = renderEdge(b, b, tone, la),
+                      test = renderEdge(a, b, tone, la);
+            P.le("zipper.edge.look.hf_ratio_db", measure::hfRatioDb(test.l, ctlA.l, ctlB.l, kEdge, kFs),
+                 fcmp::probe::tol::kClickHfRatioDb);
+
+            const auto at = [&](double sample) {
+                RawParams raw = laDefaults;
+                raw[Pid::look] = atFraction(Pid::look, spec,
+                                            static_cast<float>(std::min(1.0, sample / static_cast<double>(n))));
+                return blockOf(en, raw);
+            };
+            const Run perSample = render([&](std::size_t off, std::size_t) { return at(static_cast<double>(off)); }, s,
+                                         1, 0, false, 0, la);
+            const Run perBlock = render(
+                [&](std::size_t off, std::size_t len) {
+                    return at(static_cast<double>(off) + 0.5 * static_cast<double>(len));
+                },
+                s, kBlock, 0, false, 0, la);
+            std::vector<float> diff(n);
+            for (std::size_t j = 0; j < n; ++j)
+                diff[j] = perBlock.l[j] - perSample.l[j];
+            const double zipDb = zipperLinesDb(diff, perSample.l);
+            std::printf("NOTE     zipper.ramp.look: zipper lines %.4g dB re f0 (20 ms budget)\n", zipDb);
+            P.le("zipper.ramp.look.zipper_db", zipDb, -40.0);
+        }
+        else
+            std::printf("NOTE     zipper.look: look is not a continuous live parameter of %s under a 20 ms budget\n",
+                        desc.name.data());
     }
 
     // ---- 4. block-size invariance -----------------------------------------------------------------------------------
+    const Signal bsProg = bsProgram(analysis::inputThresholdDb(e0), peakOff);
+    const BlockParams bpDefaults = blockOf(en, defaults);
     {
-        const std::size_t n = static_cast<std::size_t>(1.0f * kFs);
-        const double thrIn = analysis::inputThresholdDb(e0);
-        Signal s;
-        s.l.resize(n);
-        s.r.resize(n);
-        s.kl.resize(n);
-        s.kr.resize(n);
-        sig::Pcg32 rng(0x7a697070, 11);
-        const double amp = measure::amplitudeFromDb(thrIn + 10.0 + peakOff);
-        for (std::size_t i = 0; i < n; ++i)
-        {
-            const std::size_t seg = i / 6000;
-            s.l[i] = seg % 4 == 3 ? 0.0f : sig::sineAt(static_cast<std::int64_t>(i), 1000.0, kFs, amp);
-            s.r[i] = seg % 3 == 1 ? static_cast<float>(amp) * rng.bipolar() : 0.25f * s.l[i];
-            s.kl[i] = sig::sineAt(static_cast<std::int64_t>(i), 70.0, kFs, 0.6);
-            s.kr[i] = seg % 2 == 0 ? 0.4f * rng.bipolar() : 0.0f;
-        }
-        Signal noKey = s;
-        noKey.kl.clear();
-        noKey.kr.clear();
-        const BlockParams bp = blockOf(en, defaults);
-        BlockParams bpKey = bp;
-        bpKey.extKey = true;
-        const auto held = [](const BlockParams& b) { return [b](std::size_t, std::size_t) { return b; }; };
-
-        const Run ref = render(held(bp), noKey, 512, 0, true);
-        const Run refKey = render(held(bpKey), s, 512, 0, true, 2);
-        std::int64_t out = 0, tapM = 0, keyM = 0;
-        for (const int bs : { 1, 17, 64, 128, 4096 })
-        {
-            const Run r = render(held(bp), noKey, bs, 0, true);
-            out += mismatches(r.l, ref.l) + mismatches(r.r, ref.r);
-            tapM += tapMismatches(r, ref);
-            const Run rk = render(held(bpKey), s, bs, 0, true, 2);
-            keyM += mismatches(rk.l, refKey.l) + mismatches(rk.r, refKey.r) + tapMismatches(rk, refKey);
-        }
-        const Run detached = render(held(bp), noKey, 512, 0, false);
-        P.eq("zipper.bs.mismatches", out, 0);
-        P.eq("zipper.bs.tap_mismatches", tapM, 0);
-        P.eq("zipper.bs.telemetry_mismatches", mismatches(detached.l, ref.l) + mismatches(detached.r, ref.r), 0);
-        P.eq("zipper.bs.key.mismatches", keyM, 0);
+        const BsCounts c = blockSizeRows(bpDefaults, bsProg, Setup{});
+        P.eq("zipper.bs.mismatches", c.out, 0);
+        P.eq("zipper.bs.tap_mismatches", c.tap, 0);
+        P.eq("zipper.bs.telemetry_mismatches", c.telemetry, 0);
+        P.eq("zipper.bs.key.mismatches", c.key, 0);
     }
 
     // ---- 5. requestSnap ---------------------------------------------------------------------------------------------
@@ -463,7 +568,7 @@ FCMP_PROBE(dsp, zipper)
         for (const bool snap : { true, false })
         {
             auto host = std::make_unique<EngineHost>();
-            host->configure(ecoConfig(), pa);
+            host->configure(hostConfig(Setup{}), pa);
             std::vector<float> ol(2 * kHalf), orr(2 * kHalf);
             for (std::size_t off = 0; off < 2 * kHalf; off += kHalf)
             {
@@ -491,6 +596,43 @@ FCMP_PROBE(dsp, zipper)
     else
         std::printf("NOTE     zipper.snap: needs a clean-rigor Mode without colour, auto makeup or preGain at its "
                     "defaults; skipped\n");
+
+    // ---- 6. STD and HQ ----------------------------------------------------------------------------------------------
+    for (const Setup su : { Setup{ Quality::std, LookaheadBudget::ms5 }, Setup{ Quality::hq, LookaheadBudget::ms20 } })
+    {
+        const std::string q = std::string("zipper.") + nameOf(su.quality);
+        const Setup plain{ su.quality, LookaheadBudget::off };
+        const auto e = kEdge + static_cast<std::size_t>(kOs[static_cast<int>(su.quality)].latency);   // at the output
+        for (std::size_t i = 0; i < kNumModeParams; ++i)
+        {
+            const auto pid = static_cast<Pid>(i);
+            if (pid == Pid::look || !continuousLive(view, pid))
+                continue;
+            const ParamSpec& s = *view.spec[i];
+            RawParams lo = edgeBase, hi = edgeBase;
+            lo[pid] = atFraction(pid, s, 0.25f);
+            hi[pid] = atFraction(pid, s, 0.75f);
+            const BlockParams a = blockOf(en, lo), b = blockOf(en, hi);
+            const Run ctlA = renderEdge(a, a, tone, plain), ctlB = renderEdge(b, b, tone, plain),
+                      test = renderEdge(a, b, tone, plain);
+            P.le(q + ".edge." + pidName(pid) + ".hf_ratio_db", measure::hfRatioDb(test.l, ctlA.l, ctlB.l, e, kFs),
+                 fcmp::probe::tol::kClickHfRatioDb);
+        }
+        for (const DetentEdge& d : detents)
+        {
+            if (su.quality == Quality::hq && sameKernel(d.a.eng, d.b.eng))
+                continue;                               // HQ: the kernel crossfades only (the runtime budget, 03 §3.9)
+            const Run ctlA = renderEdge(d.a, d.a, tone, plain), ctlB = renderEdge(d.b, d.b, tone, plain),
+                      test = renderEdge(d.a, d.b, tone, plain);
+            P.le(q + ".detent." + d.key + ".hf_ratio_db", measure::hfRatioDb(test.l, ctlA.l, ctlB.l, e, kFs),
+                 fcmp::probe::tol::kClickHfRatioDb);
+        }
+        const BsCounts c = blockSizeRows(bpDefaults, bsProg, su);
+        P.eq(q + ".bs.mismatches", c.out, 0);
+        P.eq(q + ".bs.tap_mismatches", c.tap, 0);
+        P.eq(q + ".bs.telemetry_mismatches", c.telemetry, 0);
+        P.eq(q + ".bs.key.mismatches", c.key, 0);
+    }
 
     return P.finish();
 }
