@@ -16,7 +16,9 @@ SPRINTS beats 03 §4.9 on scheduling and ownership only.
 
 ## Never (agents)
 
-- `git commit`, `push`, `rebase`, `worktree prune`, `gc`, or change any ref other than your own branch.
+- `git commit` on any branch but your own; `push`, `rebase`, `worktree prune`, `gc`, or change any ref other than your
+  own branch. When the lead's prompt asks for it, finish with ONE handoff commit on your own branch (`s<N>/<code>`) so
+  the worktree cannot be cleaned up with your work in it; the lead reviews it before anything reaches `main`.
 - Bless (`golden.py adopt`), install (`owner` preset, `~/Library/Audio/Plug-Ins`), or use the network.
 - Touch `/Users/seanfunk/audio/plugins/HardwareReverb` (read-only: never edited, never built, never referenced by CMake)
   or write into `~/audio/.deps` (read-only machine cache, written only by `Scripts/deps.sh`).
