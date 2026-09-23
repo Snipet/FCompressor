@@ -50,11 +50,10 @@ inline constexpr std::array<Pid, kNumModeParams> kResolveOrder {
 // the positional kSnapDomain table; kSnapDomain remains as a table GENERATED from snapDomain() (snap() may index it).
 enum class SnapDomain : uint8_t { linear, log, host };
 constexpr SnapDomain snapDomain(Pid p) noexcept {
-    switch (p) {
-        case Pid::atk: case Pid::rel: case Pid::s2atk: case Pid::s2rel: return SnapDomain::log;
-        case Pid::schpf:                                                return SnapDomain::host;
-        default:                                                        return SnapDomain::linear;
-    }
+    // Not a switch: -Wswitch-enum (JUCE's warning list, R-B0 #6) rejects a default over 29 enumerators.
+    if (p == Pid::atk || p == Pid::rel || p == Pid::s2atk || p == Pid::s2rel) return SnapDomain::log;
+    if (p == Pid::schpf)                                                      return SnapDomain::host;
+    return SnapDomain::linear;
 }
 inline constexpr std::array<SnapDomain, kNumModeParams> kSnapDomain = [] {   // kSnapDomain[idx(p)] == snapDomain(p)
     std::array<SnapDomain, kNumModeParams> t{};
