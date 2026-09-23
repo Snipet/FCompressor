@@ -2,7 +2,8 @@
 // "// FCMP_PROBE" first line, so CMake registers no CTest test for it; FCMP_PROBE(ui, dump) still registers the
 // subcommand:
 //
-//   fcmp_probe_plugin ui.dump --view <id> --mode <key> --out <x.dump> [--png <x.png>] [--dpi 1|2] [--theme 0|1]
+//   fcmp_probe_plugin ui.dump --mode <key> --golden-root <dir> --arch <arch> -- --view <id> --out <x.dump> [--png <x.png>]
+//                                  [--dpi 1|2] [--theme 0|1]   (flags after "--" are ui.dump's own; S5 lead revision)
 //
 // It renders one view of fcmp::ui::views() for one Mode exactly as ui.geometry does (a FakeFacade, Panel{skipHint,
 // syncPreview}, HeadlessHost, setView(instant), settle at 1/60 s), then writes the settled frame as dump v2 and, with

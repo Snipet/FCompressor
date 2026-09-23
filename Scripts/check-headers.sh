@@ -4,7 +4,8 @@
 #
 #   Source/fcdsp/**/*.h                                   always (zero headers is fine: Sprint 0 starts empty)
 #   Source/plugin/ProcessorFacade.h                       when present
-#   Source/editor/{SubView,Panel,Layout,Tags}.h           when present
+#   Source/editor/{SubView,Panel,Layout,Tags,HistoryStore,PreviewWorker,SlotModel}.h, Source/editor/views/*.h,
+#   Tools/probes/plugin/FakeFacade.h                      when present (FZ4)
 #
 # Each header is compiled alone with
 #   $CXX -std=c++20 -fsyntax-only <WARN> -Wmissing-variable-declarations -Werror -ffp-contract=off -I Source -x c++-header
@@ -61,11 +62,16 @@ done < <(cd "$ROOT" && find Source/fcdsp -type f -name '*.h' 2>/dev/null | LC_AL
 
 OTHER=()
 for h in Source/plugin/ProcessorFacade.h Source/editor/SubView.h Source/editor/Panel.h Source/editor/Layout.h \
-         Source/editor/Tags.h; do
+         Source/editor/Tags.h Source/editor/HistoryStore.h Source/editor/PreviewWorker.h Source/editor/SlotModel.h \
+         Tools/probes/plugin/FakeFacade.h; do
   if [ -f "$ROOT/$h" ]; then
     OTHER+=("$h")
   fi
 done
+# FZ4 (S5 lead revision): every editor view header is frozen too.
+while IFS= read -r h; do
+  OTHER+=("$h")
+done < <(cd "$ROOT" && find Source/editor/views -type f -name '*.h' 2>/dev/null | LC_ALL=C sort)
 
 EXTRA=()
 if [ "${#OTHER[@]}" -gt 0 ]; then
