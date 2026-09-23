@@ -1,0 +1,10 @@
+# build trees
+/build*/
+/out/
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+*.swp
+# local Claude settings
+.claude/settings.local.json
