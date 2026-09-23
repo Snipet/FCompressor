@@ -27,7 +27,7 @@ enum class Kind : uint8_t {
 
 enum StepTag : uint16_t {             // OR-ed into ParamView::tags and EngineParams::tags
     kTagNone = 0,
-    kTagOff = 1u << 0,     // circuit disabled (FET attack OFF, Stage 2 OFF)
+    kTagOff = 1u << 0,     // main gain reduction disabled (FET 76 GR switch OFF) — FZ3: never Stage 2 OFF
     kTagAuto = 1u << 1,    // program-dependent switch position (SSL AUTO, Neve a1, digital AUTO)
     kTagAuto2 = 1u << 2,   // second auto variant (Neve a2)
     kTagAll = 1u << 3,     // 1176 all-buttons

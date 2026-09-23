@@ -486,3 +486,29 @@ Characteristics screen keeps the chrome · **Q5** mix 0–200 % · **Q6** arm64-
 user may install it with `softwareupdate --install-rosetta --agree-to-license` to enable the universal target) ·
 **Q7** preferences per product · **Q8** prebuilt `shaderc`/`pluginval` in `~/audio/.deps/tools` · **Q9** FET 76 gets a
 separate `GR` switch · **Q10** fixed calibration 0 dBFS = +22 dBu.
+
+## FZ3 — schema frozen on eight descriptors (2026-09-23, end of Sprint 4)
+
+All eight first-wave descriptors (Clean final; Bus G, FET 76, Opto 2A, Mu 67, Diode 609, Bus 25, Brickwall provisional
+on generic traits) fit `ParamSpec`/`ModeDescriptor` with **no declaration change**. The lead's rulings on DW's evidence:
+
+- **ADR-62 `kTagOff` means only "main gain reduction disabled"** (FET 76's `GR` switch). Stage-2 OFF is expressed by
+  `s2thr` = 24 (`kS2Off`), never by `kTagOff` — otherwise `crossmode.no_off` fails every pair into Diode 609.
+- **ADR-63 Feedback time constants.** A Mode's `TimeSpec` declares the **published (closed-loop, measured)** time — the
+  value `dsp.time` checks. A feedback Mode's `physical()` converts it to the open-loop ballistics τ (a loop with gain
+  k runs ≈ (1 + c·k) faster). No schema field.
+- **ADR-64 Tags shared by two Pids** (e.g. Diode 609's A1/A2 `kTagProgram` on RELEASE and LIMIT RELEASE) are
+  disambiguated in `physical()` (route through `m[…]`), since `EngineParams::tags` is one OR over all parameters.
+- **ADR-65 Declined for v1:** `hasColour` as a function of `EngineParams` (the UI shows an identity colour curve when a
+  voice has no colour); a per-`EngineParams` topology caption (the UI reads `EngineParams::topo`); zeroing
+  `makeupDb` in the null probe (Brickwall stays rigor *character*).
+- **ADR-66 DW's probe relaxations approved** (hostile big-sample tail as NOTE; srsweep long-release on FF only; time
+  GR-OFF threshold tracking and 2-ulp carry; zipper attack hold; static voice-topology NOTE). Revisit srsweep when the
+  `FbAffine` base-GR item lands (Mu 67).
+- **ADR-67 F5 rulings.** The 6-section bilinear tilt is judged over 200 Hz–2.5 kHz (±0.1 dB); outside, it deviates up
+  to ~1 dB (40 Hz–10 kHz) and is drawn from its real `responseDb()`, so the UI stays truthful. `LinkCvSum` is the
+  normalised node (own + k·other)/(1 + k). Router M/S decode is residual. **Known issue for M6 (Bus 25):** in a feedback
+  loop, partial link commits and re-links every sample, so 40–90 % link behaves almost like 100 % (measured 99.9 % at
+  40 %); a fix links the gain-computer term inside the affine map (a coupled solve) — M6 decides.
+- **Mu 67** `AC THRESH` reads 0–10 with 10 = no compression (not inverted); 01 §10.2's matrix cell is corrected.
+- **G5:** `WordModel : ToggleModel` with `visible()` accepted for AUTO/EXT/LISTEN words; RuleSlider API additions accepted.
