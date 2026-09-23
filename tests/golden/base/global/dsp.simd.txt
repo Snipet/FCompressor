@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.simd  scope=global
+# key	value	tolerance
+xarch.simd.ops.hash	571b922c87fe5e6e	exact
+xarch.simd.log2.hash	4a8e314e858829d1	exact
+xarch.simd.exp2.hash	11eab67a798cf29a	exact
+xarch.simd.tanh.hash	7e0269eb8311ad26	exact
+xarch.simd.logcosh.hash	f92634d5bdc3c4c3	exact
+xarch.simd.tanpi.hash	b5cdb786603216da	exact
+xarch.simd.sinpi.hash	888a1fe976ece5b7	exact
+xarch.simd.cospi.hash	f217ea09c8f2f8ff	exact
