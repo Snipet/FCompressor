@@ -12,9 +12,11 @@
 //   hostile.<c>.flagged            1: kUiPoisonReset is set in the injection's block (sanitize replaced or clamped)
 //   hostile.<c>.recovery_blocks    <= 1: blocks after the injected ones that still flag kUiPoisonReset (here 0)
 //   hostile.<c>.tail_err_db        <= 1 dB: |RMS ratio| to the control over 100-200 ms after the injection; also a
-//                                  golden row (abs:1). Not a spec row for big.block: 512 samples of 1e30 are clamped to
-//                                  1e6 (+120 dBFS) and compressed as the (legal) input they became, so the GR they
-//                                  build takes the Mode's release to leave (NOTE)
+//                                  golden row (abs:1). Not a spec row for big.*: 1e30 is clamped to 1e6 (+120 dBFS)
+//                                  and compressed as the (legal) input it became, so the GR it builds takes the Mode's
+//                                  release to leave (NOTE). A whole block always does; a single sample does in a
+//                                  fast-attack Mode (DW, S4: FET 76's 0.2 ms, Mu 67's TC attacks, Brickwall's attack
+//                                  inside a budget-OFF lookahead catch one sample at +120 dBFS)
 //   cases: {nan,inf,big}.{sample,block} on the main input (one sample of L; a whole block, both channels) and
 //          key.{nan,inf,big}.{sample,block} on an active external key (extKey on, a 2-channel key bus)
 //   hostile.poison.<what>.*        the poison fallback (01 §5.8), forced by a non-finite EngineParams value for one
@@ -320,8 +322,8 @@ FCMP_PROBE(dsp, hostile)
                 P.eq(k + ".flagged", flagged(t, first) ? 1 : 0, 1);
                 P.le(k + ".recovery_blocks", static_cast<double>(flaggedAfter(t, last)), 1.0);
                 const double tail = tailErrDb(t, c);
-                if (v == 2 && wholeBlock)
-                    std::printf("NOTE     %s.tail_err_db = %.4g dB: a clamped +120 dBFS block is compressed as input; "
+                if (v == 2)
+                    std::printf("NOTE     %s.tail_err_db = %.4g dB: clamped +120 dBFS input is compressed as input; "
                                 "its GR leaves at the Mode's release (not a spec row)\n",
                                 k.c_str(), tail);
                 else

@@ -16,18 +16,18 @@
 //        slot  key            Traits   (files: modes/<key>/<Traits>.h, <Traits>Desc.cpp, <Traits>.cpp)
 FCMP_MODE(0, "clean", Clean)
 
-// FCMP_MODE(1, "bus-g", BusG)
+FCMP_MODE(1, "bus-g", BusG)
 
-// FCMP_MODE(2, "fet-76", Fet76)
+FCMP_MODE(2, "fet-76", Fet76)
 
-// FCMP_MODE(3, "opto-2a", Opto2A)
+FCMP_MODE(3, "opto-2a", Opto2A)
 
-// FCMP_MODE(4, "mu-67", Mu67)
+FCMP_MODE(4, "mu-67", Mu67)
 
-// FCMP_MODE(5, "diode-609", Diode609)
+FCMP_MODE(5, "diode-609", Diode609)
 
-// FCMP_MODE(6, "bus-25", Bus25)
+FCMP_MODE(6, "bus-25", Bus25)
 
-// FCMP_MODE(7, "brickwall", Brickwall)
+FCMP_MODE(7, "brickwall", Brickwall)
 
 // Retired Modes keep their slot:  FCMP_RETIRED(slot, "key", "successor-key")

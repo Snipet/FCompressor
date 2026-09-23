@@ -27,7 +27,11 @@
 //     srsweep.<fs>.long_release.max_dev_db   the Mode's slowest release from 20 dB to 10 dB of GR (4 tau): the GR
 //                                        against the exact exponential of its own one-pole, <= 1e-3 dB (the plain
 //                                        float recurrence stalled 0.11 dB short at 48 kHz and 0.9 dB at 384 kHz); run
-//                                        when the Mode's release is live
+//                                        when the Mode's release is live and its slowest release resolves to a
+//                                        feed-forward kernel. A feedback kernel's release is not its one-pole's
+//                                        exponential (the loop gain k shortens it: the closed loop decays by
+//                                        (1 - c) / (1 + c k) per sample, E §2.6), and its sub-ulp carry waits for
+//                                        FbAffine's base GR (S3 lead revision 4), so FB prints a NOTE (DW, S4: FET 76)
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -312,12 +316,20 @@ FCMP_PROBE(dsp, srsweep)
         {
             RawParams slow = dflt;
             slow[Pid::rel] = timeEdge(view, Pid::rel, false);
-            double stall = 0.0;
-            const double dev = longReleaseDev(en, fcmp::probe::resolveRaw(en, slow).eng, r.fs, stall);
-            std::printf("NOTE     %s.long_release: %.4g dB from the exact exponential (a plain float one-pole stalls "
-                        "%.3g dB short of a 10 dB target)\n",
-                        k.c_str(), dev, stall);
-            P.le(k + ".long_release.max_dev_db", dev, 1e-3);
+            const EngineParams slowEng = fcmp::probe::resolveRaw(en, slow).eng;
+            if (slowEng.topo == kTopoFB)
+                std::printf("NOTE     %s.long_release: a feedback kernel (the closed loop is not the one-pole's "
+                            "exponential; FB sub-ulp carry: FbAffine base GR, S3 lead revision 4): not judged\n",
+                            k.c_str());
+            else
+            {
+                double stall = 0.0;
+                const double dev = longReleaseDev(en, slowEng, r.fs, stall);
+                std::printf("NOTE     %s.long_release: %.4g dB from the exact exponential (a plain float one-pole "
+                            "stalls %.3g dB short of a 10 dB target)\n",
+                            k.c_str(), dev, stall);
+                P.le(k + ".long_release.max_dev_db", dev, 1e-3);
+            }
         }
     }
 

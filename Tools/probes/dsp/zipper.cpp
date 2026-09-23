@@ -11,7 +11,10 @@
 //      zipper.edge.metric_sensitivity_db  the two controls of the largest-effect parameter spliced with a hard cut at
 //                                      the edge read >= +20 dB: the metric sees an unsmoothed step there
 // 2. Detent edges (K2 #4 iv), every stepped parameter and the steps of every hybrid one: each pair of adjacent detents,
-//    both directions, at t = 1 s, same tone and setting, against the two steady controls.
+//    both directions, at t = 1 s, same tone and setting, against the two steady controls. The engine's attack is held
+//    at >= kDetentAttackMs (50 ms) in all three renders, except for `atk`'s own detents: the row judges the detent's
+//    own transition, and a fast attack (DW, S4: FET 76's 0.8 ms maximum, Bus 25's 1 ms and Diode 609's 3 ms defaults)
+//    reads the compressor's legitimate reaction to a new static curve, GR steps at the next waveform peak, as a click.
 //      zipper.detent.<p>.<i>-<j>.hf_ratio_db  <= +3 dB
 //    A pair whose detents resolve to different kernel keys (det, stmode, voice, topo: 01 §5.5) is a kernel swap, which
 //    S3 runs snapped: the 20 ms crossfade is F7's. Those rows are measured and printed as NOTE lines with their verdict
@@ -81,6 +84,7 @@ namespace
     constexpr float kFs = 48000.0f;
     constexpr int kBlock = 512;
     constexpr std::size_t kEdge = 48000;              // t = 1 s: a zero crossing of 110 Hz (C §5.6)
+    constexpr float kDetentAttackMs = 50.0f;          // the detent renders' attack floor (header, 2.)
 
     // F7 sets this with the kernel crossfade (01 §5.5 step 4): kernel-key detent edges become judged spec rows.
     constexpr bool kKernelCrossfade = false;
@@ -304,7 +308,12 @@ FCMP_PROBE(dsp, zipper)
                 RawParams ra = edgeBase, rb = edgeBase;
                 ra[pid] = s->steps[from].plain;
                 rb[pid] = s->steps[to].plain;
-                const BlockParams a = blockOf(en, ra), b = blockOf(en, rb);
+                BlockParams a = blockOf(en, ra), b = blockOf(en, rb);
+                if (pid != Pid::atk)
+                {
+                    a.eng.atkTauMs = std::max(a.eng.atkTauMs, kDetentAttackMs);
+                    b.eng.atkTauMs = std::max(b.eng.atkTauMs, kDetentAttackMs);
+                }
                 const Run ctlA = renderEdge(a, a, tone), ctlB = renderEdge(b, b, tone), test = renderEdge(a, b, tone);
                 const std::string k = "zipper.detent." + pidName(pid) + "." + std::to_string(from) + "-"
                                     + std::to_string(to) + ".hf_ratio_db";
