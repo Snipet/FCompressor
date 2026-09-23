@@ -17,9 +17,10 @@
 //     };
 //
 // FCDSP_DEFINE_MODE(Traits) (DefineMode.h) instantiates the engine and its analysis entry points in the Mode's own TU
-// and asserts that it fits the arena. Sprint-frozen: F0 declares the members; F3 (S2) adds the FF bodies and F9 (S3)
-// the FB bodies. Per chunk, control() branches on p_.topo: the FF or FB step of Stage.h, per sample, with the
-// coefficients designed on control ticks.
+// and asserts that it fits the arena. Sprint-frozen: F0 declares the members; F3 (S2) added the FF bodies and the FB
+// seam, F9 (S3) the FB policies behind it (QuadKnee::solveFb, SmoothBranching::solveFb/commitFb, FeedbackZdf,
+// FeedbackDelayed and its guard) and the optional side-chain hooks. Per chunk, control() branches on p_.topo: the FF
+// or FB step of Stage.h, per sample, with the coefficients designed on control ticks.
 //
 // Real time (FZ0 errata, R-F0 #1): construct and every IEngine override are FCDSP_NONBLOCKING; an out-of-line
 // definition repeats the macro. The analysis statics are not on the audio path and are not annotated.
@@ -40,7 +41,7 @@
 // member names are part of this frozen declaration. The hook is header-inline and nonblocking (ModeEngine::internals
 // calls it on the audio thread's telemetry path).
 //
-// The bodies (F3, S2) follow the class; their conventions are documented there ("Bodies").
+// The bodies (F3, S2; F9, S3) follow the class; their conventions are documented there ("Bodies").
 
 #include "fcdsp/core/ControlTicker.h"
 #include "fcdsp/core/Rt.h"
@@ -102,11 +103,14 @@ public:
 };
 // The size/alignment asserts live in FCDSP_DEFINE_MODE, one per Mode TU (01 §8.2).
 
-// ==== Bodies (F3, S2) ================================================================================================
+// ==== Bodies (F3, S2; F9, S3) ========================================================================================
 //
 // Protocol (01 §5.5): construct -> prepare -> setParams -> snapParams [-> seed(carry)] -> control/colour per chunk.
 //   prepare     rates, the 20 ms smoothers and ramps; then the current parameters' targets and reset().
-//               Allocation-free. (The feedback stability guard, 01 §5.3, arrives with the FB kernels: F9.)
+//               Allocation-free. The feedback stability guard (01 §5.3, K2 #5c) runs inside it: reset() ->
+//               snapParams() designs every Coeffs at the actual fs, and FeedbackDelayed<G>::design computes its bound
+//               k <= alpha / (1 - alpha) there (and again on every control tick), falling back to FeedbackZdf<G>
+//               per sample while the curve's loop gain exceeds it (FeedbackDelayed.h).
 //   reset       silence: every state value-initialised, the detector seeded at the -240 dB floor, the ballistics and
 //               stage 2 at 0 dB GR, the colour states reset, the ticker restarted; then snapParams().
 //   setParams   per block: p_ and the smoother/ramp targets. Coefficients follow at the next control tick.
@@ -115,29 +119,38 @@ public:
 //               the targets (a policy that smooths inside its Coeffs, as SmoothBranching smooths its times, primes
 //               there). So a snapped engine renders exactly the settled static behaviour at once.
 //   control     per sample i of the chunk: tick -> design (every kTickSamples at the ABSOLUTE index, so block-size
-//               invariant) -> LevelCtl from lvl_/lvl2_ (header comment) -> ScShape -> Detector -> FF or FB step ->
-//               stage 2 (faded in by s2On_) -> min(range) -> x offAmt_. Both 20 ms LinearRamps are applied through
-//               rampShape (smoothstep): still exactly 0 and 1 at the ends and 20 ms long, but with no gain-slope
+//               invariant) -> LevelCtl from lvl_/lvl2_ (header comment) -> ScShape -> [B::sense(shaped SC), the
+//               optional hook below] -> Detector -> FF or FB step -> stage 2 (faded in by s2On_) -> min(range) ->
+//               x offAmt_. Both 20 ms LinearRamps are applied through rampShape (smoothstep): still exactly 0 and 1
+//               at the ends and 20 ms long, but with no gain-slope
 //               discontinuity, so GR OFF and stage 2 on/off do not click (K2 #4 iii). The kernel is chosen per
 //               CHUNK: FB when the Traits compile it (kTopologies), p_.topo is kTopoFB and the key is internal (an FB
-//               kernel evaluates FF on an external key, E §2.6); FF otherwise. The FB step is the seam F9 fills
-//               (K2 #1, #5b):
+//               kernel evaluates FF on an external key, E §2.6); FF otherwise. The FB step (K2 #1, #5b; F9):
 //                   r = B::solveFb(bc_, bal_, [x, l](FbAffine a) { return G::solveFb(gc_, x, l, a); });
 //                   r = L::apply(r, link);  B::commitFb(bc_, bal_, r);
+//               i.e. the per-lane solve (the ballistics pick their branches' affine maps, several branches take the
+//               max of roots), then the link, then the commit of the linked value.
 //               Outputs: grDb = applied GR (lanes 0-1 are the channels the host applies; lanes 2-3 are not
 //               consumed), detDb = x (the curve-axis level + preGain), tgtDb = the linked static target (FF) or the
 //               static FB curve at x (FB), s2GrDb = {stage-2 GR of c0, c1 (combine's aux lanes, x s2On), 0, 0}, bits =
 //               B::status | b3 when the range clamp holds lanes 0-1 | b4 when stage 2 reduces gain.
 //   colour      C::process on both channels (channel = the col_ index), in place at the OS rate.
 //   carry/seed  Carry{ B::grDb(bal_), D::levelDb(det_), S2::grDb(s2_), releaseNowMs lanes 0-1, lane domain, valid 1 }.
-//               Each seed receives its own policy's state, so a switch is continuous in every stage. grDb(state) is
-//               not in the frozen concepts: a policy without it hands over 0 dB (a cold stage). seed() applies the
-//               domain rule (K2 #3d): when carry.msDomain differs from this engine's lane domain (stmode != STEREO is
-//               M/S), every lane takes max(lane0, lane1) first. A carry with valid == 0 is a cold start (no-op).
+//               Each seed receives its own policy's state, so a switch is continuous in every stage (grDb(state) is
+//               required by the concepts since the S2 lead revision; the detection below stays harmless). seed()
+//               applies the domain rule (K2 #3d): when carry.msDomain differs from this engine's lane domain (stmode !=
+//               STEREO is M/S), every lane takes max(lane0, lane1) first. A carry with valid == 0 is a cold start
+//               (no-op).
 //   autoMakeup  E §2.2: r^(0 dBFS) = G::target at x = preGainDb with the TARGET level controls, lane 0; 0 unless
 //               kEngAutoMakeup, and 0 while kEngGrOff.
 //   finite      the carry lanes, the level smoothers and the ramps (01 §5.8).
 //   Traits hooks (optional): M::internals(engine, out) (out is zeroed first), M::scDelaySamples(const EngineParams&).
+//   Ballistics hooks (optional, F9; detected, not in the frozen concept, so they change nothing for a policy without
+//               them): B::sense(bc_, bal_, v) is called once per sample with the shaped linear SC v (after ScShape,
+//               before the detector, in both kernels), so a program-dependent ballistics policy can run its own side-
+//               chain detectors (CrestAuto: the crest factor, E §2.5a); B::crestDb(bal_) (dB per lane) fills
+//               EngineTelemetry::crestDb, else 0. The frozen BallisticsPolicy passes only GR values, which carry no
+//               crest information; the handoff of F9 proposes both hooks for the concept at the next freeze.
 //   Analysis    staticGr = G::target over 4 abscissae per call with the unsmoothed LevelCtl (FB: G::solveFb with
 //               FbAffine{0, 1}); scShapeDb = SH::magDb; colourCurve = C::transfer; each designs a value-initialised
 //               Coeffs and opens ScopedFtz. staticGr is the computer alone: range, stage 2 and GR OFF are the
@@ -223,6 +236,15 @@ concept HasInternals = requires (const E& e, float* out) { { M::internals(e, out
 template <class M>
 concept HasScDelay = requires (const EngineParams& p) {
     { M::scDelaySamples(p) } noexcept -> std::convertible_to<int>;
+};
+
+template <class B>
+concept HasSense = requires (const typename B::Coeffs& c, typename B::State& s, simd::f32x4 v) {
+    { B::sense(c, s, v) } noexcept;
+};
+template <class B>
+concept HasCrestDb = requires (const typename B::State& s) {
+    { B::crestDb(s) } noexcept -> std::same_as<simd::f32x4>;
 };
 
 template <class M>
@@ -365,6 +387,8 @@ void ModeEngine<M>::control(const ControlIo& io) noexcept FCDSP_NONBLOCKING
             const simd::f32x4 range = me::bcast<2>(a);
 
             const simd::f32x4 v = SH::tick(shc_, sh_, io.sc[i]);
+            if constexpr (me::HasSense<B>)
+                B::sense(bc_, bal_, v);
             const simd::f32x4 x = D::tick(dc_, det_, v);
             simd::f32x4 tgt, r1;
             if constexpr (kFb)
@@ -461,8 +485,17 @@ void ModeEngine<M>::telemetry(EngineTelemetry& t) const noexcept FCDSP_NONBLOCKI
     t.attackNowMs[1] = simd::lane<1>(atk);
     t.releaseNowMs[0] = simd::lane<0>(rel);
     t.releaseNowMs[1] = simd::lane<1>(rel);
-    t.crestDb[0] = 0.0f;                          // no crest detector in the FF skeleton (CrestAuto: F9)
-    t.crestDb[1] = 0.0f;
+    if constexpr (detail::modeengine::HasCrestDb<typename M::Ballistics>)
+    {
+        const simd::f32x4 crest = M::Ballistics::crestDb(bal_);
+        t.crestDb[0] = simd::lane<0>(crest);
+        t.crestDb[1] = simd::lane<1>(crest);
+    }
+    else
+    {
+        t.crestDb[0] = 0.0f;                      // no crest detector in this Mode's ballistics
+        t.crestDb[1] = 0.0f;
+    }
 }
 
 template <class M>

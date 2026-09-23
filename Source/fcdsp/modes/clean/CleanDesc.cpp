@@ -1,9 +1,10 @@
 // Clean (slot 0, `clean`): the Mode's descriptor, physical() and specs, 01 §10.3 verbatim except as noted below.
-// Clean.h (the traits, F3) and Clean.cpp (FCDSP_DEFINE_MODE(Clean)) arrive in S2; until F3 activates slot 0 in
-// Modes.def nothing registers this descriptor, and the S1 probes reach it through the extern declaration below.
+// Clean.h holds the traits (full since F9, S3) and Clean.cpp FCDSP_DEFINE_MODE(Clean); docs/modes/clean.md is the Mode
+// sheet.
 //
 // - External linkage (SPRINTS §7 D24): the traits header and the probes declare `extern const ModeDescriptor kClean;`.
-// - provisional = true until F9 (S3) fits Clean and clears it (golden.py adopt refuses its modes/clean/ rows; 01 §4.3).
+// - provisional = false since F9 (S3): Clean runs its full traits, so its fidelity rows are blocking spec rows and its
+//   modes/clean/ goldens can be blessed (01 §4.3; SPRINTS §7 D12).
 // - revision is spelled out (= 1, the default) so the designated initialiser names every field.
 
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -67,7 +68,7 @@ constexpr InternalSpec kCleanInt[] = { { "REL EFF", "MS", 1, 5000, 0, true }, { 
 
 extern constexpr ModeDescriptor kClean {
     .key = "clean", .name = "CLEAN", .group = Group::modern, .introducedInStateVersion = 1, .revision = 1,
-    .provisional = true,
+    .provisional = false,
     .topologyLine = "FEED-FORWARD · LOG DOMAIN",
     .specLine = "CLEAN   FEED-FORWARD · PEAK/RMS · 5 µS–250 MS · 1:1–∞ · 0–200 % MIX",
     .params = kCleanParams, .physical = &cleanPhysical,
@@ -79,6 +80,6 @@ extern constexpr ModeDescriptor kClean {
 
 } // namespace fcdsp::modes
 
-// Traits (Clean.h, F3): Detector DetSelect<PeakLog, RmsLog, DualDet>; Computer QuadKnee; Link LinkMax;
+// Traits (Clean.h, F9): Detector DetSelect<PeakLog, RmsLog, DualDet>; Computer QuadKnee; Link LinkMax;
 // Ballistics Hold<CrestAuto<SmoothBranching>>; Stage2 NoStage2; Colour ColourSelect<ColourNone, TubeSym, DiodeAsym,
 // Bright>; ScShape Flat; kTopologies = FF. Rigor clean => D8 (b) bit-exact below-threshold null when voice = OFF.

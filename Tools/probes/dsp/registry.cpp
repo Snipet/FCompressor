@@ -1,8 +1,8 @@
 // FCMP_PROBE layer=dsp name=registry scope=global timeout=60
 //
 // dsp.registry (F3, S2; 01 §8.3 is the canonical list; 03 §3.4; C §5.10.4; K1 #9, #20, #24; K2 #4, #9; K3 #9, #17): the
-// registry lint. Spec rows only, never a golden (so adding a Mode rewrites no global file). Every row of 01 §8.3 except
-// fb.monotone, which F9 (S3) adds with the first feedback kernel:
+// registry lint. Spec rows only, never a golden (so adding a Mode rewrites no global file). Every row of 01 §8.3
+// (fb.monotone added by F9, S3, with the feedback kernels):
 //
 //   modesdef      the Modes.def FCMP_MODE / FCMP_RETIRED lines (parsed here with CMake's regex, FcmpSources.cmake)
 //                 equal modeSlots() and retired(), in order: the CTest matrix and the C++ registry are the same list
@@ -25,6 +25,12 @@
 //                 limiter-only (Group::limit)
 //   thr.slope     |dT_in/dthr - 1| <= 1e-4 at 5 points per Mode and per ratio step, T_in = analysis::inputThresholdDb
 //                 (K1 #9)
+//   fb.monotone   (K2 #5a) every FB configuration of every Mode (its defaults, and each step of each stepped parameter,
+//                 resolved; those with topo FB) has a non-decreasing FB curve r^_fb on y in [-80, +40] dB, sampled
+//                 every 0.1 dB: the root of every feedback solve is then unique. r^_fb is the Mode's own computer with
+//                 the loop gain k = QuadKnee::loopGain(S) in place of the slope (the one FB-curve convention,
+//                 QuadKnee.h), read through the entry's staticGr with topo FF. A Mode without FB configurations reports
+//                 0 of them (NOTE)
 //   goldens       every tests/golden/*/modes/<key>/ directory belongs to a registered or retired key
 //
 // On EVERY run it adds note("provisional", jsonArray(keys)) to the results JSON, "[]" when no Mode is provisional (S2
@@ -38,6 +44,7 @@
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/engine/IEngine.h"
+#include "fcdsp/engine/stages/gain/QuadKnee.h"
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/EngineParams.h"
@@ -353,6 +360,50 @@ namespace
         P.le(k + ".max_dev", worst, 1e-4);
     }
 
+    // fb.monotone (K2 #5a): r^_fb non-decreasing on y in [-80, +40] dB (0.1 dB steps) for every FB configuration.
+    void fbMonotoneRows(Probe& P, const ModeSlot& ms)
+    {
+        const ModeEntry& en = *ms.entry;
+        const ModeDescriptor& d = *en.desc;
+        const RawParams base = fcmp::probe::modeRaw(en);
+        ParamView view;
+        resolveView(d, base, view);
+        std::vector<RawParams> raws{ base };
+        for (std::size_t i = 0; i < kNumModeParams; ++i)
+        {
+            const ParamSpec* s = view.spec[i];
+            if (s == nullptr || (s->kind != Kind::stepped && s->kind != Kind::hybrid))
+                continue;
+            for (const Step& st : s->steps)
+            {
+                RawParams raw = base;
+                raw[static_cast<Pid>(i)] = st.plain;
+                raws.push_back(raw);
+            }
+        }
+
+        std::vector<float> ys, r(1201);
+        for (int i = 0; i <= 1200; ++i)
+            ys.push_back(-80.0f + 0.1f * static_cast<float>(i));
+        std::int64_t configs = 0, decreases = 0;
+        for (const RawParams& raw : raws)
+        {
+            const EngineParams e = fcmp::probe::resolveRaw(en, raw).eng;
+            if (e.topo != kTopoFB)
+                continue;
+            ++configs;
+            EngineParams ff = e;
+            ff.topo = kTopoFF;
+            ff.slope = stage::QuadKnee::loopGain(e.slope);
+            en.staticGr(ff, ys.data(), r.data(), static_cast<int>(ys.size()));
+            for (std::size_t i = 1; i < r.size(); ++i)
+                decreases += r[i] < r[i - 1] ? 1 : 0;
+        }
+        std::printf("NOTE     fb.monotone %s: %lld FB configuration(s) of %zu resolved\n", ms.key.data(),
+                    static_cast<long long>(configs), raws.size());
+        P.eq("fb.monotone." + str(ms.key) + ".decreases", decreases, 0);
+    }
+
     // crossmode.no_off (K2 #4 ii) for the ordered pair (a, b).
     void crossmodeRows(Probe& P, const ModeSlot& a, const ModeSlot& b)
     {
@@ -529,7 +580,10 @@ FCMP_PROBE(dsp, registry)
     // ---- per Mode, and per ordered pair -----------------------------------------------------------------------------
     for (const ModeSlot& ms : slots)
         if (ms.entry != nullptr && ms.entry->desc != nullptr)
+        {
             thrSlopeRows(P, ms);
+            fbMonotoneRows(P, ms);
+        }
     for (const ModeSlot& a : slots)
         for (const ModeSlot& b : slots)
             if (a.entry != nullptr && b.entry != nullptr && a.entry->desc != nullptr && b.entry->desc != nullptr)
