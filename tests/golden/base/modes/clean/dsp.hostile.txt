@@ -1,0 +1,14 @@
+# funkgui-golden 2  probe=dsp.hostile  scope=modes/clean
+# key	value	tolerance
+hostile.nan.sample.tail_err_db	0	abs:1
+hostile.nan.block.tail_err_db	0.00628718494	abs:1
+hostile.inf.sample.tail_err_db	0	abs:1
+hostile.inf.block.tail_err_db	0.00628718494	abs:1
+hostile.big.sample.tail_err_db	0.00272560936	abs:1
+hostile.big.block.tail_err_db	28.0850992	abs:1
+hostile.key.nan.sample.tail_err_db	0	abs:1
+hostile.key.nan.block.tail_err_db	0.00628718494	abs:1
+hostile.key.inf.sample.tail_err_db	0	abs:1
+hostile.key.inf.block.tail_err_db	0.00628718494	abs:1
+hostile.key.big.sample.tail_err_db	0.00272560936	abs:1
+hostile.key.big.block.tail_err_db	28.0850992	abs:1
