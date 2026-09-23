@@ -1,0 +1,33 @@
+# funkgui-golden 2  probe=dsp.analysis  scope=modes/clean
+# key	value	tolerance
+analysis.sc.def.f20_db	0	abs:0.01
+analysis.sc.def.f100_db	0	abs:0.01
+analysis.sc.def.f1000_db	0	abs:0.01
+analysis.sc.def.f10000_db	0	abs:0.01
+analysis.sc.hpf.f20_db	-27.9659824	abs:0.01
+analysis.sc.hpf.f100_db	-3.01029944	abs:0.01
+analysis.sc.hpf.f1000_db	-0.000431799359	abs:0.01
+analysis.sc.hpf.f10000_db	5.17719229e-07	abs:0.01
+analysis.sc.sce.f20_db	-15.5355921	abs:0.01
+analysis.sc.sce.f100_db	-9.90019131	abs:0.01
+analysis.sc.sce.f1000_db	5.17719229e-07	abs:0.01
+analysis.sc.sce.f10000_db	10.711669	abs:0.01
+analysis.harm.off.h2_db	-120	abs:0.5
+analysis.harm.off.h3_db	-120	abs:0.5
+analysis.harm.off.thd_db	-120	abs:0.5
+analysis.harm.tube.h2_db	-120	abs:0.5
+analysis.harm.tube.h3_db	-45.8002663	abs:0.5
+analysis.harm.tube.thd_db	-45.8001015	abs:0.5
+analysis.harm.diode.h2_db	-30.4970493	abs:0.5
+analysis.harm.diode.h3_db	-47.4696274	abs:0.5
+analysis.harm.diode.thd_db	-30.4103334	abs:0.5
+analysis.harm.bright.h2_db	-120	abs:0.5
+analysis.harm.bright.h3_db	-45.5292053	abs:0.5
+analysis.harm.bright.thd_db	-45.5292053	abs:0.5
+analysis.gain.x-10_db	0	abs:0.001
+analysis.gain.x0_db	-0.5625	abs:0.001
+analysis.gain.x10_db	-7.5	abs:0.001
+analysis.gain.x20_db	-15	abs:0.001
+analysis.invratio.x20	0.250010729	abs:0.0001
+analysis.step.attack_s	0.00999999419	rel:0.01
+analysis.step.release_s	0.19998455	rel:0.01
