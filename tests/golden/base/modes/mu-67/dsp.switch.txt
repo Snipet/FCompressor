@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/mu-67
+# key	value	tolerance
+switch.mu-67-clean.settle_ms	220	rel:0.1
+switch.clean-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-bus-g.settle_ms	200	rel:0.1
+switch.bus-g-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-fet-76.settle_ms	30	rel:0.1
+switch.fet-76-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-opto-2a.settle_ms	70	rel:0.1
+switch.opto-2a-mu-67.settle_ms	20	rel:0.1

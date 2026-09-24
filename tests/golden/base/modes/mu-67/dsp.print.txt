@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.print  scope=modes/mu-67
+# key	value	tolerance
+print.default.l.hash	a32d32b22c910c69	exact
+print.default.r.hash	eab622a1410bedd3	exact
+print.lo.l.hash	b7f59de46331e905	exact
+print.lo.r.hash	d63fc277e075c5f0	exact
+print.hi.l.hash	1b09d696b5b9e8e6	exact
+print.hi.r.hash	b82fda838e3fa5ed	exact
+print.mid.l.hash	5fab3b89fff60c9a	exact
+print.mid.r.hash	be59b5421440fc74	exact
