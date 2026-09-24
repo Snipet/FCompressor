@@ -1,0 +1,105 @@
+// Source/editor/gpu/Editor.cpp — see Editor.h (02 Part 2 intro, §5.1, §6.1; U7).
+#include "editor/gpu/Editor.h"
+
+#include "editor/Layout.h"
+
+#include "FcmpProduct.h"
+
+#include <funkgui/core/Env.h>
+#include <funkgui/panel/CaptureConfig.h>
+
+#include <memory>
+
+namespace fcmp::ui
+{
+    namespace
+    {
+        // A product flag: on for any value but "" and "0" (CaptureConfig's rule for GPU_LOG).
+        bool envFlag(const char* name)
+        {
+            const char* v = funkgui::env(name);
+            return v != nullptr && v[0] != '\0' && !(v[0] == '0' && v[1] == '\0');
+        }
+    }
+
+    // moved() whenever the editor's position in its top-level window changes, including through an ancestor (Editor.h,
+    // "Placement"). EditorHost::moved() re-places the render view from ComponentPeer::getAreaCoveredBy and follows the
+    // backing scale; it does nothing while no surface is attached.
+    class Editor::AncestorWatcher final : public juce::ComponentMovementWatcher
+    {
+    public:
+        explicit AncestorWatcher(Editor& editor) : juce::ComponentMovementWatcher(&editor), editor_(editor) {}
+
+        using juce::ComponentMovementWatcher::componentMovedOrResized;
+        using juce::ComponentMovementWatcher::componentVisibilityChanged;
+
+        void componentMovedOrResized(bool wasMoved, bool /*wasResized*/) override
+        {
+            if (wasMoved)
+                editor_.moved();
+        }
+        void componentPeerChanged() override {}      // EditorHost::parentHierarchyChanged re-attaches to a new peer
+        void componentVisibilityChanged() override {}   // EditorHost gates every frame on isShowing()
+
+    private:
+        Editor& editor_;
+    };
+
+    EditorOptions EditorOptions::fromEnv()
+    {
+        EditorOptions o;
+        o.panel.skipHint = envFlag("UI_NO_HINT");
+        o.panel.ignoreLive = envFlag("UI_NO_LIVE");
+        // 02 §3.7 rule 7: a fixed-dt capture computes the worker's panes inside tick(), as the probes do, so the frame
+        // it dumps cannot depend on when a thread finished. The same parse as EditorHost's own UI_FIXED_DT (> 0 is on).
+        o.panel.syncPreview = funkgui::CaptureConfig::fromEnv().fixedDt > 0.0f;
+        if (const char* id = funkgui::env("UI_VIEW"); id != nullptr && id[0] != '\0')
+        {
+            o.view = findView(id);
+            if (o.view == nullptr)
+                o.unknownView = id;
+        }
+        return o;
+    }
+
+    funkgui::EditorConfig Editor::makeConfig(ProcessorFacade& facade)
+    {
+        funkgui::EditorConfig config;
+        config.width = layout::kWidth;               // 960 × 640, fixed (02 §6.1)
+        config.height = layout::kHeight;
+        config.fallbackTitle = nullptr;              // FUNKGUI_PRODUCT_NAME upper-cased: "FCOMPRESSOR" (FcmpSources.cmake)
+        config.setUiAttached = [&facade](bool on) { facade.setUiAttached(on); };   // the processor outlives the editor
+        return config;                               // beginBatch/endBatch: empty on purpose (Editor.h)
+    }
+
+    std::unique_ptr<Panel> Editor::makePanel(ProcessorFacade& facade, const EditorOptions& options)
+    {
+        auto panel = std::make_unique<Panel>(facade, options.panel);
+        if (options.view != nullptr)
+            panel->setView(*options.view, /*instant*/ true);   // before the first tick, as HeadlessHost probes do
+        return panel;
+    }
+
+    Editor::Editor(juce::AudioProcessor& owner, ProcessorFacade& facade, const EditorOptions& options)
+        : funkgui::EditorHost(owner, makeConfig(facade), makePanel(facade, options)),
+          ui_(static_cast<Panel&>(funkgui::EditorHost::panel())),   // makePanel made it: the cast is exact
+          watcher_(std::make_unique<AncestorWatcher>(*this))
+    {
+        if (!options.unknownView.empty())
+        {
+            juce::String known;
+            for (const ViewSpec& v : views())
+                known << " " << v.id;
+            juce::Logger::writeToLog(juce::String(product::kName) + ": " + product::kEnvPrefix + "UI_VIEW '"
+                                     + juce::String::fromUTF8(options.unknownView.c_str()) + "' names no view (known:"
+                                     + known + "); opening on the saved view");
+        }
+    }
+
+    Editor::~Editor()
+    {
+        // K2 #27: the Panel's worker and gestures go first, while everything they use is alive; ~EditorHost then runs
+        // with this class's members already gone and touches only what it owns (02 §5.1 teardown rule).
+        ui_.shutdown();
+    }
+}
