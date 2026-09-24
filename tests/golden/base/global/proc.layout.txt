@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=proc.layout  scope=global
+# key	value	tolerance
+layout.params.hash	1eaf41fa2f421f85	exact
