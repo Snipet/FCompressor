@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.zipper  scope=modes/mu-67
+# key	value	tolerance
+zipper.ramp.thr.err_db	-37.8449188	abs:1
+zipper.ramp.knee.err_db	-59.6706124	abs:1
+zipper.ramp.makeup.err_db	-52.6308899	abs:1
+zipper.ramp.mix.err_db	-71.299703	abs:1
