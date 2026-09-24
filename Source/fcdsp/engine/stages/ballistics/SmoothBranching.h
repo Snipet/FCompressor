@@ -34,10 +34,27 @@
 // c*r1, c}. The predictor "attack if r^_fb(x - r1) > r1" needs no access to the gain computer: F_A(r1) = c_A (r1 -
 // r^_fb(x - r1)), so the attack root exceeds r1 exactly when the predictor says attack; solveFb solves both branches
 // and keeps the attack root where it exceeds r1, else the release root (both are r1 at equilibrium). commitFb accepts
-// the LINKED r (K2 #5b), sets the attack flag where it rose, and clears lo: in FB the solve returns an absolute float
-// root, so the sub-ulp part of a very slow FB release cannot be carried through the frozen FbAffine interface
-// (documented limit: the plain recurrence's stall, e.g. 0.07 dB for a 3 s release at 48 kHz; the handoff requests an
-// interface change).
+// the LINKED r (K2 #5b) and sets the attack flag where it rose.
+//
+// FB sub-ulp carry (S10 interface revision, X10; ADR-66; FbAffine::base, Stage.h). The absolute roots above round the
+// value to a float every sample, so before S10 a slow FB release stalled like the plain FF recurrence (0.07 dB short
+// for a 3 s release at 48 kHz; 0.24 dB for 25 s at 48 kHz and 2.6 dB at 384 kHz, dsp.fbsolve's carry NOTEs). Now the
+// FB step carries lo exactly as the FF step does: where the FF gate holds for the chosen branch (its rate k below
+// kSlowRate, or the absolute root's step within kStallGuard of a stall), a third solve takes the SAME branch's map in
+// the frame of the current GR,
+//     solve({lo - k (r + lo), k, base = r}) = the value's increment step, with (r + lo)' = r + step,
+// which the gain computer returns with a rounding error that scales with the step (Stage.h), and the step is split
+// into the applied float r' = r + step and the new remainder lo' = step - (r' - r), as advance() splits the FF step.
+// The branch verdict stays the absolute roots' (attack where the attack root exceeds r1). Where the gate does not hold,
+// or in any lane of a sample where it holds nowhere, the FB step is the FZ0 one bit for bit (two solves, the absolute
+// root, lo dropped); so r + lo follows the exact discrete FB exponential (dsp.fbsolve's carry rows: a 25 s release at
+// 48 and 384 kHz within 1e-4 dB) and a moving GR keeps the FZ0 rounding. The solved r and its lo travel to commitFb in
+// `mutable` scratch words (Hold.h's pattern): a lane whose linked r is its own solved r keeps lo, a lane the link
+// raised (LinkMax) takes the linked float with lo = 0. With the carry, "the root lies below the GR" no longer tells a
+// wrapper whether the value falls (a carried fall keeps the float for samples, then drops it one ulp), so fbFalls(s)
+// (Stage.h HasFbFalls) gives Hold that verdict: the FZ0 one (root < r) where the step is the FZ0 one, and "the target
+// lies more than kStallGuard |r| below the value" (step - lo = k (target - value)) where it carries. Without it a
+// Hold in FB re-armed at every sample the float stood still and held at the next ulp crossing: a staircase approach.
 
 #include "fcdsp/core/ControlTicker.h"
 #include "fcdsp/core/FastMath.h"
@@ -71,6 +88,9 @@ struct SmoothBranching {
         simd::f32x4 r{};                        // applied GR of this stage (dB, >= 0)
         simd::f32x4 atk{};                      // 1 where the last tick took the attack branch, else 0
         simd::f32x4 lo{};                       // the carried rounding error of r (header: float precision), dB
+        mutable simd::f32x4 fbR{};              // FB scratch (solveFb -> commitFb, S10): the solved r per lane
+        mutable simd::f32x4 fbLo{};             //   and the remainder carried with it (0 where not carrying)
+        mutable simd::f32x4 fbFall{};           //   1 where the value falls (fbFalls, for Hold), else 0
     };
 
     static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
@@ -112,28 +132,64 @@ struct SmoothBranching {
         const simd::f32x4 step = simd::fma(s.lo, k, d);                   // lo + k*d: the value's increment
         const simd::f32x4 next = simd::add(s.r, step);
         const simd::f32x4 kept = simd::sub(next, s.r);                    // exact when the step is small (Sterbenz)
-        const simd::m32x4 carry = simd::bor(simd::gt(simd::set1(kSlowRate), k),
-                                            simd::gt(simd::mul(simd::set1(kStallGuard), simd::abs(s.r)),
-                                                     simd::abs(step)));
-        s.lo = simd::sel(carry, simd::sub(step, kept), simd::set1(0.0f));
+        s.lo = simd::sel(carries(k, s.r, step), simd::sub(step, kept), simd::set1(0.0f));
         s.r = simd::max(simd::set1(0.0f), next);    // a carried lo may undershoot 0 by a rounding; NaN stays NaN
     }
 
+    // The carry gate of both steps (header comment): a slow one-pole (k < kSlowRate), or a step within kStallGuard of a
+    // stall (|step| < 2^-20 |r|).
+    static simd::m32x4 carries(simd::f32x4 k, simd::f32x4 r, simd::f32x4 step) noexcept FCDSP_NONBLOCKING
+    {
+        return simd::bor(simd::gt(simd::set1(kSlowRate), k),
+                         simd::gt(simd::mul(simd::set1(kStallGuard), simd::abs(r)), simd::abs(step)));
+    }
+
     // FB: the root of the branch E's predictor picks (header comment); solve(FbAffine) is ModeEngine's affine solve.
+    // Where the FF gate holds, the value r + lo takes the branch's step through a based solve and carries its
+    // remainder (header comment, "FB sub-ulp carry"); elsewhere the FZ0 absolute root.
     template <class Solve>
     static simd::f32x4 solveFb(const Coeffs& c, const State& s, Solve&& solve) noexcept FCDSP_NONBLOCKING
     {
+        const simd::f32x4 zero = simd::set1(0.0f);
         const simd::f32x4 rA = solve(FbAffine{ simd::fms(s.r, c.cA, s.r), c.cA });
         const simd::f32x4 rR = solve(FbAffine{ simd::fms(s.r, c.cR, s.r), c.cR });
-        return simd::sel(simd::gt(rA, s.r), rA, rR);
+        const simd::m32x4 attack = simd::gt(rA, s.r);
+        const simd::f32x4 root = simd::sel(attack, rA, rR);
+        const simd::f32x4 k = simd::sel(attack, c.cA, c.cR);
+        // the gate, where there is a value to carry (r, root >= 0: an idle lane at 0 dB stays exactly 0; NaN: no)
+        const simd::m32x4 live = simd::gt(simd::add(simd::add(s.r, root), simd::abs(s.lo)), zero);
+        const simd::m32x4 carry = simd::band(live, carries(k, s.r, simd::sub(root, s.r)));
+        const simd::f32x4 one = simd::set1(1.0f);
+        s.fbR = root;
+        s.fbLo = zero;
+        s.fbFall = simd::sel(simd::gt(s.r, root), one, zero);            // the FZ0 verdict: the root below the GR
+        const simd::f32x4 flag = simd::sel(carry, one, zero);
+        if (simd::lane<0>(flag) + simd::lane<1>(flag) + simd::lane<2>(flag) + simd::lane<3>(flag) == 0.0f)
+            return root;                                                  // the FZ0 step in every lane
+        const simd::f32x4 moveA = simd::fms(simd::fms(s.lo, k, s.lo), k, s.r);   // lo - k (r + lo)
+        const simd::f32x4 step = solve(FbAffine{ moveA, k, s.r });               // (r + lo)' - r
+        const simd::f32x4 next = simd::add(s.r, step);
+        const simd::f32x4 kept = simd::sub(next, s.r);                    // exact when the step is small (Sterbenz)
+        s.fbR = simd::sel(carry, simd::max(zero, next), root);            // NaN stays NaN
+        s.fbLo = simd::sel(carry, simd::sub(step, kept), zero);
+        // a carried value falls while its target lies more than kStallGuard |r| below it: step - lo = k (target -
+        // value), so the verdict does not flicker with the float GR's ulp crossings (header comment)
+        const simd::f32x4 guard = simd::mul(k, simd::mul(simd::set1(kStallGuard), simd::abs(s.r)));
+        const simd::m32x4 falls = simd::gt(simd::sub(s.lo, step), guard);
+        s.fbFall = simd::sel(carry, simd::sel(falls, one, zero), s.fbFall);
+        return s.fbR;
     }
 
-    // FB: the linked r becomes the state.
+    // FB (S10, Stage.h HasFbFalls): 1 where the last solveFb's value falls, for Hold's FB verdict.
+    static simd::f32x4 fbFalls(const State& s) noexcept FCDSP_NONBLOCKING { return s.fbFall; }
+
+    // FB: the linked r becomes the state; a lane that kept its own solved r keeps that solve's remainder.
     static void commitFb(const Coeffs&, State& s, simd::f32x4 r) noexcept FCDSP_NONBLOCKING
     {
+        const simd::m32x4 own = simd::band(simd::ge(r, s.fbR), simd::ge(s.fbR, r));   // r == fbR (false for NaN)
         s.atk = simd::sel(simd::gt(r, s.r), simd::set1(1.0f), simd::set1(0.0f));
         s.r = r;
-        s.lo = simd::set1(0.0f);
+        s.lo = simd::sel(own, s.fbLo, simd::set1(0.0f));
     }
 
     // From Carry::grDb (the outgoing engine's ballistics GR, 01 §5.5); negative values clamp to 0.
@@ -142,6 +198,9 @@ struct SmoothBranching {
         s.r = simd::max(simd::set1(0.0f), grDb);
         s.atk = simd::set1(0.0f);
         s.lo = simd::set1(0.0f);
+        s.fbR = s.r;
+        s.fbLo = simd::set1(0.0f);
+        s.fbFall = simd::set1(0.0f);
     }
 
     // The current GR of the stage, for Carry::grDb (BallisticsPolicy, S2 lead revision).
@@ -184,6 +243,6 @@ private:
     }
 };
 
-static_assert(BallisticsPolicy<SmoothBranching>);
+static_assert(BallisticsPolicy<SmoothBranching> && HasFbFalls<SmoothBranching>);
 
 } // namespace fcdsp::stage

@@ -36,6 +36,11 @@ struct ModeEntry {                                        // one per Mode, defin
     void (*staticGr)(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     void (*scShapeDb)(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
     void (*colourCurve)(const EngineParams&, float grDb, const float* x, float* y, int n) noexcept;
+    // S10 interface revision (X10): the settled stage 2 after the computer, grDb[i] from the stage-1 GR r1Db[i] at
+    // detector level xDetDb[i] (ModeEngine<T>::staticS2; grDb may alias r1Db). nullptr when the Mode's Stage2 has no
+    // static form (NoStage2): the static stage 2 is then the identity (analysis::staticGain, CurveOpts::stage2).
+    void (*staticS2)(const EngineParams&, const float* xDetDb, const float* r1Db, float* grDb, int n) noexcept
+        = nullptr;
 };
 struct ModeSlot { uint8_t slot; std::string_view key; const ModeEntry* entry; };   // registry-owned
 struct Retired  { uint8_t slot; std::string_view key, successor; };

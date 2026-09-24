@@ -28,6 +28,14 @@
 //
 // Real time: every policy function is called from ModeEngine's FCDSP_NONBLOCKING members. Policies are header-inline,
 // so -Wfunction-effects infers them; they may (and should) carry FCDSP_NONBLOCKING explicitly (core/Rt.h).
+//
+// S10 interface revision (X10; additive, every existing policy compiles and runs unchanged):
+//   - FbAffine::base (default 0): the GR a solve is measured from, so a ballistics policy can carry a slow release's
+//     sub-ulp steps in feedback (FbAffine below; SmoothBranching.h "FB sub-ulp carry");
+//   - optional, detected (not in the concepts): Stage2 S2::combineStatic (the settled stage 2, for the analysis curves;
+//     HasCombineStatic), gain computer G::rhatFb (the FB curve r^_fb(y); HasRhatFb), ballistics B::commitFb(c, s, r,
+//     rhat) (the commit with r^_fb at the committed GR; HasCommitFbRhat) and B::fbFalls(s) (the value's FB fall
+//     verdict, for Hold; HasFbFalls). ModeEngine.h and the combinators use each when present.
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/core/Simd.h"
@@ -63,13 +71,31 @@ requires (const typename D::Coeffs& c, typename D::State& s, simd::f32x4 v) {
 
 // The ballistics' affine map in the feedback loop (K2 #1): given its state, every linear ballistic path maps the
 // gain computer's output affinely to the applied GR:  r = A + B*r^(x - r),  per lane A >= 0, 0 <= B <= 1.
-struct FbAffine { simd::f32x4 A, B; };
+//
+// S10 interface revision (X10): `base`, default 0. The map is r = base + A + B*r^(x - r) and every solve returns
+// r - base, the root measured from base. FbAffine{A, B} (base 0) is the FZ0 map and the FZ0 absolute root, bit for bit.
+// A ballistics policy whose GR moves by less than an ulp per sample passes base = its current GR and A = its move
+// without the gain term (e.g. lo - c (r + lo) for SmoothBranching's value r + lo), which may be negative: the returned
+// increment then carries the sub-ulp part the absolute root rounds away (its rounding error scales with |A| + B r^,
+// not with the GR). Every gain computer's solveFb honours base (QuadKnee's closed form, FeedbackZdf, FeedbackDelayed
+// and everything they wrap); a new computer either does or wraps its law in FeedbackZdf<G>, which honours it for any
+// law.
+struct FbAffine { simd::f32x4 A, B; simd::f32x4 base{}; };
 
 template <class G> concept GainComputerPolicy = Designable<G> &&
 requires (const typename G::Coeffs& c, simd::f32x4 x, const LevelCtl& l, FbAffine a) {
     { G::target(c, x, l) } noexcept -> std::same_as<simd::f32x4>;       // FF, pure: r^ >= 0 at detector level x
-    { G::solveFb(c, x, l, a) } noexcept -> std::same_as<simd::f32x4>;   // FB: THE root of r = A + B*r^(x - r);
-                                                                         // a = {0, 1} -> the static FB curve
+    { G::solveFb(c, x, l, a) } noexcept -> std::same_as<simd::f32x4>;   // FB: THE root of r = base + A + B*r^(x - r),
+                                                                         // minus base (S10); a = {0, 1} -> the static
+                                                                         // FB curve
+};
+
+// Optional (S10, X10; detected, not in the concept): G::rhatFb(c, y, l) = r^_fb(y), the FB curve at OUTPUT level y
+// (dB), i.e. G::target with the loop gain in place of the slope (QuadKnee.h's one FB-curve convention), from the
+// engine's LevelCtl. ModeEngine uses it to hand a ballistics policy r^_fb at its committed GR (HasCommitFbRhat).
+template <class G> concept HasRhatFb =
+requires (const typename G::Coeffs& c, simd::f32x4 y, const LevelCtl& l) {
+    { G::rhatFb(c, y, l) } noexcept -> std::same_as<simd::f32x4>;
 };
 
 template <class L> concept LinkPolicy =
@@ -92,12 +118,41 @@ requires (const typename B::Coeffs& c, typename B::State& s, simd::f32x4 v, deta
     { B::status(std::as_const(s)) } noexcept -> std::same_as<uint8_t>;   // ControlIo::bits b0-1 phase (max lane), b2 auto-slow
 };
 
+// Optional (S10, X10; detected): B::commitFb(c, s, r, rhat), the FB commit with rhat = r^_fb(x - r) per lane, the FB
+// curve at the committed (linked) GR's own sense point, exact. ModeEngine calls it instead of commitFb(c, s, r) when
+// the Mode's computer has G::rhatFb (HasRhatFb); a policy that recovers a path's value from the loop (DualRelease's
+// fast path where the slow root won) needs it, since no solve returns that value.
+template <class B> concept HasCommitFbRhat =
+requires (const typename B::Coeffs& c, typename B::State& s, simd::f32x4 r, simd::f32x4 rhat) {
+    { B::commitFb(c, s, r, rhat) } noexcept;
+};
+
+// Optional (S10, X10; detected): B::fbFalls(s), after solveFb, 1 per lane where the ballistics' value falls (the FB
+// analogue of FF's "target below the GR"), else 0. A policy that carries sub-ulp steps in FB (SmoothBranching) has it,
+// because its float root no longer tells: a carried fall keeps the float GR for samples, then drops it by one ulp.
+// Hold<Inner> reads it for its FB verdict when the Inner has it (else root < GR, the FZ0 verdict).
+template <class B> concept HasFbFalls = requires (const typename B::State& s) {
+    { B::fbFalls(s) } noexcept -> std::same_as<simd::f32x4>;
+};
+
 template <class S2> concept Stage2Policy = Designable<S2> &&
 requires (const typename S2::Coeffs& c, typename S2::State& s, simd::f32x4 r1, simd::f32x4 xDb, const LevelCtl& l) {
     { S2::combine(c, s, r1, xDb, l) } noexcept -> std::same_as<simd::f32x4>;   // combine(c, s, r1, xDb, l) -> r;
                                                                                //   s2 GR in aux lanes
     { S2::seed(s, r1) } noexcept;                                              // from Carry::s2GrDb (FZ0 errata)
     { S2::grDb(std::as_const(s)) } noexcept -> std::same_as<simd::f32x4>;     // for Carry::s2GrDb (S2 lead revision)
+};
+
+// Optional (S10 interface revision, X10; detected, not in the concept, so NoStage2 needs no change): the static stage 2
+// the analysis curves draw (CurveOpts::stage2). combineStatic(c, r1, xDb, l) is the GR combine() settles on at a
+// constant detector level xDb (dB) with a settled stage-1 GR r1, per lane, EVERY lane an independent abscissa (no
+// aux-lane packing: combine()'s stage-2 aux lanes are its own business). Pure, no state: stage 2's ballistics have
+// landed. A shared element returns max(r1, r2(xDb)); a policy without it is the identity (NoStage2).
+// ModeEngine<T>::staticS2 evaluates it with the unsmoothed LevelCtl and the settled s2On, and ModeEntry::staticS2
+// points there (nullptr without it).
+template <class S2> concept HasCombineStatic =
+requires (const typename S2::Coeffs& c, simd::f32x4 r1, simd::f32x4 xDb, const LevelCtl& l) {
+    { S2::combineStatic(c, r1, xDb, l) } noexcept -> std::same_as<simd::f32x4>;
 };
 
 // Mode-internal side-chain shaping (FZ0 errata, R-F0 #3): Flat, R37Shelf, SlowHp (Diode 609), Thrust. It runs per

@@ -743,7 +743,8 @@ This is safe from any thread (E §4.3; `getText` from background threads is exer
 > **two cascaded** 20 ms one-poles (both landing exactly; a single stage clicked +10/+21 dB on step edges, F4).
 > (3) Ballistics may expose optional `sense(c, s, v)`/`crestDb(s)` hooks (F9, CrestAuto); `ModeEngine` uses them when
 > present. (4) Open: an FB release cannot carry sub-ulp steps through `FbAffine` (≈ 0.07 dB stall on a 3 s FB release at
-> 48 kHz); extend `FbAffine` with a base GR before Mu 67 (M4, S10).
+> 48 kHz); extend `FbAffine` with a base GR before Mu 67 (M4, S10). **Closed by the S10 interface revision (X10):
+> `FbAffine::base` (§5.2).**
 
 **`Rt.h`** (FZ0 errata, R-F0 #1) holds `FCDSP_NONBLOCKING` (§2.2 rule 6), so `core/` can annotate without including
 `engine/`. Every function declared in `core/` is `FCDSP_NONBLOCKING`; F1 (S1) adds the bodies and may define the
@@ -939,6 +940,31 @@ FZ0 errata (R-F0 #3): `Stage2Policy` gains `seed` (a Mode switch with stage 2 en
 instead of restarting at 0 dB and overshooting during the fade); `ScShapePolicy` is new; `ModeEngine` asserts
 `LinkPolicy` and `ScShapePolicy` too (§5.3); the colour and link arguments are named.
 
+> **S10 interface revision (X10; additive: every existing policy compiles and runs unchanged; `Stage.h`).**
+> 1. **`FbAffine::base`** (`struct FbAffine { simd::f32x4 A, B; simd::f32x4 base{}; };`, ADR-66, F9's open item).
+>    The map is `r = base + A + B·r̂(x − r)` and every `G::solveFb` returns **`r − base`**. `FbAffine{A, B}` (base 0)
+>    is the FZ0 map and the FZ0 absolute root, bit for bit. A ballistics whose GR moves by less than an ulp per sample
+>    passes `base` = its GR and `A` = its move without the gain term (may be negative): the returned increment's
+>    rounding then scales with `|A| + B·r̂`, not with the GR. Every computer honours it: `QuadKnee` (base-0 lanes: the
+>    FZ0 closed forms; others: `d = A + κu²` in the knee, `(A + Bk·o′)/(1 + Bk)` linear, `o′ = x − T − base`),
+>    `FeedbackZdf<G>` (Newton on the increment; a based lane's upper bracket gets 2⁻²⁰ of `|A| + B·r̂` slack),
+>    `FeedbackDelayed<G>` (`r̃ = (base + A)/(1 − B)`), and so everything they wrap. **A new computer must honour
+>    `base`, or wrap its law in `FeedbackZdf<G>`.** `dsp.fbsolve` `base.*` rows.
+> 2. **`SmoothBranching`'s FB sub-ulp carry.** Where FF's carry gate holds for the chosen branch (`k < 2⁻¹⁴`, or the
+>    absolute root's step within 2⁻²⁰·|r|), a third, based solve of the same branch, `{lo − k(r + lo), k, base = r}`,
+>    returns the value's step; it is split into the float `r′` and the remainder `lo′` as the FF step is, and travels to
+>    `commitFb` in scratch (a lane the link raised drops `lo`). Elsewhere the FB step is the FZ0 one bit for bit.
+>    `dsp.fbsolve` `carry.*`: a 25 s FB release at 48 and 384 kHz tracks the exact discrete recurrence within 1.1e-6 dB
+>    (the FZ0 recurrence: 0.24 / 2.57 dB). A composite that wraps `SmoothBranching` paths gets the carry by calling
+>    `Path::solveFb`/`Path::commitFb`; one that forms its own maps (`DualRelease`, `OptoCell`) still solves them absolute.
+> 3. **Optional hooks, detected (not in the concepts):** `S2::combineStatic(c, r1, xDb, l)` (`HasCombineStatic`; the
+>    settled stage 2 for the analysis curves, every lane an independent abscissa); `G::rhatFb(c, y, l)` (`HasRhatFb`;
+>    r̂_fb(y), `G::target` with the loop gain: `QuadKnee`, `FeedbackZdf`, `FeedbackDelayed`); `B::commitFb(c, s, r,
+>    rhat)` (`HasCommitFbRhat`; the commit with `rhat = r̂_fb(x − r)` at the linked r: `DualRelease` gives its fast path
+>    the exact `A_f + B_f·rhat` where the slow root won, M1's request; `AutoSwitch` forwards it); `B::fbFalls(s)`
+>    (`HasFbFalls`; the value's FB fall verdict, which `Hold` uses: with the carry a float root no longer tells whether
+>    the value falls; `SmoothBranching`, forwarded by `CrestAuto`).
+
 **The per-sample step inside `ModeEngine::control` (K2 #1, #5), with `l` the sample's `LevelCtl` (§5.1):**
 
 ```cpp
@@ -1098,10 +1124,18 @@ public:
     static void staticGr(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     static void scShapeDb(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
     static void colourCurve(const EngineParams&, float grDb, const float* x, float* y, int n) noexcept;
-};
+    static void staticS2(const EngineParams&, const float* xDetDb, const float* r1Db, float* grDb, int n) noexcept;
+};                                                                          // ^ S10 interface revision (X10)
 // The size/alignment asserts live in FCDSP_DEFINE_MODE, one per Mode TU (§8.2).
 }
 ```
+
+> **S10 interface revision (X10).** `staticS2(e, x, r1, gr, n)` is what `control()` applies after the computer, stage
+> 2 only, settled: `lerp(r1, S2::combineStatic(s2c, r1, x, l), rampShape(settled s2On))` with the unsmoothed
+> `LevelCtl`, four abscissae per call, i.e. exactly `r1` while `s2ThrDb ≥ kS2Off`; the identity for a Stage2 without
+> `combineStatic` (`NoStage2`); `gr` may alias `r1`. In the FB step, when the ballistics have `commitFb(c, s, r, rhat)`
+> and the computer `rhatFb` (§5.2 note), the commit gets `rhat = G::rhatFb(gc_, x − r, l)` at the linked r; otherwise
+> `commitFb(c, s, r)` as before. `FbAffine::base` reaches the computer unchanged through the solve lambda.
 
 - **Traits hooks (FZ0 errata, R-F0 #6).** `friend M;` lets the Traits' `internals` hook read `det_`, `bal_`, `s2_`,
   `col_`, `sh_`, the `Coeffs`, `lvl_`/`lvl2_` and `p_` through its `const auto&` (Clean's REL EFF, CREST and PEAK/RMS
@@ -1523,6 +1557,14 @@ void harmonicsDb(const ModeEntry&, const EngineParams&, float grDb, float amp, s
   - The full panel adds `stepResponse`, which runs on `PreviewWorker` and is throttled to ≤ 20 Hz during drags (F §4.3), plus `scResponse`, `colourCurve`, `harmonicsDb` and the single history internal lane (`HistoryColumn::internal0`, K1 #20).
 - **Why `stepResponse` is a shipping API, not a test tap:** the UI calls it (F §7.3). Its bit-identity with the plugin render is a D-probe row.
 
+> **S10 interface revision (X10; F8's request, S5 Outcome).** `CurveOpts::stage2` is honoured: `staticGain` passes the
+> computer's GR through `ModeEntry::staticS2` (§8.2) at the same detector-domain abscissae, before the range clamp and
+> GR OFF (the order `control()` applies them). A new overload
+> `void staticGr(const ModeEntry&, const EngineParams&, std::span<const float> xDetDb, std::span<float> grDb, CurveOpts) noexcept;`
+> does the same for GR (`opts.colour` is ignored; `stage2 = false` is the four-argument form, which stays the
+> computer alone for the spec probes). With `staticS2 == nullptr` (`NoStage2`, every registered kernel in the S10
+> base) stage 2 is the identity: the curves are bit-identical to S9's. `dsp.analysis` `stage2.*` rows.
+
 ---
 
 ## 8. Mode registry
@@ -1566,6 +1608,8 @@ struct ModeEntry {                                        // one per Mode, defin
     void (*staticGr)(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     void (*scShapeDb)(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
     void (*colourCurve)(const EngineParams&, float grDb, const float* x, float* y, int n) noexcept;
+    void (*staticS2)(const EngineParams&, const float* xDetDb, const float* r1Db, float* grDb, int n) noexcept
+        = nullptr;                                        // S10 interface revision (X10): see below
 };
 struct ModeSlot { uint8_t slot; std::string_view key; const ModeEntry* entry; };   // registry-owned
 struct Retired  { uint8_t slot; std::string_view key, successor; };
@@ -1593,6 +1637,12 @@ std::span<const Retired> retired() noexcept FCDSP_NONBLOCKING;
 // inside namespace fcdsp::modes; the macro is used at GLOBAL scope and ends with a semicolon: FCDSP_DEFINE_MODE(Clean);
 // makeModeEntry<T>() is a constexpr inline template in DefineMode.h that fills the ModeEntry from ModeEngine<T>.
 ```
+
+> **S10 interface revision (X10).** `ModeEntry::staticS2` (trailing, default `nullptr`, so the entry stays an
+> aggregate and constant-initialised) is the settled stage 2 after the computer: `grDb[i]` from the stage-1 GR
+> `r1Db[i]` at detector level `xDetDb[i]`, `grDb` may alias `r1Db`. `makeModeEntry<T>()` sets it to
+> `&ModeEngine<T>::staticS2` when `T::Stage2` has `combineStatic` (§5.2 note, `HasCombineStatic`), else `nullptr`
+> (`detail::staticS2Of<T>()`): a `nullptr` means no static stage 2, i.e. the identity (§7).
 
 `Registry.cpp` (in namespace `fcdsp::modes`) expands `Modes.def` three times:
 1. `#define FCMP_MODE(s, k, T) extern const ModeEntry kEntry_##T;` — declarations only;

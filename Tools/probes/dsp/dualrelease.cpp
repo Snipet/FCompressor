@@ -32,11 +32,18 @@
 //                                     ColourNone, Flat; kTopologies = FB) through ModeEngine and the EngineRig: finite,
 //                                     GR >= 0, the settled GR of a 2 s level on the static FB curve (<= 1e-3 dB, peak-
 //                                     to-peak <= 1e-4 dB), the release never reverses, and the release after 3 s of GR
-//                                     is >= 4 x the one after 20 ms (program dependence survives the loop)
+//                                     is >= 4 x the one after 20 ms (program dependence survives the loop). S10: its
+//                                     computer has rhatFb, so ModeEngine commits with r^ (DualRelease's exact commit)
+//   dualrelease.fb.exact.*            (S10, X10; M1's request) the same kernel, one sample per call, Bus G's AUTO
+//                                     constants, 3 s at T + 20 then T - 20: at every slow-held sample (SLOW ENV == GR >
+//                                     FAST ENV) whose fast path clearly releases, FAST ENV = min(A_f + B_f r^_fb(x - r),
+//                                     r) in double, the fast map's exact value at the applied GR's sense point
+//                                     (fast_max_err_db <= 1e-5; samples >= 1000)
 // AutoSwitch<SmoothBranching, DualRelease> (01 §5.2 combinators):
 //   dualrelease.autoswitch.select.mismatches  AutoTagSelect: B for kTagAuto or kTagAuto2, A otherwise
 //   dualrelease.autoswitch.<ff|fb>.<a|b>_mismatches  with the selection constant, bit-identical to the path alone
-//                                     (outputs, grDb, telemetry times, status)
+//                                     (outputs, grDb, telemetry times, status); S10: .fb.b_rhat_mismatches the same
+//                                     with the commit that takes r^ (AutoSwitch forwards it to DualRelease)
 //   dualrelease.autoswitch.<ff|fb>.handover.mismatches  live switches A -> B -> A mid-release: the documented hand-over
 //                                     (the idle path seeded from the running one's GR, both run, the applied GR is
 //                                     (1 - S(w)) r_A + S(w) r_B with host::rampShape over 20 ms; FB starts one sample
@@ -419,9 +426,17 @@ namespace
         using Colour     = st::ColourNone;
         using ScShape    = st::Flat;
         static constexpr uint8_t kTopologies = 1u << kTopoFB;
+        // S10: the paths' GR (lane 0) for the exact-commit rows: {FAST ENV, SLOW ENV}
+        static void internals(const auto& engine, float out[kInternals]) noexcept
+        {
+            out[0] = simd::lane<0>(st::DualRelease::fastDb(engine.bal_));
+            out[1] = simd::lane<0>(st::DualRelease::slowDb(engine.bal_));
+        }
     };
     constexpr ModeEntry kFbDualEntry = makeModeEntry<FbDualTraits>();
     static_assert(sizeof(ModeEngine<FbDualTraits>) <= kArenaBytes);
+    // the probe-local kernel's computer has rhatFb, so ModeEngine commits DualRelease with r^ (S10)
+    static_assert(HasRhatFb<FbDualTraits::Computer> && HasCommitFbRhat<FbDualTraits::Ballistics>);
 
     std::int64_t reversals(std::span<const float> trace)
     {
@@ -499,6 +514,63 @@ namespace
         P.ge("dualrelease.fb.engine.program_ratio", shortR.seconds > 0.0 ? longR.seconds / shortR.seconds : 0.0, 4.0);
     }
 
+    // S10 (X10; M1's request): where the slow root won, ModeEngine's commit with r^ gives the fast path its own map's
+    // value at the applied GR's sense point, min(A_f + B_f r^_fb(x - r), r), exactly (the unit rows keep the three-
+    // argument commit's own-loop root). Bus G's AUTO constants in the probe-local FB kernel, one sample per call: 3 s at
+    // T + 20, then T - 20 for 1 s; every sample where the slow path holds the GR (SLOW ENV == GR > FAST ENV) and the
+    // fast path clearly releases (r^_fb(x - r_f1) < r_f1 - 1e-3) is checked in double.
+    void fbExactRows(Probe& P)
+    {
+        const ModeEntry& busg = fcmp::probe::modeEntry("bus-g");
+        RawParams raw = fcmp::probe::modeRaw(busg);
+        raw[Pid::rel] = 2400.0f;                                        // AUTO: m[0..2] = Bus G's constants
+        EngineParams e = fcmp::probe::resolveRaw(busg, raw).eng;
+        e.topo = kTopoFB;
+        e.atkTauMs = 1.0f;
+        e.voice = 0;
+        const double t = static_cast<double>(analysis::inputThresholdDb(e));
+        DR::Coeffs dc{};
+        DR::design(dc, e, ctxAt(kFs));
+        const double cRf = lane0d(dc.fast.cR);
+        const Law law = lawOf(e.thrDb, e.kneeDb, e.slope);
+
+        fcmp::probe::EngineRig rig(kFbDualEntry, e, kFs);
+        rig.setTapping(true);
+        const auto edge = static_cast<std::size_t>(3.0f * kFs), total = edge + static_cast<std::size_t>(kFs);
+        const auto aHi = static_cast<float>(measure::amplitudeFromDb(t + 20.0));
+        const auto aLo = static_cast<float>(measure::amplitudeFromDb(t - 20.0));
+        const std::size_t half = static_cast<std::size_t>(kFs / 2000.0f);
+        double err = 0.0;
+        std::int64_t checked = 0;
+        float rfPrev = 0.0f;
+        for (std::size_t i = 0; i < total; ++i)
+        {
+            const float a = i < edge ? aHi : aLo;
+            float in = (i / half) % 2 == 0 ? a : -a, yl = 0.0f, yr = 0.0f;
+            rig.process(&in, &in, &yl, &yr, 1);
+            const float gr = lane0(rig.tap().grDb.back()), det = lane0(rig.tap().detDb.back());
+            rig.tap().clear();
+            float out[kInternals] = {};
+            rig.engine().internals(out);
+            const float rf = out[0], rs = out[1];
+            const double rf1 = static_cast<double>(rfPrev);
+            const bool releases = rhatFb(law, static_cast<double>(det) - rf1) < rf1 - 1e-3;
+            if (i > 0 && rs == gr && rf < gr && releases)
+            {
+                const double want = std::min((1.0 - cRf) * rf1 + cRf * rhatFb(law, static_cast<double>(det - gr)),
+                                             static_cast<double>(gr));
+                err = std::max(err, std::fabs(static_cast<double>(rf) - want));
+                ++checked;
+            }
+            rfPrev = rf;
+        }
+        std::printf("NOTE     dualrelease.fb.exact: %lld slow-held sample(s); fast path vs A_f + B_f r^_fb(x - r) max "
+                    "%.3g dB\n",
+                    static_cast<long long>(checked), err);
+        P.ge("dualrelease.fb.exact.samples", static_cast<double>(checked), 1000.0);
+        P.le("dualrelease.fb.exact.fast_max_err_db", err, tol::kFbSolveDb);
+    }
+
     // ---- C. AutoSwitch ------------------------------------------------------------------------------------------------
     // One ballistics policy stepped like ModeEngine does: design every kTickSamples at the absolute index, FF tick or
     // FB solve + commit (the link is the identity: one lane pair, L = R).
@@ -532,7 +604,18 @@ namespace
             B::commitFb(c, s, r);
             return r;
         }
+        // FB with the S10 commit that takes r^_fb at the committed GR (ModeEngine's, when the policy has it)
+        template <class Solve, class Rhat>
+        simd::f32x4 fbRhat(const EngineParams& p, Solve&& solve, Rhat&& rhat)
+        {
+            designIfTick(p);
+            ++index;
+            const simd::f32x4 r = B::solveFb(c, std::as_const(s), solve);
+            B::commitFb(c, s, r, rhat(r));
+            return r;
+        }
     };
+    static_assert(HasCommitFbRhat<AS> && !HasCommitFbRhat<st::AutoSwitch<SB, SB>>);   // S10: AutoSwitch forwards
 
     template <class X, class Y>
     std::int64_t outputMismatch(simd::f32x4 a, simd::f32x4 b, const X& ra, const Y& rb)
@@ -610,10 +693,10 @@ namespace
         // bit-exact against the path alone, FF and FB
         for (const bool fb : { false, true })
         {
-            std::int64_t mA = 0, mB = 0;
-            Runner<AS> asA, asB;
+            std::int64_t mA = 0, mB = 0, mBr = 0;
+            Runner<AS> asA, asB, asBr;
             Runner<SB> sb;
-            Runner<DR> dr;
+            Runner<DR> dr, drR;
             for (std::size_t k = 0; k < n; ++k)
             {
                 if (!fb)
@@ -631,11 +714,18 @@ namespace
                     const simd::f32x4 b = asB.fb(pB, closed), b2 = dr.fb(pB, closed);
                     mA += outputMismatch(a, a2, View<AS>{ asA }, View<SB>{ sb });
                     mB += outputMismatch(b, b2, View<AS>{ asB }, View<DR>{ dr });
+                    const auto rhat = [&](simd::f32x4 r) noexcept {
+                        return st::QuadKnee::rhatFb({}, simd::sub(xv, r), l);
+                    };
+                    const simd::f32x4 br = asBr.fbRhat(pB, closed, rhat), br2 = drR.fbRhat(pB, closed, rhat);
+                    mBr += outputMismatch(br, br2, View<AS>{ asBr }, View<DR>{ drR });
                 }
             }
             const std::string k = std::string("dualrelease.autoswitch.") + (fb ? "fb" : "ff");
             P.eq(k + ".a_mismatches", mA, 0);
             P.eq(k + ".b_mismatches", mB, 0);
+            if (fb)
+                P.eq(k + ".b_rhat_mismatches", mBr, 0);          // S10: the commit with r^ forwards to B, bit for bit
         }
 
         // live switches A -> B -> A, against the documented hand-over
@@ -907,6 +997,7 @@ FCMP_PROBE(dsp, dualrelease)
     fbSolveRows(P);
     fbTrajectoryRows(P);
     fbEngineRows(P);
+    fbExactRows(P);
     autoSwitchRows(P);
     busGRows(P);
     return P.finish();
