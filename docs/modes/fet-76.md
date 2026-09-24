@@ -189,9 +189,12 @@ reaction; for a feedback kernel whose detents change the static curve the floor 
   its sample period); STD/HQ do not change the control rate.
 - `EngineTelemetry::attackNowMs` reports the loop's open-loop τ (the ballistics' own time, ADR-63); FET 76's attack
   is not program-dependent, so no readout shows it.
-- In the feedback kernel the sub-ulp carry of a slow release is not kept (SmoothBranching.h; ADR-66): toward a
-  non-zero target the plain recurrence stalls up to ulp(r) / (2c) short, about 0.025 dB for the 1.1 s release at
-  48 kHz and a target of 8–16 dB; `dsp.srsweep`'s long-release row is a NOTE for FB kernels.
+- FB sub-ulp carry (ADR-66): until S10 the feedback kernel dropped a slow release's sub-ulp steps and stalled up to
+  ulp(r) / (2c) short of a non-zero target (about 0.025 dB for the 1.1 s release at 48 kHz and a target of 8–16 dB).
+  The S10 interface revision (X10, `FbAffine::base`) makes SmoothBranching's FB step carry its remainder as the FF step
+  does, so a release follows the exact discrete FB recurrence. This moved `dsp.print` `default` and `lo` (their
+  releases, 400 ms and 108 ms, carry at 48 kHz) by at most 0.0025 dB of gain; `hi` and `mid` are unchanged. Not
+  shipped, so no revision bump. `dsp.srsweep`'s long-release row stays a NOTE for FB kernels.
 
 ## Revision history
 

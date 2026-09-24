@@ -112,6 +112,13 @@ struct CrestAuto {
             Inner::commitFb(withRelease(c, s), s.inner, r);
     }
 
+    // The Inner's FB verdict (S10, Stage.h HasFbFalls), forwarded.
+    static simd::f32x4 fbFalls(const State& s) noexcept FCDSP_NONBLOCKING
+        requires HasFbFalls<Inner>
+    {
+        return Inner::fbFalls(s.inner);
+    }
+
     // The crest detectors keep running across a hand-over (they describe the program, not the Mode).
     static void seed(State& s, simd::f32x4 grDb) noexcept FCDSP_NONBLOCKING { Inner::seed(s.inner, grDb); }
 

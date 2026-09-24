@@ -15,7 +15,9 @@
 // still wins), the Inner's root otherwise. Whether the Inner's root rises (the FF "target >= GR" test: F(r1) <= 0) is
 // solveFb's verdict, which commitFb needs after the link; the frozen concept hands solveFb the state const, so that
 // verdict travels in State::fbRearm, a `mutable` scratch word written by solveFb and read by the commitFb of the same
-// sample (ModeEngine always calls them in that order).
+// sample (ModeEngine always calls them in that order). S10 (X10): when the Inner reports its own FB verdict
+// (Stage.h HasFbFalls: SmoothBranching, whose carried sub-ulp steps keep the float GR still while the value falls),
+// "falling" is that verdict instead of root < GR; with the FZ0 step both are the same.
 //
 // Optional hooks of the Inner (sense, crestDb; ModeEngine.h "Bodies") are forwarded. status() reports phase 2 (hold) on
 // the louder lane while it is held.
@@ -83,7 +85,9 @@ struct Hold {
     {
         const simd::f32x4 r1 = Inner::grDb(s.inner);
         const simd::f32x4 r = Inner::solveFb(c.inner, s.inner, solve);
-        const simd::m32x4 falling = simd::gt(r1, r);
+        simd::m32x4 falling = simd::gt(r1, r);
+        if constexpr (HasFbFalls<Inner>)                         // S10: the Inner's own verdict (header comment)
+            falling = simd::gt(Inner::fbFalls(s.inner), simd::set1(0.5f));
         s.fbRearm = simd::sel(falling, simd::set1(0.0f), simd::set1(1.0f));
         const simd::m32x4 holdNow = simd::band(falling, simd::gt(s.count, simd::set1(0.0f)));
         return simd::sel(holdNow, r1, r);

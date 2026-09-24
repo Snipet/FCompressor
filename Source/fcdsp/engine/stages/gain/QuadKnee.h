@@ -34,6 +34,15 @@
 // (a hold) and c <= 0 return A exactly. The float result is within a few ulp of the exact root (dsp.fbsolve: <= 1e-5 dB
 // against 200-step bisection for GR up to 60 dB, every region and every ballistics branch). NaN or inf in x gives NaN
 // (the poison check sees it, 01 §5.8), as in target().
+//
+// FbAffine::base (S10 interface revision, X10; Stage.h). A lane with base 0 takes the forms above, bit for bit. A lane
+// with base != 0 returns the root's increment d = r - base, solved in the frame of base so that its rounding scales
+// with the terms of the increment (A and B r^_fb), not with the GR: with o' = (x - T) - base, b' = o' + W/2 and
+// c = b' - A (the same c as above), the knee region gives d = A + kappa u^2 (the map itself at q = u, instead of the
+// cancelling b' - u) and the linear region d = (A + B k o') / (1 + B k). This is what lets SmoothBranching carry a
+// slow FB release's sub-ulp steps (dsp.fbsolve's carry rows: a 25 s release tracks its exact exponential).
+//
+// rhatFb(c, y, l) = r^_fb(y) = target(c, y, fbLevel(l)) (S10, X10: the optional FB-curve hook, Stage.h HasRhatFb).
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/core/Simd.h"
@@ -92,8 +101,29 @@ struct QuadKnee {
         return f;
     }
 
-    // FB: THE root of r = A + B * r^_fb(x - r) (header comment).
-    static simd::f32x4 solveFb(const Coeffs&, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept FCDSP_NONBLOCKING
+    // r^_fb(y): the FB curve at output level y (header comment; S10 optional hook).
+    static simd::f32x4 rhatFb(const Coeffs& c, simd::f32x4 y, const LevelCtl& l) noexcept FCDSP_NONBLOCKING
+    {
+        return target(c, y, fbLevel(l));
+    }
+
+    // FB: THE root of r = base + A + B * r^_fb(x - r), minus base (header comment). Lanes with base 0 take the FZ0
+    // closed forms bit for bit, the others the increment forms; each set is evaluated only when a lane needs it.
+    static simd::f32x4 solveFb(const Coeffs& c, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept FCDSP_NONBLOCKING
+    {
+        const simd::m32x4 based = simd::gt(simd::abs(a.base), simd::set1(0.0f));   // NaN base: the FZ0 form (NaN A)
+        const simd::f32x4 flag = simd::sel(based, simd::set1(1.0f), simd::set1(0.0f));
+        const float n = simd::lane<0>(flag) + simd::lane<1>(flag) + simd::lane<2>(flag) + simd::lane<3>(flag);
+        if (n == 0.0f)
+            return solveAbsolute(c, x, l, a);
+        const simd::f32x4 inc = solveFromBase(c, x, l, a);
+        return n == 4.0f ? inc : simd::sel(based, inc, solveAbsolute(c, x, l, a));
+    }
+
+private:
+    // The FZ0 closed forms: the absolute root of r = A + B * r^_fb(x - r) (header comment; base ignored).
+    static simd::f32x4 solveAbsolute(const Coeffs&, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept
+        FCDSP_NONBLOCKING
     {
         const simd::f32x4 zero = simd::set1(0.0f), one = simd::set1(1.0f);
         const simd::f32x4 w = simd::max(simd::set1(kMinKneeDb), l.kneeDb);
@@ -116,6 +146,34 @@ struct QuadKnee {
         const simd::f32x4 r = simd::sel(simd::gt(u, w), rLin, rKnee);
         const simd::f32x4 root = simd::sel(simd::band(simd::gt(c, zero), simd::gt(a.B, zero)), r, a.A);
         return simd::fma(root, x, zero);                                 // + x*0: poison in x stays poison (01 §5.8)
+    }
+
+    // The increment d = r - base of the root of r = base + A + B * r^_fb(x - r), in the frame of base (header
+    // comment, S10): the same regions and selection as solveAbsolute, every term of d scaled by A or B.
+    static simd::f32x4 solveFromBase(const Coeffs&, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept
+        FCDSP_NONBLOCKING
+    {
+        const simd::f32x4 zero = simd::set1(0.0f), one = simd::set1(1.0f);
+        const simd::f32x4 w = simd::max(simd::set1(kMinKneeDb), l.kneeDb);
+        const simd::f32x4 k = loopGain(l.slope);
+        const simd::f32x4 bk = simd::mul(a.B, k);
+        const simd::f32x4 o = simd::sub(simd::sub(x, l.thrDb), a.base);         // input overshoot over base: o'
+        const simd::f32x4 b = simd::fma(o, simd::set1(0.5f), w);                 // o' + W/2
+        const simd::f32x4 c = simd::sub(b, a.A);
+
+        // knee region: kappa u^2 + u - c = 0 (u = q, the output's knee coordinate), d = A + kappa u^2
+        const simd::f32x4 kappa = simd::div(bk, simd::add(w, w));
+        const simd::f32x4 cPos = simd::max(zero, c);
+        const simd::f32x4 disc = simd::fma(one, simd::mul(simd::set1(4.0f), kappa), cPos);
+        const simd::f32x4 u = simd::div(simd::add(cPos, cPos), simd::add(one, simd::sqrt(disc)));
+        const simd::f32x4 dKnee = simd::fma(a.A, kappa, simd::mul(u, u));
+
+        // linear region: d = (A + B k o') / (1 + B k)
+        const simd::f32x4 dLin = simd::div(simd::fma(a.A, bk, o), simd::add(one, bk));
+
+        const simd::f32x4 d = simd::sel(simd::gt(u, w), dLin, dKnee);
+        const simd::f32x4 inc = simd::sel(simd::band(simd::gt(c, zero), simd::gt(a.B, zero)), d, a.A);
+        return simd::fma(inc, x, zero);                                  // + x*0: poison in x stays poison (01 §5.8)
     }
 };
 

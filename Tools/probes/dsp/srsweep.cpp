@@ -30,8 +30,9 @@
 //                                        when the Mode's release is live and its slowest release resolves to a
 //                                        feed-forward kernel. A feedback kernel's release is not its one-pole's
 //                                        exponential (the loop gain k shortens it: the closed loop decays by
-//                                        (1 - c) / (1 + c k) per sample, E §2.6), and its sub-ulp carry waits for
-//                                        FbAffine's base GR (S3 lead revision 4), so FB prints a NOTE (DW, S4: FET 76)
+//                                        (1 - c) / (1 + c k) per sample, E §2.6), so FB prints a NOTE (DW, S4: FET 76);
+//                                        its sub-ulp carry (FbAffine's base GR, S10 X10) is judged by dsp.fbsolve's
+//                                        carry rows against the exact FB recurrence
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -319,7 +320,7 @@ FCMP_PROBE(dsp, srsweep)
             const EngineParams slowEng = fcmp::probe::resolveRaw(en, slow).eng;
             if (slowEng.topo == kTopoFB)
                 std::printf("NOTE     %s.long_release: a feedback kernel (the closed loop is not the one-pole's "
-                            "exponential; FB sub-ulp carry: FbAffine base GR, S3 lead revision 4): not judged\n",
+                            "exponential; its FB sub-ulp carry is dsp.fbsolve's carry rows): not judged\n",
                             k.c_str());
             else
             {

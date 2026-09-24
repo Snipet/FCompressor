@@ -39,8 +39,21 @@
 //   analysis.def.step.decimate7.mismatch, .truncated.mismatch  decimate 7 writes every 7th sample of the full
 //                                   response; a short output span gets the full response's prefix
 //   analysis.groff.gain_mismatch    staticGain with kEngGrOff: gainDb == preGainDb bit for bit (offAmt's product)
-//   analysis.stage2.mismatch        CurveOpts::stage2 true and false draw the same curve (no kernel has a stage 2 yet;
-//                                   Analysis.cpp)
+//   analysis.stage2.mismatch        CurveOpts::stage2 true and false draw the same curve when the Mode has no static stage
+//                                   2 (ModeEntry::staticS2 == nullptr: NoStage2; a NOTE otherwise); S10 interface
+//                                   revision (X10): .off_mismatch: staticGr with CurveOpts stage2 = false is the
+//                                   four-argument staticGr, bit for bit; .compose_mismatch: with stage2 = true it is
+//                                   ModeEntry::staticS2 applied to it (the identity without one), bit for bit
+//   analysis.stage2.local.*         (Mode-independent, S10) the static stage-2 hook on probe-local traits (PeakLog,
+//                                   QuadKnee 2:1 T -30 W 6, LinkMax, SmoothBranching, ColourNone, Flat; FF | FB) with a
+//                                   probe-local shared-element stage 2 (a 10:1 hard-knee limiter at s2thr -20 dB through
+//                                   SmoothBranching on the aux lanes, max with stage 1): .nostage2_identity_mismatch
+//                                   (ModeEngine<T>::staticS2 with NoStage2 is the identity, bit for bit),
+//                                   .off_mismatch (s2thr at kS2Off: the computer alone, bit for bit; that makeModeEntry
+//                                   fills the pointer only for a Stage2 with combineStatic is a static_assert);
+//                                   .<ff|fb>.settled_max_err_db: the engine's settled GR at 10 rising square levels
+//                                   T - 10 ... T + 40 (0.3 s each) against staticGain with stage 2: <= 1e-5 dB FF,
+//                                   1e-4 dB FB; .<ff|fb>.stage<1|2>_decides >= 1 (each stage sets the GR somewhere)
 //   analysis.colourdf.max_err_db    staticGain(colour) - staticGain against the probe's own describing function (the
 //                                   64-point trapezoid on sig::sinTurns and the entry's colourCurve, dsp.static's
 //                                   method) at 21 levels of every voice: <= 0.001 dB
@@ -90,9 +103,18 @@
 #include "fcdsp/engine/EngineHost.h"
 #include "fcdsp/engine/IEngine.h"
 #include "fcdsp/engine/Oversampler.h"
+#include "fcdsp/engine/ModeEngine.h"
+#include "fcdsp/engine/Stage.h"
 #include "fcdsp/engine/TestTap.h"
 #include "fcdsp/engine/host/ScFilter.h"
+#include "fcdsp/engine/stages/ballistics/SmoothBranching.h"
+#include "fcdsp/engine/stages/colour/ColourNone.h"
+#include "fcdsp/engine/stages/detector/PeakLog.h"
 #include "fcdsp/engine/stages/gain/QuadKnee.h"
+#include "fcdsp/engine/stages/link/LinkMax.h"
+#include "fcdsp/engine/stages/scshape/Flat.h"
+#include "fcdsp/engine/stages/stage2/NoStage2.h"
+#include "fcdsp/modes/DefineMode.h"
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/EngineParams.h"
@@ -119,6 +141,11 @@
 #if defined(__x86_64__) || defined(_M_X64)
   #include <xmmintrin.h>
 #endif
+
+namespace fcdsp::modes
+{
+    extern const ModeDescriptor kClean;         // CleanDesc.cpp: the probe-local stage-2 traits borrow its descriptor
+}
 
 namespace
 {
@@ -966,6 +993,173 @@ namespace
         P.le("analysis.colourdf.max_err_db", dfErr, kColourDfTolDb);
     }
 
+    // ---- F2. the static stage-2 hook (S10, X10) --------------------------------------------------------------------
+    // A probe-local shared-element stage 2 (SharedElementMax's shape, 01 §5.2 catalogue, E §3.3): a hard-knee limiter at
+    // the stage-2 threshold with slope kS2Slope on the detector level, through SmoothBranching ballistics at the stage-2
+    // times, run on the aux lanes (Stage2Policy: lanes 2-3 carry channels 0-1's stage-2 GR); the element's GR is the
+    // max of the two stages. combineStatic is its settled form: max(r1, the limiter's target), every lane.
+    struct ProbeSharedMax
+    {
+        static constexpr float kS2Slope = 0.9f;                   // 10:1
+        using Bal = stage::SmoothBranching;
+        struct Coeffs
+        {
+            Bal::Coeffs bal{};
+        };
+        struct State
+        {
+            Bal::State bal{};
+        };
+
+        static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
+        {
+            EngineParams q = p;
+            q.atkTauMs = p.s2AtkTauMs;
+            q.relTauMs = p.s2RelTauMs;
+            Bal::design(c.bal, q, x);
+        }
+        static simd::f32x4 target(simd::f32x4 xDb, const LevelCtl& l) noexcept FCDSP_NONBLOCKING
+        {
+            return simd::mul(simd::set1(kS2Slope), simd::max(simd::set1(0.0f), simd::sub(xDb, l.s2ThrDb)));
+        }
+        static simd::f32x4 dup01(simd::f32x4 v) noexcept FCDSP_NONBLOCKING   // {v0, v1, v0, v1}
+        {
+            return simd::withLane<3>(simd::withLane<2>(v, simd::lane<0>(v)), simd::lane<1>(v));
+        }
+        static simd::f32x4 combine(const Coeffs& c, State& s, simd::f32x4 r1, simd::f32x4 xDb, const LevelCtl& l)
+            noexcept FCDSP_NONBLOCKING
+        {
+            const simd::f32x4 r2 = Bal::tick(c.bal, s.bal, target(dup01(xDb), l));   // lanes 2-3: channels 0-1
+            const float a = simd::lane<2>(r2), b = simd::lane<3>(r2);
+            const float r0 = simd::lane<0>(r1), r1b = simd::lane<1>(r1);
+            alignas(16) const float v[4] = { r0 > a ? r0 : a, r1b > b ? r1b : b, a, b };
+            return simd::load(v);
+        }
+        static simd::f32x4 combineStatic(const Coeffs&, simd::f32x4 r1, simd::f32x4 xDb, const LevelCtl& l) noexcept
+            FCDSP_NONBLOCKING
+        {
+            return simd::max(r1, target(xDb, l));
+        }
+        static void seed(State& s, simd::f32x4 v) noexcept FCDSP_NONBLOCKING { Bal::seed(s.bal, dup01(v)); }
+        static simd::f32x4 grDb(const State& s) noexcept FCDSP_NONBLOCKING
+        {
+            return simd::withLane<1>(simd::withLane<0>(simd::set1(0.0f), simd::lane<2>(s.bal.r)),
+                                     simd::lane<3>(s.bal.r));
+        }
+    };
+    static_assert(Stage2Policy<ProbeSharedMax> && HasCombineStatic<ProbeSharedMax>);
+
+    struct SharedS2Traits
+    {
+        static constexpr const ModeDescriptor& desc = modes::kClean;
+        using Detector   = stage::PeakLog;
+        using Computer   = stage::QuadKnee;
+        using Link       = stage::LinkMax;
+        using Ballistics = stage::SmoothBranching;
+        using Stage2     = ProbeSharedMax;
+        using Colour     = stage::ColourNone;
+        using ScShape    = stage::Flat;
+        static constexpr uint8_t kTopologies = (1u << kTopoFF) | (1u << kTopoFB);
+    };
+    struct NoS2Traits : SharedS2Traits
+    {
+        using Stage2 = stage::NoStage2;
+    };
+    constexpr ModeEntry kSharedS2Entry = makeModeEntry<SharedS2Traits>();
+    constexpr ModeEntry kNoS2Entry = makeModeEntry<NoS2Traits>();
+    static_assert(sizeof(ModeEngine<SharedS2Traits>) <= kArenaBytes);
+    // makeModeEntry fills ModeEntry::staticS2 only for a Stage2 with combineStatic (a compile-time fact)
+    static_assert(kNoS2Entry.staticS2 == nullptr && kSharedS2Entry.staticS2 != nullptr);
+
+    EngineParams sharedS2Params(std::uint8_t topo, float s2ThrDb)
+    {
+        const ModeEntry& clean = fcmp::probe::modeEntry("clean");
+        EngineParams e = fcmp::probe::resolveRaw(clean, fcmp::probe::modeRaw(clean)).eng;
+        e.preGainDb = 0.0f;
+        e.thrDb = -30.0f;
+        e.slope = 0.5f;                                     // 2:1
+        e.kneeDb = 6.0f;
+        e.rangeDb = kRangeOff;
+        e.atkTauMs = 1.0f;
+        e.relTauMs = 100.0f;
+        e.holdMs = 0.0f;
+        e.s2ThrDb = s2ThrDb;
+        e.s2AtkTauMs = 1.0f;
+        e.s2RelTauMs = 50.0f;
+        e.link = 1.0f;
+        e.mix = 1.0f;
+        e.flags = 0;
+        e.topo = topo;
+        return e;
+    }
+
+    // Rows (per Mode, Mode-independent, as netgain's): the hook's identities and a settled engine against the curve.
+    void stage2HookRows(Probe& P)
+    {
+        // NoStage2: no static form, so no entry pointer, and ModeEngine<T>::staticS2 is the identity, bit for bit
+        {
+            std::vector<float> x(37), r1(37), gr(37, -1.0f);
+            for (std::size_t i = 0; i < x.size(); ++i)
+            {
+                x[i] = -70.0f + 3.0f * static_cast<float>(i);
+                r1[i] = 0.37f * static_cast<float>(i) + 0.001f;
+            }
+            const EngineParams e = sharedS2Params(kTopoFF, -20.0f);
+            ModeEngine<NoS2Traits>::staticS2(e, x.data(), r1.data(), gr.data(), static_cast<int>(x.size()));
+            P.eq("analysis.stage2.local.nostage2_identity_mismatch", mismatches(gr, r1), 0);
+
+            // stage 2 off (s2ThrDb >= kS2Off, the settled s2On = 0): the computer alone, bit for bit
+            const EngineParams off = sharedS2Params(kTopoFF, kS2Off);
+            std::vector<float> a(x.size()), b(x.size());
+            analysis::CurveOpts on;
+            analysis::staticGr(kSharedS2Entry, off, x, a, on);
+            analysis::staticGr(kSharedS2Entry, off, x, b);
+            P.eq("analysis.stage2.local.off_mismatch", mismatches(a, b), 0);
+        }
+        // the settled engine against staticGain (stage 2 on): a rising staircase of square levels, FF and FB
+        for (const std::uint8_t topo : { std::uint8_t{ kTopoFF }, std::uint8_t{ kTopoFB } })
+        {
+            const EngineParams e = sharedS2Params(topo, -20.0f);
+            const auto hold = static_cast<std::size_t>(0.3f * kFs);
+            fcmp::probe::EngineRig rig(kSharedS2Entry, e, kFs);
+            std::vector<float> in(hold), yl(hold), yr(hold);
+            double maxErr = 0.0;
+            std::int64_t s2Wins = 0, s1Wins = 0, bitMismatch = 0;
+            for (const double d : { -10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0 })
+            {
+                const float a = linDb(static_cast<float>(static_cast<double>(e.thrDb) + d));
+                const auto n0 = static_cast<std::int64_t>(rig.sampleIndex());
+                for (std::size_t k = 0; k < hold; ++k)
+                    in[k] = squareAt(n0 + static_cast<std::int64_t>(k), a, kFs);
+                rig.setTapping(false);
+                rig.process(in.data(), in.data(), yl.data(), yr.data(), hold - 1);
+                rig.tap().clear();
+                rig.setTapping(true);
+                rig.process(in.data() + hold - 1, in.data() + hold - 1, yl.data(), yr.data(), 1);
+                rig.setTapping(false);
+                const float gr = laneOf(rig.tap().grDb.back(), 0);
+                const float det = laneOf(rig.tap().detDb.back(), 0);
+                const std::array<float, 1> xs{ det - e.preGainDb };
+                std::array<float, 1> g{}, s1{}, s12{};
+                analysis::staticGain(kSharedS2Entry, e, xs, g);
+                const std::array<float, 1> xd{ det };
+                analysis::staticGr(kSharedS2Entry, e, xd, s1);
+                analysis::staticGr(kSharedS2Entry, e, xd, s12, analysis::CurveOpts{});
+                const float want = e.preGainDb - g[0];
+                maxErr = std::max(maxErr, std::fabs(static_cast<double>(gr) - static_cast<double>(want)));
+                bitMismatch += bitsOf(gr) == bitsOf(s12[0]) ? 0 : 1;
+                (s12[0] > s1[0] ? s2Wins : s1Wins) += 1;
+            }
+            const std::string k = std::string("analysis.stage2.local.") + (topo == kTopoFB ? "fb" : "ff");
+            std::printf("NOTE     %s: settled engine vs staticGain(stage 2) max %.3g dB; stage 2 decides %lld of 10 "
+                        "levels; %lld level(s) not bit-equal to staticGr(stage 2)\n",
+                        k.c_str(), maxErr, static_cast<long long>(s2Wins), static_cast<long long>(bitMismatch));
+            P.le(k + ".settled_max_err_db", maxErr, topo == kTopoFB ? 1e-4 : 1e-5);
+            P.ge(k + ".stage2_decides", static_cast<double>(s2Wins), 1.0);
+            P.ge(k + ".stage1_decides", static_cast<double>(s1Wins), 1.0);
+        }
+    }
+
     // ---- G. netGainDb -----------------------------------------------------------------------------------------------
     void netGainRows(Probe& P)
     {
@@ -1258,12 +1452,29 @@ FCMP_PROBE(dsp, analysis)
         for (const float g : a)
             groff += bitsOf(g) == bitsOf(off.preGainDb) ? 0 : 1;
         P.eq("analysis.groff.gain_mismatch", groff, 0);
+        // stage 2 (S10: ModeEntry::staticS2). Without a static stage 2 both settings draw the same curve; the CurveOpts
+        // form of staticGr is the computer alone with stage2 = false, and the computer through staticS2 with it.
         analysis::CurveOpts s1;
         s1.stage2 = false;
         analysis::staticGain(en, e0, xs, a);
         analysis::staticGain(en, e0, xs, b, s1);
-        P.eq("analysis.stage2.mismatch", mismatches(a, b), 0);
+        if (en.staticS2 == nullptr)
+            P.eq("analysis.stage2.mismatch", mismatches(a, b), 0);
+        else
+            std::printf("NOTE     analysis.stage2: the Mode draws a static stage 2 (ModeEntry::staticS2)\n");
+        std::vector<float> xd(xs.size()), g4(xs.size()), gOff(xs.size()), gOn(xs.size()), gRef(xs.size());
+        for (std::size_t i = 0; i < xs.size(); ++i)
+            xd[i] = xs[i] + e0.preGainDb;
+        analysis::staticGr(en, e0, xd, g4);
+        analysis::staticGr(en, e0, xd, gOff, s1);
+        analysis::staticGr(en, e0, xd, gOn, analysis::CurveOpts{});
+        gRef = g4;
+        if (en.staticS2 != nullptr)
+            en.staticS2(e0, xd.data(), g4.data(), gRef.data(), static_cast<int>(xd.size()));
+        P.eq("analysis.stage2.off_mismatch", mismatches(gOff, g4), 0);
+        P.eq("analysis.stage2.compose_mismatch", mismatches(gOn, gRef), 0);
     }
+    stage2HookRows(P);
 
     scRows(P, en, base, def.view);
     colourRows(P, F, en, base, def.view);
