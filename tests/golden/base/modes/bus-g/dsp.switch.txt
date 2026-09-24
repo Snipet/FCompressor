@@ -1,0 +1,4 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/bus-g
+# key	value	tolerance
+switch.bus-g-clean.settle_ms	0	rel:0.1
+switch.clean-bus-g.settle_ms	100	rel:0.1
