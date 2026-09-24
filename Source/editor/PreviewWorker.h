@@ -15,7 +15,8 @@
 //
 // The runs (02 §9.3): attack — three steps to +6 / +12 / +24 dB over the threshold, hiSec 1.0, loDbUnderThr 24,
 // loSec 0.2; release — two bursts of +12 dB for 0.05 s and 2.0 s, then loSec 10. Each run is decimated to at most
-// kMaxPoints points (StepStimulus::decimate), then drawn as min/max columns by StepPlot.
+// kMaxPoints points (StepStimulus::decimate); StepPlot draws the min/max columns of its full-resolution Trace (U4
+// additions below).
 #pragma once
 
 #include "fcdsp/analysis/Analysis.h"
@@ -74,6 +75,37 @@ namespace fcmp::ui
 
         void stop();                                             // joins the worker; idempotent
         bool stopped() const noexcept;
+
+        // ---- U4 additions (S8; additive: no FZ4 declaration above changed) -------------------------------------------
+        // Run::gr keeps every d-th sample (d = 15 for an attack run at 48 kHz), too coarse for the first decades of a
+        // log-time pane, where FET 76's 20–800 µs attacks live. So each run is rendered once at full resolution (the
+        // render does not depend on the decimation: stepResponse writes every d-th sample of one rendering); Run::gr and
+        // Run::measured are taken from that render, and it is reduced here onto its pane's log-time axis, which StepPlot
+        // draws. A Trace belongs to result() (the same double buffer and serial).
+        //
+        // Axis: layout::kStepAttack for the attack runs, kStepRelease for the release runs. t is the time from the step
+        // (the attack runs' silence -> burst edge, the release runs' burst -> quiet edge); the k-th sample after the edge
+        // sits at t = (k + 1) / fs, and the response is linear in t between samples, from `from` at t = 0 (the model of
+        // analysis::measure). Column k spans [t_k, t_k+1] with t_k = tMinS · (tMaxS / tMinS)^(k / kColumns): one column
+        // per px of plot.w. Past the last sample the response holds `to`.
+        static constexpr int kColumns  = 116;                    // plot.w of both STEP panes (asserted in the .cpp)
+        static constexpr int kTimeLaws = 6;                      // fcdsp::TimeLaw enumerators (asserted in the .cpp)
+
+        struct Trace
+        {
+            bool  valid = false;                                 // computed, with samples after the edge
+            float from = 0.0f;                                   // GR at the last sample before the edge (dB)
+            float to = 0.0f;                                     // GR at the last sample of the segment after it (dB)
+            std::array<float, kColumns + 1> edge{};              // GR at t_k (dB)
+            std::array<float, kColumns> lo{}, hi{};              // min / max GR over column k, its edges included (dB)
+            // analysis::measure of this edge on the full-resolution render, for every TimeLaw (index = the enumerator):
+            // the attack runs' attackS, the release runs' releaseS; -1 when a crossing is missing. Run::measured holds
+            // the expDb reading (the worker is not told the published law: StepPlot picks the spec's law here).
+            std::array<float, kTimeLaws> measured{};
+        };
+
+        const Trace& attackTrace(int run) const noexcept;        // 0 <= run < kAttackRuns (clamped); of result()
+        const Trace& releaseTrace(int run) const noexcept;       // 0 <= run < kReleaseRuns (clamped); of result()
 
     private:
         struct Impl;                                             // the thread, the queue and the two buffers
