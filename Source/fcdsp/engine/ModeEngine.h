@@ -175,10 +175,16 @@ inline simd::f32x4 maxLanes01(simd::f32x4 v) noexcept FCDSP_NONBLOCKING
 // Exactly 0 and 1 at the ends, monotone, zero slope AND zero curvature at both, so a GR OFF or stage-2 fade has no
 // gain-slope discontinuity: on a pure tone a linear 20 ms fade of 8 dB of GR reads +40 dB on the click metric (C §5.0,
 // energy above 8 kHz); smoothstep was ~+1 dB at 6 dB of GR but +3.3 dB at 10.5 dB (F4); the host ramps use this same
-// shape (host/Ramps.h).
+// shape (host/Ramps.h). Evaluated from the nearer end, as host/Ramps.h's blend() does: above 1/2 as 1 - S(1 - w)
+// (1 - w is exact there, and S(1 - t) = 1 - S(t)), so near 1 the amount carries the rounding of the small S(1 - w)
+// instead of the cancellation of 10 - 9 (+-5e-7: +-3.5e-6 dB on 7 dB of GR, +5.5 dB on the click metric when the
+// steady output around it is as clean as Opto 2A's; S9 M3).
 inline float rampShape(float w) noexcept FCDSP_NONBLOCKING
 {
-    return w * w * w * (w * (w * 6.0f - 15.0f) + 10.0f);
+    const bool upper = w > 0.5f;
+    const float v = upper ? 1.0f - w : w;
+    const float s = v * v * v * (v * (v * 6.0f - 15.0f) + 10.0f);
+    return upper ? 1.0f - s : s;
 }
 
 // (1 - w)*a + w*b with one rounding for the sum: exactly a at w = 0 and exactly b at w = 1.
