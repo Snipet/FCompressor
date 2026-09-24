@@ -54,7 +54,10 @@
 //              from the tapped r[n-1] and x[n] (attack / release one-poles at the published times; held samples
 //              counted); r^_fb is the Mode's computer with the loop gain k in place of the slope (QuadKnee.h's
 //              convention), read through staticGr with topo FF. All <= 1e-5 dB. A Mode whose FB ballistics have other
-//              branches (DualRelease's slow path, TcSelector) adds its branch maps here with its card.
+//              branches (DualRelease's slow path, TcSelector) adds its branch maps here with its card. A configuration
+//              whose attack or release is program-dependent (TimeSpec::program: the one-poles are not the published
+//              times) prints a NOTE instead of the per-sample rows; its ballistics' probe holds its maps (Opto 2A's
+//              T4 cell and its one-sample-delay loop: dsp.optocell, S9 M3).
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -454,6 +457,14 @@ namespace
         P.le(cfg + ".static_curve.max_err_db", staticErr, tolns::kFbSolveDb);
         if (!perSample)
             return;
+        const Resolution res = fcmp::probe::resolveRaw(en, raw);
+        if (en.desc->attackSpec(res.view, e).program || en.desc->releaseSpec(res.view, e).program)
+        {
+            std::printf("NOTE     %s: program-dependent ballistics; the per-sample branch rows are the policy's probe's "
+                        "(file header)\n",
+                        cfg.c_str());
+            return;
+        }
 
         // per sample, through the Rig: square steps (|x| constant, so the detector reads the level exactly)
         const double segs[][2] = { { -10.0, 0.1 }, { 20.0, 0.25 }, { 6.0, 0.35 }, { -20.0, 0.4 } };

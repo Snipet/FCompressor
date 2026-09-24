@@ -1,10 +1,23 @@
-// Opto 2A (slot 3, `opto-2a`): the Mode's descriptor, physical() and specs, 01 §10.6 verbatim except as noted below.
-// Opto2A.h holds the (provisional, generic) traits and Opto2A.cpp FCDSP_DEFINE_MODE(Opto2A).
+// Opto 2A (slot 3, `opto-2a`): the Mode's descriptor, physical() and specs, 01 §10.6 except as noted below. Opto2A.h
+// holds the traits and the internals hook, Opto2A.cpp FCDSP_DEFINE_MODE(Opto2A); every [H] constant, its source and its
+// fit are in docs/modes/opto-2a.md.
 //
 // - External linkage (SPRINTS §7 D24): the traits header declares `extern const ModeDescriptor kOpto2A;`.
-// - provisional = true (descriptor wave, ADR-30); revision 1 is spelled out.
-// - The time specs are the kit's: attack {0.010 s, expDb, 5–20 ms, program} and release {0.060 s, t50, 40–80 ms,
+// - provisional = false (M3, S9): the real traits run, the fidelity rows are blocking. Revision 1: the Mode has not
+//   shipped (no modes-ever.tsv row), so fitting it moves no revision.
+// - PEAK RED. (fitted, 01 §12 #5): 0...100 <-> +20...-50 dBFS, 0.7 dB per unit (01 §10.6 had +24...-40, 0.64 [H]). PR 0
+//   leaves a 0 dBFS peak at 0.1 dB of GR ("0 = no GR", D §5.2) and the default PR 40 (-8 dBFS) holds 0 VU program's
+//   -6 dBFS peaks near 4 dB of GR, the LA-2A's usual working range; 01 §10.6's PR 40 (-1.6 dBFS) held them under 2 dB.
+// - physical() (S9 lead revision 4): EMPHASIS is the Mode's own R37 shelf (m[0]); the host's `sce` tilt gets a neutral
+//   0 dB/oct (it used to receive the same value: a double emphasis). The published times are converted to the cell's
+//   open-loop ones (ADR-63): the attack by the loop's speed-up, the fast release by the panel's hold delay. m[1] is the
+//   LIMIT flag of 01 §10.6; the EL-panel drive law change it names is the curve's exponent, the loop gain k of the
+//   LIMIT step (OptoCellCurve.h), so no policy reads it.
+// - The time specs are the kit's: attack {0.010 s, expDb, 5-20 ms, program} and release {0.060 s, t50, 40-80 ms,
 //   program} (kit::detail::timeFromView's bands for a locked program nominal).
+// - tailSeconds: five slow-release time constants (the memory's tail), 25 s (01 §10.6 had 15 s).
+
+#include "fcdsp/modes/opto-2a/Opto2A.h"
 
 #include "fcdsp/core/Units.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -17,18 +30,27 @@
 
 namespace fcdsp::modes {
 
-extern const ModeDescriptor kOpto2A;             // also declared by modes/opto-2a/Opto2A.h
-
 namespace {
 
 using namespace kit;
 
-float prDial   (float thr) noexcept { return (24.f - thr) / 0.64f; }   // PEAK RED. 0…100 ↔ +24…−40 dBFS [H]
-float prPlain  (float d)   noexcept { return 24.f - 0.64f * d; }
-float gainDial (float mu)  noexcept { return (mu + 10.f) / 0.4f; }     // GAIN 0…100 ↔ −10…+30 dB [H]
+// PEAK RED. 0...100 <-> +20...-50 dBFS [H, fitted: header], GAIN 0...100 <-> -10...+30 dB [H], R37 set-screw 0...10.
+constexpr float kPrTopDb = 20.0f, kPrDbPerUnit = 0.7f;
+float prDial   (float thr) noexcept { return (kPrTopDb - thr) / kPrDbPerUnit; }
+float prPlain  (float d)   noexcept { return kPrTopDb - kPrDbPerUnit * d; }
+float gainDial (float mu)  noexcept { return (mu + 10.f) / 0.4f; }
 float gainPlain(float d)   noexcept { return -10.f + 0.4f * d; }
-float emDial   (float s)   noexcept { return s * (10.f / 6.f); }        // R37 set-screw 0…10
+float emDial   (float s)   noexcept { return s * (10.f / 6.f); }
 float emPlain  (float d)   noexcept { return d * 0.6f; }
+
+// The T4 cell (docs/modes/opto-2a.md): the slow part's share, its charge and its release (OptoCell's m[2..4]).
+constexpr float kSlowShare = 0.5f;              // [H] beta: E §2.7's w = 0.5 ("50 % in 60 ms")
+constexpr float kMemoryChargeMs = 5000.0f;      // [H] tau_m: E §2.7's memory, "5 s up"
+constexpr float kSlowReleaseMs = 5000.0f;       // [H] tau_s: fitted to "then 1-15 s" (D §2.2)
+// ADR-63: the published attack is the closed loop's; the cell runs tau_on = published x (1 + kAttackLoop k).
+constexpr float kAttackLoop = 1.0f;             // [H] fitted: dsp.time's attack at 10 ms (COMP)
+// The published release (60 ms to 50 %) includes the panel's hold (OptoSense): tau_f = published tau x kReleaseFit.
+constexpr float kReleaseFit = 0.85f;            // [H] fitted: dsp.time's release at 60 ms to 50 %
 
 // COMP / LIMIT: nominal 3:1 / 10:1 [C: 4:1] (D §2.2).
 constexpr Step kRatio[] = { { 0.6667f, "COMP", "COMPRESS" }, { 0.90f, "LIMIT", "LIMIT" } };
@@ -37,7 +59,7 @@ constexpr Step kTube[]  = { { 0, "TUBE", "TUBE + TRANSFORMERS" } };
 
 constexpr ParamTable kOpto2AParams = [] {
     ParamTable t = allNa("NOT ON THIS CIRCUIT");
-    t[Pid::thr]    = { named(cont(-40, 24, -1.6f /*PR 40*/), "PEAK RED.",
+    t[Pid::thr]    = { named(cont(-50, 20, -8.f /*PR 40*/), "PEAK RED.",
                              { &prDial, &prPlain, "", 0, /*invert*/true }) };
     t[Pid::ratio]  = { stepped(kRatio, 0.6667f) };
     t[Pid::knee]   = { na(6, "THE KNEE IS THE T4 CELL'S; SEE THE CURVE") };
@@ -59,15 +81,24 @@ constexpr ParamTable kOpto2AParams = [] {
 }();
 
 void optoPhysical(const ParamView& v, EngineParams& e) noexcept {
-    e.topo = kTopoFB;                               // FeedbackDelayed: safe at τ ≈ 10 ms (E §2.7), guarded in prepare()
-    e.m[0] = v[Pid::sce].plain * (10.f / 6.f);      // R37: LF desensitisation 0…10 dB below 1 kHz (D §2.2) [H]
-    e.m[1] = v[Pid::ratio].step == 1 ? 1.f : 0.f;   // LIMIT: EL-panel drive law change [H]
-    // OptoCell constants (E §2.7 [H]): w = 0.5, τon 10 ms, τoff,f 87 ms, τoff,s(m) = 0.3 + 3.2·m s,
-    // memory 5 s up / 20 s down
+    e.topo = kTopoFB;                               // FeedbackDelayed: safe at the cell's tau (E §2.7), guarded in prepare()
+    e.m[Opto2A::kEmphasisSlot] = v[Pid::sce].plain * (10.f / 6.f);   // R37: 0...10 dB below 1 kHz (D §2.2 [V S31]) [H]
+    e.sceDbOct = 0.f;                               // the host SC tilt stays neutral: the emphasis is R37's alone
+    e.m[Opto2A::kLimitSlot] = v[Pid::ratio].step == 1 ? 1.f : 0.f;   // LIMIT (the drive law: the loop gain k)
+    e.m[Opto2A::kShareSlot] = kSlowShare;
+    e.m[Opto2A::kChargeSlot] = kMemoryChargeMs;
+    e.m[Opto2A::kSlowSlot] = kSlowReleaseMs;
+    // ADR-63: the cell's open-loop times. k = S / (1 - S), the loop gain of the ratio step (2 COMP, 9 LIMIT).
+    const float k = e.slope < 0.99f ? e.slope / (1.0f - e.slope) : 99.0f;
+    e.atkTauMs *= 1.0f + kAttackLoop * (k > 0.0f ? k : 0.0f);
+    e.relTauMs *= kReleaseFit;
 }
 
 DetectorLaw optoLaw(const EngineParams&) noexcept { return DetectorLaw::custom; }
-float optoTail(const EngineParams&) noexcept { return 15.f; }        // memory: up to 15 s (E §5.2)
+float optoTail(const EngineParams& e) noexcept                     // the memory's tail: 5 tau_s (s)
+{
+    return 5.0f * e.m[Opto2A::kSlowSlot] / 1000.0f;
+}
 
 constexpr InternalSpec kOptoInt[] = { { "LIGHT", "", 0, 1, 2, false }, { "G FAST", "", 0, 1, 2, false },
                                       { "G SLOW", "", 0, 1, 2, false }, { "MEMORY", "%", 0, 100, 0, true },
@@ -77,7 +108,7 @@ constexpr InternalSpec kOptoInt[] = { { "LIGHT", "", 0, 1, 2, false }, { "G FAST
 
 extern constexpr ModeDescriptor kOpto2A {
     .key = "opto-2a", .name = "OPTO 2A", .group = Group::opto, .introducedInStateVersion = 1, .revision = 1,
-    .provisional = true,
+    .provisional = false,
     .topologyLine = "OPTICAL · FEEDBACK · PROGRAM-DEPENDENT",
     .specLine = "OPTO 2A   T4 CELL · COMP/LIMIT · ~10 MS · 60 MS→50 %, THEN 1–15 S",
     .params = kOpto2AParams, .physical = &optoPhysical,
@@ -89,8 +120,3 @@ extern constexpr ModeDescriptor kOpto2A {
     .tailSeconds = &optoTail, .ctBudgetNsPerSample = 50, .internals = kOptoInt };
 
 } // namespace fcdsp::modes
-
-// Traits (01 §10.6, final): Detector OptoSense (rectified, emphasis-shaped output); Computer OptoCellCurve (steady
-// state of law::LdrShunt, used by staticGr and the telemetry target); Ballistics OptoCell, fused in
-// FeedbackDelayed<OptoCellCurve> — prepare() checks k ≤ α/(1−α) at the actual fs and falls back to FeedbackZdf if
-// violated (01 §5.3, K2 #5c); ScShape R37Shelf; Colour TubeTransformer; kTopologies = FB.
