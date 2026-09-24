@@ -9,7 +9,7 @@
 // calls alone is measured with steady_clock; the best of 5 repetitions after a warm-up is reported as
 //   ns per base-rate sample per channel   (E §3.7's unit, the unit of ModeDescriptor::ctBudgetNsPerSample)
 //   % of one core                          (the whole stereo stream in real time)
-// and its ratio to ctBudgetNsPerSample. Quality: ECO only until F7 installs the host's oversampler (STD/HQ rows then);
+// and its ratio to ctBudgetNsPerSample. Quality: ECO, STD and HQ rows (S6 lead revision, after F7);
 // the budget is E §3.7's STD figure, so ECO is expected well below it.
 //
 // Exit: 0; with --budget, 1 when a row exceeds 3 x ctBudgetNsPerSample (C §5.8); 2 for a usage error or an unknown
@@ -135,6 +135,10 @@ namespace
         const int reps = opt.quick ? 1 : 5;
         const double seconds = opt.quick ? 0.05 : opt.seconds;
         bool within = true;
+        struct Q { fcdsp::Quality q; const char* name; };
+        constexpr Q kQualities[] = { { fcdsp::Quality::eco, "eco" }, { fcdsp::Quality::std, "std" },
+                                     { fcdsp::Quality::hq, "hq" } };   // S6 lead revision: every quality (F7 landed)
+        for (const Q& qu : kQualities)
         for (const Config& c : kConfigs)
         {
             const auto n = static_cast<std::size_t>(seconds * c.fs);
@@ -146,7 +150,7 @@ namespace
                 fcdsp::HostConfig cfg;
                 cfg.fs = c.fs;
                 cfg.maxBlock = c.block;
-                cfg.quality = fcdsp::Quality::eco;
+                cfg.quality = qu.q;
                 cfg.budget = fcdsp::LookaheadBudget::off;
                 host->configure(cfg, bp);
                 if (attached)
@@ -159,14 +163,13 @@ namespace
                 const double nsPerSampleCh = best * 1e9 / (static_cast<double>(n) * 2.0);
                 const double core = 100.0 * best / seconds;
                 const double ratio = budget > 0.0 ? nsPerSampleCh / budget : 0.0;
-                std::printf("bench %-12s eco %6.0f/%-4d %-8s %8.3f ns/sample/ch  %6.3f %% of one core  budget %g ns: "
+                std::printf("bench %-12s %-3s %6.0f/%-4d %-8s %8.3f ns/sample/ch  %6.3f %% of one core  budget %g ns: "
                             "%.3fx%s\n",
-                            std::string(ms.key).c_str(), c.fs, c.block, attached ? "attached" : "detached",
+                            std::string(ms.key).c_str(), qu.name, c.fs, c.block, attached ? "attached" : "detached",
                             nsPerSampleCh, core, budget, ratio, ratio > 3.0 ? "  OVER 3x" : "");
                 within = within && !(ratio > 3.0);
             }
         }
-        std::printf("bench %-12s std/hq: n/a until F7 installs the host's oversampler\n", std::string(ms.key).c_str());
         return within;
     }
 } // namespace

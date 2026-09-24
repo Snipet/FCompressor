@@ -184,7 +184,17 @@ int main(int argc, char** argv)
             break;
         }
 
-    funkgui::test::Probe P(probe.name, ctx.key, argc, argv);
+    // S5 lead revision (U1a request): arguments after a lone "--" belong to the probe itself (e.g. ui.dump's --view,
+    // --out, --png), so the harness never sees them and never reports them as unknown flags. Probes that take such
+    // arguments read them from the process arguments after the "--".
+    int harnessArgc = argc;
+    for (int i = 2; i < argc; ++i)
+        if (argv[i] != nullptr && std::string_view(argv[i]) == "--")
+        {
+            harnessArgc = i;
+            break;
+        }
+    funkgui::test::Probe P(probe.name, ctx.key, harnessArgc, argv);
     if (const std::string err = makeSandbox(); !err.empty())
         P.harnessError(err);
     (void) fcmp::probe::rt::available();             // resolve the interposer (if any) before a probe arms it

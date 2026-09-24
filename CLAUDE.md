@@ -76,8 +76,8 @@ SPRINTS beats 03 §4.9 on scheduling and ownership only.
     agent-verify && Scripts/verify.sh "$WT/build-agent"`. Probes only: `cmake --build --preset agent-probes`.
   - `agent-gui` — GPU editor work. `[GPU]` = `cmake --workflow --preset agent-gui-verify`.
   - `owner`, `lead`, `lead-x86`, `release`, `universal`, `asan`, `tsan`, `tsan-agent`, `rtsan`: lead only.
-- One card's tests: `ctest --preset agent -L 'mode:bus-g'` or `-L 'probe:dsp\.(simd|units)'`. Presets already cap
-  parallelism (`-j4 -l 12`, `ctest -j4`); do not raise it. Never run `fcmp_bench` while others build.
+- One card's tests: `ctest --preset agent -L 'mode:bus-g'` or `-L 'probe:dsp\.(simd|units)'`. Build presets cap
+  parallelism at `-j6` (no load limit; it serialised builds under load); do not raise it. Never run `fcmp_bench` while others build.
 - FunkGui is consumed only as a **tag** (the pin in `cmake/FcmpDeps.cmake`). An override
   (`-DFETCHCONTENT_SOURCE_DIR_FUNKGUI=…`) is allowed only to your own FunkGui worktree or a lead-made
   `FunkGui.wt/pin-<sha7>`, must descend from the pin, and must be declared in the handoff.
