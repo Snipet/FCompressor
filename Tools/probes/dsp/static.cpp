@@ -10,7 +10,8 @@
 // (continuous); threshold {-30, -10} dB (the nearest detents when stepped); knee {0, 6, 12} dB (detents when stepped),
 // else the resolved values. Attack at the Mode's fastest and release at its slowest (C §5.2: release the slowest, so
 // the 2f0 ripple stays below 0.01 dB; the fastest attack makes the GR-domain peak ballistics hold the sine's peak, E
-// §2.4, instead of a duty-cycle average). Every other parameter at the Mode's defaults.
+// §2.4, instead of a duty-cycle average; a feedback configuration skips AUTO release positions, M5 S10, below). Every
+// other parameter at the Mode's defaults.
 // Staircase: -60 ... max(+6, T + W/2 + 20) dBFS in 1 dB steps, plus 0.25 dB steps across [T - W/2 - 2, T + W/2 + 2],
 // rising; each step holds max(0.3 s, 8 tauA) then measures 0.1 s (whole cycles at 48 kHz). Levels are the Mode's
 // DetectorLaw x axis (rms: the sine peak is +3.01 dB).
@@ -526,6 +527,23 @@ FCMP_PROBE(dsp, static)
     base[Pid::atk] = timeEdge(view, Pid::atk, true);
     base[Pid::rel] = timeEdge(view, Pid::rel, false);
     resolveView(desc, base, view);
+    // M5 (S10; for the lead's approval): a feedback configuration's slowest release skips the AUTO positions (kTagAuto,
+    // kTagAuto2; Diode 609's A1 / A2, whose plain value is the slow constant, 01 §10.2). Their DualRelease fast path
+    // (50 ms for A2) releases between the sine's peaks, and a loop that senses the compressed output re-attacks only
+    // near them, so the GR averages ~2 dB under the curve at 6:1: the ripple C §5.2's slowest release is there to
+    // avoid. Feed-forward AUTO positions (Bus G) hold the peak and keep their configuration (and blessed goldens).
+    if (const ParamSpec* rs = view.spec[idx(Pid::rel)];
+        rs != nullptr && rs->kind == Kind::stepped && (view[Pid::rel].tag & (kTagAuto | kTagAuto2)) != 0
+        && fcmp::probe::resolveRaw(en, base).eng.topo == kTopoFB)
+    {
+        for (auto st = rs->steps.rbegin(); st != rs->steps.rend(); ++st)
+            if ((st->tag & (kTagAuto | kTagAuto2)) == 0)
+            {
+                base[Pid::rel] = st->plain;
+                break;
+            }
+        resolveView(desc, base, view);
+    }
 
     const std::vector<float> ratios = choices(view, Pid::ratio,
                                               { 1.0f - 1.0f / 1.5f, 0.5f, 0.75f, 0.9f, 0.95f, 1.0f }, false);

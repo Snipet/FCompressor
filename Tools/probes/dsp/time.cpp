@@ -19,7 +19,11 @@
 //                                  (03 §3.7); a program-dependent spec is judged against [lo, hi] instead
 //   structural (spec, blocking):
 //     time.<cfg>.tap_vs_audio_db   the tap's GR against the GR derived from y / x at every sample (qualifies the tap)
-//     time.<cfg>.reversals         the GR moves one way through the step (0 samples against the step's direction)
+//     time.<cfg>.reversals         the GR moves one way through the step (0 samples against the step's direction);
+//                                  where the Mode's internal SC shaping is not flat at the configuration (Diode 609's
+//                                  ATTACK SLOW high-pass: the square's plateaus droop at the detector, so |x| is not
+//                                  constant there and the GR ripples within each period), once per stimulus period,
+//                                  at the same phase (M5, S10; the per-sample count is a NOTE)
 //     time.<cfg>.nonfinite, time.<cfg>.gr_min_db
 //     time.groff.<edge>.hf_ratio_db  GR OFF toggled just after t = 1 s, at a waveform peak (on -> off, off -> on),
 //                                  on a 110 Hz tone at -6 dBFS with about 8 dB of GR (a live threshold is moved 8 dB
@@ -119,12 +123,23 @@ namespace
         return out;
     }
 
-    std::int64_t reversals(std::span<const float> trace, bool rising)
+    // Reversals of `trace` against the step's direction, comparing samples `stride` apart from `first` on (1, 0: every
+    // sample).
+    std::int64_t reversals(std::span<const float> trace, bool rising, std::size_t stride = 1, std::size_t first = 0)
     {
         std::int64_t n = 0;
-        for (std::size_t k = 1; k < trace.size(); ++k)
-            n += rising ? (trace[k] < trace[k - 1] ? 1 : 0) : (trace[k] > trace[k - 1] ? 1 : 0);
+        for (std::size_t k = first + stride; k < trace.size(); k += stride)
+            n += rising ? (trace[k] < trace[k - stride] ? 1 : 0) : (trace[k] > trace[k - stride] ? 1 : 0);
         return n;
+    }
+
+    // Whether the Mode's internal SC shaping (ModeEntry::scShapeDb) is not flat at these parameters (M5, S10).
+    bool scShaped(const ModeEntry& en, const EngineParams& e)
+    {
+        const float hz[3] = { 20.0f, 100.0f, 1000.0f };
+        float mag[3] = { 0.0f, 0.0f, 0.0f };
+        en.scShapeDb(e, kFs, hz, mag, 3);
+        return mag[0] != 0.0f || mag[1] != 0.0f || mag[2] != 0.0f;
     }
 
     struct Rendered
@@ -310,7 +325,16 @@ FCMP_PROBE(dsp, time)
             grMin = std::min(grMin, static_cast<double>(run.tapGrDb[i]));
         }
         P.le(k + ".tap_vs_audio_db", tapVsAudio, tol.tapGrDb);
-        P.eq(k + ".reversals", reversals(trace, attack), 0);
+        if (scShaped(en, e))                    // M5 (S10): once per period of the 1 kHz square, the same phase
+        {
+            const auto period = static_cast<std::size_t>(kFs / 1000.0f);
+            std::printf("NOTE     %s: the Mode shapes its side chain here; %lld per-sample reversal(s), judged per "
+                        "period\n",
+                        k.c_str(), static_cast<long long>(reversals(trace, attack)));
+            P.eq(k + ".reversals", reversals(trace, attack, period, period - 1), 0);
+        }
+        else
+            P.eq(k + ".reversals", reversals(trace, attack), 0);
         P.eq(k + ".nonfinite", run.nonfinite, 0);
         P.ge(k + ".gr_min_db", grMin, 0.0);
     }
