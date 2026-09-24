@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=proc.text  scope=modes/opto-2a
+# key	value	tolerance
+text.defaults.hash	37b241a03628baf7	exact
