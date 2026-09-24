@@ -16,6 +16,9 @@
 //    at >= kDetentAttackMs (50 ms) in all three renders, except for `atk`'s own detents: the row judges the detent's
 //    own transition, and a fast attack (DW, S4: FET 76's 0.8 ms maximum, Bus 25's 1 ms and Diode 609's 3 ms defaults)
 //    reads the compressor's legitimate reaction to a new static curve, GR steps at the next waveform peak, as a click.
+//    Where the two detents resolve to different static curves (thrDb, slope or kneeDb) and the kernel is feedback, the
+//    floor is on the loop's closed-loop attack (M2, S9; ADR-63: EngineParams::atkTauMs is the open-loop tau and the
+//    loop runs 1 + k times faster): atkTauMs >= 50 ms x (1 + QuadKnee::loopGain(slope)).
 //      zipper.detent.<p>.<i>-<j>.hf_ratio_db  <= +3 dB
 //    A pair whose detents resolve to different kernel keys (det, stmode, voice, topo: 01 §5.5) is a kernel swap: the
 //    host crossfades the two engine paths over 20 ms (F7), and those rows are judged like the others
@@ -66,6 +69,7 @@
 #include "fcdsp/engine/EngineHost.h"
 #include "fcdsp/engine/Oversampler.h"
 #include "fcdsp/engine/TestTap.h"
+#include "fcdsp/engine/stages/gain/QuadKnee.h"
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/EngineParams.h"
@@ -250,6 +254,12 @@ namespace
         return lines <= 0.0 ? -400.0 : 10.0 * std::log10(lines / std::max(f0Amp * f0Amp, 1e-300));
     }
 
+    // 1 + k for a feedback kernel (its closed loop attacks 1 + k times faster than atkTauMs, ADR-63), else 1.
+    float closedLoopFactor(const EngineParams& e)
+    {
+        return e.topo == kTopoFB ? 1.0f + stage::QuadKnee::loopGain(e.slope) : 1.0f;
+    }
+
     // The detents of stepped parameters and hybrid steps, per adjacent pair and direction: the edge's parameters.
     struct DetentEdge
     {
@@ -278,8 +288,12 @@ namespace
                     e.b = blockOf(en, rb);
                     if (pid != Pid::atk)
                     {
-                        e.a.eng.atkTauMs = std::max(e.a.eng.atkTauMs, kDetentAttackMs);
-                        e.b.eng.atkTauMs = std::max(e.b.eng.atkTauMs, kDetentAttackMs);
+                        const bool newCurve = e.a.eng.thrDb != e.b.eng.thrDb || e.a.eng.slope != e.b.eng.slope
+                                           || e.a.eng.kneeDb != e.b.eng.kneeDb;
+                        e.a.eng.atkTauMs = std::max(e.a.eng.atkTauMs,
+                                                    kDetentAttackMs * (newCurve ? closedLoopFactor(e.a.eng) : 1.0f));
+                        e.b.eng.atkTauMs = std::max(e.b.eng.atkTauMs,
+                                                    kDetentAttackMs * (newCurve ? closedLoopFactor(e.b.eng) : 1.0f));
                     }
                     e.key = pidName(pid) + "." + std::to_string(from) + "-" + std::to_string(to);
                     out.push_back(e);
