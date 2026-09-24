@@ -121,7 +121,7 @@ public:
 //   control     per sample i of the chunk: tick -> design (every kTickSamples at the ABSOLUTE index, so block-size
 //               invariant) -> LevelCtl from lvl_/lvl2_ (header comment) -> ScShape -> [B::sense(shaped SC), the
 //               optional hook below] -> Detector -> FF or FB step -> stage 2 (faded in by s2On_) -> min(range) ->
-//               x offAmt_. Both 20 ms LinearRamps are applied through rampShape (smoothstep): still exactly 0 and 1
+//               x offAmt_. Both 20 ms LinearRamps are applied through rampShape (smootherstep): still exactly 0 and 1
 //               at the ends and 20 ms long, but with no gain-slope
 //               discontinuity, so GR OFF and stage 2 on/off do not click (K2 #4 iii). The kernel is chosen per
 //               CHUNK: FB when the Traits compile it (kTopologies), p_.topo is kTopoFB and the key is internal (an FB
@@ -171,12 +171,14 @@ inline simd::f32x4 maxLanes01(simd::f32x4 v) noexcept FCDSP_NONBLOCKING
     return simd::set1(a > b ? a : b);
 }
 
-// The applied amount of a 0...1 LinearRamp: smoothstep, w^2 (3 - 2w). Exactly 0 and 1 at the ends, monotone, and
-// with zero slope at both, so a GR OFF or stage-2 fade has no gain-slope discontinuity: on a pure tone a linear 20 ms
-// fade of 8 dB of GR reads +40 dB on the click metric (C §5.0, energy above 8 kHz), this shape about +1 dB (dsp.time).
+// The applied amount of a 0...1 LinearRamp: smootherstep, w^3 (10 - 15w + 6w^2) (S7 lead revision; was smoothstep).
+// Exactly 0 and 1 at the ends, monotone, zero slope AND zero curvature at both, so a GR OFF or stage-2 fade has no
+// gain-slope discontinuity: on a pure tone a linear 20 ms fade of 8 dB of GR reads +40 dB on the click metric (C §5.0,
+// energy above 8 kHz); smoothstep was ~+1 dB at 6 dB of GR but +3.3 dB at 10.5 dB (F4); the host ramps use this same
+// shape (host/Ramps.h).
 inline float rampShape(float w) noexcept FCDSP_NONBLOCKING
 {
-    return w * w * (3.0f - 2.0f * w);
+    return w * w * w * (w * (w * 6.0f - 15.0f) + 10.0f);
 }
 
 // (1 - w)*a + w*b with one rounding for the sum: exactly a at w = 0 and exactly b at w = 1.
