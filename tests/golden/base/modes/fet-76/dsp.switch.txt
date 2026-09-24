@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/fet-76
+# key	value	tolerance
+switch.fet-76-clean.settle_ms	20	rel:0.1
+switch.clean-fet-76.settle_ms	20	rel:0.1
+switch.fet-76-bus-g.settle_ms	20	rel:0.1
+switch.bus-g-fet-76.settle_ms	20	rel:0.1

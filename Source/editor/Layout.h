@@ -18,6 +18,12 @@
 //   overlap except the header/preset strip (the strip is hit-tested first) and the browsers, which are overlays.
 // - The Characteristics METERS have no numeric hold readouts in 02 §7.3, but §7.4 resets their holds by a click: the
 //   reset target is the METERS caption cell (kCharsMeters.reset).
+// - S9 lead revision 5a (U3): the Characteristics meter labels are not centred on their 16 px bar pitch, where kMicro's
+//   "GR" (10.5 px) and "OUT" (16.4 px) sat 2.5 px apart and read "GROUT". They keep >= 6 px between words (a word space
+//   is 7.35 px, a letter gap 1.4 px) within 2.5 px of their bars: IN 736, SC 752.5, GR 769, OUT 788.5. Their row moves
+//   from y 390 (TRANSFER's label row) to y 381, right under the bars: TRANSFER's "0 DB <LAW>" starts on the 0 dB tick
+//   and runs to x 731 ("RMS"), 737 ("TUBE") at S = 48 and 749 at S = 72, into the meters' column, so on one row the two
+//   would touch. Probe ui.charscreen meters.labels.*. Only these five values of kCharsMeters moved.
 #pragma once
 
 #include "fcdsp/params/Pid.h"
@@ -296,7 +302,7 @@ namespace fcmp::ui::layout
         { { { MeterBar::in, { 734.0f, 140.0f, 8.0f, 240.0f } },  { MeterBar::sc, { 750.0f, 140.0f, 8.0f, 240.0f } },
             { MeterBar::gr, { 766.0f, 140.0f, 8.0f, 240.0f } },  { MeterBar::out, { 782.0f, 140.0f, 8.0f, 240.0f } },
             { MeterBar::out, { 0.0f, 0.0f, 0.0f, 0.0f } } } },
-        390.0f, 4, { { { "IN", 738.0f }, { "SC", 754.0f }, { "GR", 770.0f }, { "OUT", 786.0f } } },
+        381.0f, 4, { { { "IN", 736.0f }, { "SC", 752.5f }, { "GR", 769.0f }, { "OUT", 788.5f } } },   // S9 5a
         0, { { { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } } },
         { 732.0f, 122.0f, 64.0f, 16.0f }, 4.0f, { 732.0f, 126.0f }, true };
 

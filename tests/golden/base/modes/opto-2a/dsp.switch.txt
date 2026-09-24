@@ -1,0 +1,8 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/opto-2a
+# key	value	tolerance
+switch.opto-2a-clean.settle_ms	135	rel:0.1
+switch.clean-opto-2a.settle_ms	55	rel:0.1
+switch.opto-2a-bus-g.settle_ms	145	rel:0.1
+switch.bus-g-opto-2a.settle_ms	50	rel:0.1
+switch.opto-2a-fet-76.settle_ms	20	rel:0.1
+switch.fet-76-opto-2a.settle_ms	75	rel:0.1
