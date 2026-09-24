@@ -1,0 +1,26 @@
+# funkgui-golden 2  probe=dsp.analysis  scope=modes/fet-76
+# key	value	tolerance
+analysis.sc.def.f20_db	0	abs:0.01
+analysis.sc.def.f100_db	0	abs:0.01
+analysis.sc.def.f1000_db	0	abs:0.01
+analysis.sc.def.f10000_db	0	abs:0.01
+analysis.sc.hpf.f20_db	-27.9659824	abs:0.01
+analysis.sc.hpf.f100_db	-3.01029944	abs:0.01
+analysis.sc.hpf.f1000_db	-0.000431799359	abs:0.01
+analysis.sc.hpf.f10000_db	5.17719229e-07	abs:0.01
+analysis.harm.ln.h2_db	-66.3765945	abs:0.5
+analysis.harm.ln.h3_db	-85.2621613	abs:0.5
+analysis.harm.ln.thd_db	-66.3203622	abs:0.5
+analysis.harm.a.h2_db	-46.3717384	abs:0.5
+analysis.harm.a.h3_db	-72.3022308	abs:0.5
+analysis.harm.a.thd_db	-46.3602076	abs:0.5
+analysis.harm.f.h2_db	-72.3938675	abs:0.5
+analysis.harm.f.h3_db	-74.8024368	abs:0.5
+analysis.harm.f.thd_db	-70.4226252	abs:0.5
+analysis.gain.x-10_db	0	abs:0.001
+analysis.gain.x0_db	-1.33333325	abs:0.001
+analysis.gain.x10_db	-7.62355995	abs:0.001
+analysis.gain.x20_db	-15	abs:0.001
+analysis.invratio.x20	0.250010729	abs:0.0001
+analysis.step.attack_s	0.000209781589	rel:0.01
+analysis.step.release_s	0.399968833	rel:0.01

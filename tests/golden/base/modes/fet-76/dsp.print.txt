@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.print  scope=modes/fet-76
+# key	value	tolerance
+print.default.l.hash	ea9f7c7f432f65ff	exact
+print.default.r.hash	6dc78ee6cb3d0157	exact
+print.lo.l.hash	16fa31c789881a6f	exact
+print.lo.r.hash	a8b4d6aa00d6481f	exact
+print.hi.l.hash	719be75bf0163bdc	exact
+print.hi.r.hash	a9694d26f135b92f	exact
+print.mid.l.hash	8f2153b5508096f3	exact
+print.mid.r.hash	f94e8f1e947586a6	exact

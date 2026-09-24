@@ -1,0 +1,8 @@
+# funkgui-golden 2  probe=dsp.zipper  scope=modes/fet-76
+# key	value	tolerance
+zipper.ramp.thr.err_db	-41.5665819	abs:1
+zipper.ramp.atk.err_db	-119.281742	abs:1
+zipper.ramp.rel.err_db	-113.344215	abs:1
+zipper.ramp.schpf.err_db	-68.3381374	abs:1
+zipper.ramp.makeup.err_db	-63.1529486	abs:1
+zipper.ramp.mix.err_db	-67.2186993	abs:1

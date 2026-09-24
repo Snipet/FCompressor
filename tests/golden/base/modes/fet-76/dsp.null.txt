@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=dsp.null  scope=modes/fet-76
+# key	value	tolerance
+null.eco.thd_db	-64.6521591	abs:0.5
