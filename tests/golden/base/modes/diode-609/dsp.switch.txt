@@ -1,0 +1,12 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/diode-609
+# key	value	tolerance
+switch.diode-609-clean.settle_ms	40	rel:0.1
+switch.clean-diode-609.settle_ms	85	rel:0.1
+switch.diode-609-bus-g.settle_ms	25	rel:0.1
+switch.bus-g-diode-609.settle_ms	175	rel:0.1
+switch.diode-609-fet-76.settle_ms	20	rel:0.1
+switch.fet-76-diode-609.settle_ms	50	rel:0.1
+switch.diode-609-opto-2a.settle_ms	40	rel:0.1
+switch.opto-2a-diode-609.settle_ms	95	rel:0.1
+switch.diode-609-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-diode-609.settle_ms	130	rel:0.1

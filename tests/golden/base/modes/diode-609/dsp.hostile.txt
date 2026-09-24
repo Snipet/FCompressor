@@ -1,0 +1,14 @@
+# funkgui-golden 2  probe=dsp.hostile  scope=modes/diode-609
+# key	value	tolerance
+hostile.nan.sample.tail_err_db	0	abs:1
+hostile.nan.block.tail_err_db	6.79800111e-05	abs:1
+hostile.inf.sample.tail_err_db	0	abs:1
+hostile.inf.block.tail_err_db	6.79800111e-05	abs:1
+hostile.big.sample.tail_err_db	0.000623556531	abs:1
+hostile.big.block.tail_err_db	40.4611148	abs:1
+hostile.key.nan.sample.tail_err_db	0	abs:1
+hostile.key.nan.block.tail_err_db	0.00150753664	abs:1
+hostile.key.inf.sample.tail_err_db	0	abs:1
+hostile.key.inf.block.tail_err_db	0.00150753664	abs:1
+hostile.key.big.sample.tail_err_db	0.00269213138	abs:1
+hostile.key.big.block.tail_err_db	35.8154465	abs:1
