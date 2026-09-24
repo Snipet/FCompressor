@@ -44,7 +44,13 @@
 //     sample in r_f). The own-loop root is its upper bound (g_f is non-increasing and r >= root_f), off by at most
 //     B_f * k * (r - root_f) per sample, and both settle on the same static FB equilibrium once r_s has released onto
 //     r_f. The applied GR itself is always the exact max of roots of the documented maps (dsp.dualrelease).
-// Both paths drop their rounding remainder in FB (SmoothBranching.h: the solve returns an absolute root).
+//   - S10 interface revision (X10; M1's request): commitFb(c, s, r, rhat), which ModeEngine calls when the computer has
+//     rhatFb (Stage.h HasCommitFbRhat), receives rhat = r^_fb(x - r) at the committed GR, so where the slow root won
+//     r_f takes the exact value min(A_f + B_f rhat, r) instead of the own-loop root (A_f, B_f: the fast branch
+//     solveFb chose, kept in scratch). commitFb(c, s, r) keeps the own-loop root for callers without r^ (the concept,
+//     the unit rows).
+// Both paths drop their rounding remainder in FB (their maps are solved absolute; SmoothBranching.h's based carry is
+// not applied to them).
 //
 // Seeding (01 §5.5, Carry::grDb): both paths take the carried GR, i.e. the slow path starts charged: a hand-over into
 // AUTO (a Mode switch, or AutoSwitch from a manual release) keeps the GR where it is and releases it no faster than
@@ -81,6 +87,8 @@ struct DualReleaseT {
         mutable simd::f32x4 fbFastRoot{};       // FB scratch (solveFb -> commitFb): the fast path's own root
         mutable simd::f32x4 fbSlowWon{};        //   1 where the slow root won the max
         mutable simd::f32x4 fbCharge{};         //   1 where the slow path charges
+        mutable simd::f32x4 fbFastA{};          //   the fast branch's map {A_f, B_f} (S10: the commit with r^)
+        mutable simd::f32x4 fbFastB{};
     };
 
     static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
@@ -127,7 +135,18 @@ struct DualReleaseT {
         s.fbFastRoot = rootF;
         s.fbSlowWon = simd::sel(slowWon, one, zero);
         s.fbCharge = simd::sel(charge, one, zero);
+        s.fbFastA = aF;
+        s.fbFastB = bF;
         return simd::max(rootF, rootS);
+    }
+
+    // FB with r^_fb at the committed GR (S10; header comment): where the slow root won, the fast path's value is its
+    // own map at the applied GR's sense point, A_f + B_f rhat, exactly; then the commit below.
+    static void commitFb(const Coeffs& c, State& s, simd::f32x4 r, simd::f32x4 rhat) noexcept FCDSP_NONBLOCKING
+    {
+        const simd::m32x4 slowWon = simd::gt(s.fbSlowWon, simd::set1(0.5f));
+        s.fbFastRoot = simd::sel(slowWon, simd::fma(s.fbFastA, s.fbFastB, rhat), s.fbFastRoot);
+        commitFb(c, s, r);
     }
 
     // FB: the linked r becomes the applied GR; both paths advance (header comment).
@@ -156,6 +175,8 @@ struct DualReleaseT {
         s.fbFastRoot = s.f.r;
         s.fbSlowWon = simd::set1(0.0f);
         s.fbCharge = simd::set1(0.0f);
+        s.fbFastA = simd::set1(0.0f);
+        s.fbFastB = simd::set1(0.0f);
     }
 
     static simd::f32x4 grDb(const State& s) noexcept FCDSP_NONBLOCKING { return simd::max(s.f.r, s.s.r); }
@@ -191,6 +212,6 @@ struct DualReleaseT {
 
 using DualRelease = DualReleaseT<>;
 
-static_assert(BallisticsPolicy<DualRelease>);
+static_assert(BallisticsPolicy<DualRelease> && HasCommitFbRhat<DualRelease>);
 
 } // namespace fcdsp::stage

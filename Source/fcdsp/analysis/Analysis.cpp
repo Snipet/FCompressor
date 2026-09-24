@@ -5,9 +5,9 @@
 //   staticGr     ModeEntry::staticGr = ModeEngine<T>::staticGr: G::target over four abscissae per call with the
 //                unsmoothed LevelCtl (FB: G::solveFb with FbAffine{0, 1}), the very functions ModeEngine::control runs
 //                per sample. dsp.analysis holds it bit-equal to the running kernel's tapped target.
-//   staticGain   staticGr, then what ModeEngine::control applies after the computer: stage 2 (see below), the range
-//                clamp min(r, min(rangeDb, kRangeOff)), and GR OFF (offAmt settled at 0 multiplies r by 0). Link is
-//                not applied: the curve is one lane's, and L == R links to itself.
+//   staticGain   staticGr, then what ModeEngine::control applies after the computer: stage 2 (ModeEntry::staticS2, see
+//                below), the range clamp min(r, min(rangeDb, kRangeOff)), and GR OFF (offAmt settled at 0 multiplies r
+//                by 0). Link is not applied: the curve is one lane's, and L == R links to itself.
 //   stepResponse a private ModeEngine, driven exactly as EngineRig / EngineHost drive the plugin's engine; dsp.analysis
 //                holds it bit-identical to an EngineRig render of the same burst.
 //   scResponse   host::ScFilter's target design (the body of ScFilter::responseDb, designed once for the whole call)
@@ -20,11 +20,12 @@
 // to the kernel.
 //
 // Documented choices where 01 §7 is silent (F8 handoff):
-//   - CurveOpts::stage2. ModeEntry exposes no static stage-2 function, and every registered kernel's Stage2 is
-//     NoStage2, whose combine() passes stage 1 through (Diode 609 declares Stage2Kind::sharedElementMax but runs the
-//     descriptor wave's generic traits). So the static curve with and without stage 2 is the same function today, and
-//     staticGain returns it for both settings: it is exactly what the kernels do. The first kernel with a real stage 2
-//     (M5, SharedElementMax) needs a static stage-2 entry point in ModeEntry (interface-change request in the handoff).
+//   - CurveOpts::stage2 (S10 interface revision, X10; F8's request). With stage2 set, staticGain and the CurveOpts form
+//     of staticGr pass the computer's GR through ModeEntry::staticS2 = ModeEngine<T>::staticS2 (the Stage2's
+//     combineStatic with the unsmoothed LevelCtl and the settled s2On: exactly stage 1 while s2ThrDb >= kS2Off), at
+//     the same detector-domain abscissae, before the range clamp and GR OFF, the order control() applies them in. A
+//     Mode whose Stage2 has no static form (NoStage2, every registered kernel in S10's base) has staticS2 = nullptr:
+//     stage 2 is the identity and both settings draw the same curve, bit for bit (dsp.analysis stage2 rows).
 //   - The colour describing function (CurveOpts::colour, E §6.3) is evaluated at the sine amplitude AFTER the gain
 //     element, A = 10^((x + peakOffset + preGainDb - GR) / 20), x the plugin-input level on the Mode's DetectorLaw axis
 //     (rms: the sine peak is x + 3.0103 dB), with colourCurve at that point's GR; N(A) = (2 / (64 A)) sum y_i sin_i,
@@ -101,8 +102,7 @@ constexpr std::size_t kMaxIntChunk = static_cast<std::size_t>(std::numeric_limit
 
 double dbFromLinD(double a) noexcept { return 20.0 * std::log10(a > kFloorLin ? a : kFloorLin); }
 
-// The GR the engine applies after the computer, statically (file comment): range, then GR OFF. Stage 2 adds nothing
-// in any registered kernel (file comment, "CurveOpts::stage2").
+// The GR the engine applies after the computer and stage 2, statically (file comment): range, then GR OFF.
 float appliedGr(float r, const EngineParams& e) noexcept
 {
     const float range = e.rangeDb < kRangeOff ? e.rangeDb : kRangeOff;
@@ -299,7 +299,7 @@ void staticGain(const ModeEntry& en, const EngineParams& e, std::span<const floa
         sineTable(sine);
         peakOffset = peakOffsetDb(en, e);
     }
-    // opts.stage2: no kernel has a static stage 2 to add (file comment); both settings draw the kernels' curve.
+    const bool stage2 = opts.stage2 && en.staticS2 != nullptr;     // nullptr: no static stage 2 (the identity)
 
     alignas(16) std::array<float, kBatch> xd{}, gr{};
     for (std::size_t i = 0; i < n; i += kBatch)
@@ -311,6 +311,8 @@ void staticGain(const ModeEntry& en, const EngineParams& e, std::span<const floa
             en.staticGr(e, xd.data(), gr.data(), static_cast<int>(m));
         else
             gr.fill(0.0f);
+        if (stage2)
+            en.staticS2(e, xd.data(), gr.data(), gr.data(), static_cast<int>(m));
         for (std::size_t k = 0; k < m; ++k)
         {
             const float r = appliedGr(gr[k], e);
@@ -343,6 +345,22 @@ void staticGr(const ModeEntry& en, const EngineParams& e, std::span<const float>
     {
         const std::size_t m = n - off < kPiece ? n - off : kPiece;
         en.staticGr(e, xDetDb.data() + off, grDb.data() + off, static_cast<int>(m));
+    }
+}
+
+void staticGr(const ModeEntry& en, const EngineParams& e, std::span<const float> xDetDb, std::span<float> grDb,
+              CurveOpts opts) noexcept
+{
+    const ScopedFtz ftz;
+    staticGr(en, e, xDetDb, grDb);                          // the computer alone (the four-argument form)
+    if (!opts.stage2 || en.staticS2 == nullptr)
+        return;
+    const std::size_t n = xDetDb.size() < grDb.size() ? xDetDb.size() : grDb.size();
+    constexpr std::size_t kPiece = kMaxIntChunk & ~std::size_t{ 3 };
+    for (std::size_t off = 0; off < n; off += kPiece)
+    {
+        const std::size_t m = n - off < kPiece ? n - off : kPiece;
+        en.staticS2(e, xDetDb.data() + off, grDb.data() + off, grDb.data() + off, static_cast<int>(m));
     }
 }
 

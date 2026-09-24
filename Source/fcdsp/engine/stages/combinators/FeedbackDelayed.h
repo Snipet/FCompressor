@@ -20,6 +20,10 @@
 // the delayed loop runs; beyond it the solve falls back to FeedbackZdf<G> (the engine "switches that kernel to
 // FeedbackZdf", 01 §5.3). An affine map with B = 1 in any lane (the static FB curve, a = {0, 1}, or an instantaneous
 // branch, where kLimit = 0) always takes the ZDF solve: the delayed step is not an equilibrium there.
+//
+// FbAffine::base (S10 interface revision, X10; Stage.h): the held GR is the fixed point of the whole map, r~ = (base +
+// A) / (1 - B), and the solve returns r - base = A + B r^_fb(x - r~) (the fallback: FeedbackZdf's based solve). With
+// base = 0 both are the FZ0 expressions bit for bit. rhatFb forwards to FeedbackZdf's (Stage.h HasRhatFb).
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/core/Simd.h"
@@ -67,11 +71,18 @@ struct FeedbackDelayed {
         return Zdf::target(c.zdf, x, l);
     }
 
+    // r^_fb(y) from the engine's LevelCtl (S10 optional hook).
+    static simd::f32x4 rhatFb(const Coeffs& c, simd::f32x4 y, const LevelCtl& l) noexcept FCDSP_NONBLOCKING
+    {
+        return Zdf::rhatFb(c.zdf, y, l);
+    }
+
+    // r - base (header comment; base = 0: the FZ0 delayed step, bit for bit).
     static simd::f32x4 solveFb(const Coeffs& c, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept FCDSP_NONBLOCKING
     {
         if (!delayedAt(c, l, a))
             return Zdf::solveFb(c.zdf, x, l, a);
-        const simd::f32x4 held = simd::div(a.A, simd::sub(simd::set1(1.0f), a.B));     // r~ = A / (1 - B), B < 1
+        const simd::f32x4 held = simd::div(simd::add(a.base, a.A), simd::sub(simd::set1(1.0f), a.B));   // r~, B < 1
         const simd::f32x4 u = Zdf::curveFb(c.zdf, simd::sub(x, held), QuadKnee::fbLevel(l));
         return simd::fma(a.A, a.B, u);
     }

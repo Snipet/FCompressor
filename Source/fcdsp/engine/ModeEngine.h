@@ -100,6 +100,8 @@ public:
     static void staticGr(const EngineParams&, const float* xDetDb, float* grDb, int n) noexcept;
     static void scShapeDb(const EngineParams&, float fs, const float* hz, float* magDb, int n) noexcept;
     static void colourCurve(const EngineParams&, float grDb, const float* x, float* y, int n) noexcept;
+    // S10 interface revision (X10): the settled stage 2 after the computer, for CurveOpts::stage2 ("Bodies").
+    static void staticS2(const EngineParams&, const float* xDetDb, const float* r1Db, float* grDb, int n) noexcept;
 };
 // The size/alignment asserts live in FCDSP_DEFINE_MODE, one per Mode TU (01 §8.2).
 
@@ -155,6 +157,16 @@ public:
 //               FbAffine{0, 1}); scShapeDb = SH::magDb; colourCurve = C::transfer; each designs a value-initialised
 //               Coeffs and opens ScopedFtz. staticGr is the computer alone: range, stage 2 and GR OFF are the
 //               caller's (analysis::staticGain, the probes).
+//   S10 interface revision (X10; additive):
+//   - staticS2(e, x, r1, gr, n): what control() applies after the computer, stage 2 only, settled: per abscissa
+//               lerp(r1, S2::combineStatic(s2c, r1, x, l), rampShape(s2On settled)) over 4 abscissae per call with the
+//               unsmoothed LevelCtl, i.e. exactly r1 while stage 2 is off (s2ThrDb >= kS2Off) and combineStatic while
+//               it is on; the identity for a Stage2 without combineStatic (NoStage2). gr may alias r1.
+//               ModeEntry::staticS2 points here when the Stage2 has combineStatic (makeModeEntry), else nullptr.
+//   - FB commit with r^: when the ballistics have commitFb(c, s, r, rhat) (Stage.h HasCommitFbRhat) and the computer
+//               has rhatFb (HasRhatFb), the FB step commits with rhat = G::rhatFb(gc_, x - r, l) at the linked r;
+//               otherwise commitFb(c, s, r) as before.
+//   - FbAffine::base reaches the computer unchanged through the solve lambda: G::solveFb honours it (Stage.h).
 
 namespace detail::modeengine {
 
@@ -404,7 +416,10 @@ void ModeEngine<M>::control(const ControlIo& io) noexcept FCDSP_NONBLOCKING
                 const auto solve = [&](FbAffine fa) noexcept { return G::solveFb(gc_, x, l, fa); };
                 r1 = B::solveFb(bc_, std::as_const(bal_), solve);
                 r1 = L::apply(r1, link);
-                B::commitFb(bc_, bal_, r1);
+                if constexpr (HasCommitFbRhat<B> && HasRhatFb<G>)
+                    B::commitFb(bc_, bal_, r1, G::rhatFb(gc_, simd::sub(x, r1), l));   // S10: r^_fb at the linked r
+                else
+                    B::commitFb(bc_, bal_, r1);
                 tgt = io.tgtDb != nullptr ? G::solveFb(gc_, x, l, FbAffine{ simd::set1(0.0f), simd::set1(1.0f) })
                                           : r1;
             }
@@ -538,6 +553,40 @@ void ModeEngine<M>::staticGr(const EngineParams& e, const float* xDetDb, float* 
         simd::store(buf, r);
         for (int k = 0; k < m; ++k)
             grDb[i + k] = buf[k];
+    }
+}
+
+template <class M>
+void ModeEngine<M>::staticS2(const EngineParams& e, const float* xDetDb, const float* r1Db, float* grDb, int n) noexcept
+{
+    namespace me = detail::modeengine;
+    using S2 = typename M::Stage2;
+    const ScopedFtz ftz;
+    if constexpr (!HasCombineStatic<S2>)
+    {
+        for (int i = 0; i < n; ++i)                   // no static stage 2 (NoStage2): the identity
+            grDb[i] = r1Db[i];
+    }
+    else
+    {
+        typename S2::Coeffs c{};
+        S2::design(c, e, me::analysisCtx());
+        const LevelCtl l = me::levelCtl(e);
+        const float w2 = me::rampShape(e.s2ThrDb < kS2Off ? 1.0f : 0.0f);   // the settled s2On_ (setParams' target)
+        for (int i = 0; i < n; i += 4)
+        {
+            const int m = n - i < 4 ? n - i : 4;
+            alignas(16) float xb[4] = { 0.0f, 0.0f, 0.0f, 0.0f }, rb[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            for (int k = 0; k < m; ++k)
+            {
+                xb[k] = xDetDb[i + k];
+                rb[k] = r1Db[i + k];
+            }
+            const simd::f32x4 r1 = simd::load(rb);
+            simd::store(rb, me::lerp(r1, S2::combineStatic(c, r1, simd::load(xb), l), w2));
+            for (int k = 0; k < m; ++k)
+                grDb[i + k] = rb[k];
+        }
     }
 }
 

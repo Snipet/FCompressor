@@ -23,6 +23,17 @@
 // after four, 5e-4 dB after five and 5e-6 dB (float precision) after six, which dsp.fbsolve holds to 1e-5 dB. The
 // derivative is G::slope when G provides one (QuadKnee does), else a central difference over +-kSlopeStepDb.
 // NaN or inf in x gives NaN (the poison check sees it, 01 §5.8).
+//
+// FbAffine::base (S10 interface revision, X10; Stage.h): the solve runs in the frame of base, on the increment
+// d = r - base with the sense point (x - base) - d, the bracket [A, A + B r^_fb((x - base) - A)] and F(d) = d - A -
+// B r^_fb((x - base) - d). Every term then scales with A or B, so a based solve keeps a slow release's sub-ulp steps.
+// A based lane widens the bracket's upper end by kBasedSlack (2^-20) of |A| + B r^_fb: with a small B the root lies
+// within a rounding of that end, the float end can fall just below it, and the safeguard then rejects Newton's exact
+// step and halves (a residue of 2 % of the increment after six steps, dsp.fbsolve's base rows); the absolute FZ0
+// solve has the same residue at the scale of a rounding of the GR. With base = 0, x - base is x exactly, the bracket
+// is the FZ0 one and the solve
+// is the FZ0 solve bit for bit. rhatFb(c, y, l) = curveFb(c, y, QuadKnee::fbLevel(l)) (the optional FB-curve hook,
+// Stage.h HasRhatFb).
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/core/Simd.h"
@@ -45,6 +56,7 @@ struct FeedbackZdf {
     static_assert(GainComputerPolicy<G>, "FeedbackZdf: G must be a GainComputerPolicy");
     static constexpr int kNewtonSteps = 6;
     static constexpr float kSlopeStepDb = 1e-2f;
+    static constexpr float kBasedSlack = 0x1p-20f;   // S10: a based solve's upper bracket slack, of |A| + B r^_fb
 
     struct Coeffs { typename G::Coeffs inner{}; };
 
@@ -76,16 +88,33 @@ struct FeedbackZdf {
         }
     }
 
+    // r^_fb(y) from the engine's LevelCtl (S10 optional hook).
+    static simd::f32x4 rhatFb(const Coeffs& c, simd::f32x4 y, const LevelCtl& l) noexcept FCDSP_NONBLOCKING
+    {
+        return curveFb(c, y, QuadKnee::fbLevel(l));
+    }
+
+    // The root of r = base + A + B r^_fb(x - r), minus base (header comment; base = 0: the FZ0 solve, bit for bit).
     static simd::f32x4 solveFb(const Coeffs& c, simd::f32x4 x, const LevelCtl& l, FbAffine a) noexcept FCDSP_NONBLOCKING
     {
         const LevelCtl fb = QuadKnee::fbLevel(l);
         const simd::f32x4 zero = simd::set1(0.0f), one = simd::set1(1.0f), half = simd::set1(0.5f);
+        const simd::f32x4 xb = simd::sub(x, a.base);                          // the sense origin; x when base = 0
         simd::f32x4 lo = a.A;
-        simd::f32x4 hi = simd::fma(a.A, a.B, curveFb(c, simd::sub(x, a.A), fb));
+        const simd::f32x4 top = curveFb(c, simd::sub(xb, a.A), fb);
+        simd::f32x4 hi = simd::fma(a.A, a.B, top);
+        {
+            // A based lane widens hi by 2^-20 of the increment's terms: hi rounds a bound the root can sit within a
+            // rounding of (a small B), where the safeguard would reject Newton's exact step and halve instead; at the
+            // increment's own scale that residue is visible (S10). A lane with base 0 keeps the FZ0 bracket.
+            const simd::m32x4 based = simd::gt(simd::abs(a.base), zero);
+            const simd::f32x4 slack = simd::mul(simd::set1(kBasedSlack), simd::fma(simd::abs(a.A), a.B, top));
+            hi = simd::sel(based, simd::add(hi, slack), hi);
+        }
         simd::f32x4 r = lo;
         for (int i = 0; i < kNewtonSteps; ++i)
         {
-            const simd::f32x4 y = simd::sub(x, r);
+            const simd::f32x4 y = simd::sub(xb, r);
             const simd::f32x4 f = simd::sub(simd::sub(r, a.A), simd::mul(a.B, curveFb(c, y, fb)));
             const simd::m32x4 below = simd::ge(zero, f);                      // F(r) <= 0: the root is at or above r
             lo = simd::sel(below, r, lo);

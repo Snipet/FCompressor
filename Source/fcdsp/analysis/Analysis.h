@@ -17,7 +17,8 @@ struct ModeEntry;                      // Registry.h
 
 namespace fcdsp::analysis {
 
-struct CurveOpts { bool colour = false; bool stage2 = true; };   // colour: add the describing-function gain (E §6.3)
+// colour: add the describing-function gain (E §6.3); stage2: add the settled stage 2 (ModeEntry::staticS2, S10)
+struct CurveOpts { bool colour = false; bool stage2 = true; };
 
 // Axis contract: x = PLUGIN-INPUT level (dBFS) in the Mode's DetectorLaw (peak: sine peak; rms: peak - 3.01 dB).
 // gainDb = preGainDb - GR(x + preGainDb) [+ colour DF]. Excludes makeup, mix and output.
@@ -29,6 +30,11 @@ void staticGain(const ModeEntry&, const EngineParams&, std::span<const float> xD
 // four abscissae per call, bit-identical to the DSP symbol (E §6.5). FB: Computer::solveFb with FbAffine{0, 1};
 // non-closed-form laws iterate to convergence (<= 6 Newton steps, bisection bracket [0, max(0, x - T + W)]).
 void staticGr(const ModeEntry&, const EngineParams&, std::span<const float> xDetDb, std::span<float> grDb) noexcept;
+// S10 interface revision (X10): the same with CurveOpts. opts.stage2 adds the settled stage 2 after the computer
+// (ModeEntry::staticS2; the identity when it is nullptr), as staticGain does; opts.colour is ignored (a gain term, not
+// GR). With opts.stage2 = false it is the four-argument form, bit for bit (the computer alone).
+void staticGr(const ModeEntry&, const EngineParams&, std::span<const float> xDetDb, std::span<float> grDb,
+              CurveOpts) noexcept;
 float localRatio(const ModeEntry&, const EngineParams&, float xDb) noexcept;   // 1/(1 - d(GR)/dx), central diff +-0.05 dB
 float netGainDb(float gainDb, float makeupEffDb, float mix) noexcept;          // 20*log10(mix*10^((g+mk)/20) + 1 - mix)
 // Input-referred threshold T_in, where the TRANSFER threshold handle and the HISTORY threshold line sit (K1 #9).

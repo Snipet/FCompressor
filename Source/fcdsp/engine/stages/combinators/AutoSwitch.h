@@ -28,6 +28,8 @@
 //             A fresh state (reset, value-initialised: no blend position yet) starts on the selected path at once.
 // grDb is the applied (blended) GR; the telemetry times and status() are those of the path with the larger weight.
 // With the selection constant, AutoSwitch is bit-identical to the running path alone (dsp.dualrelease autoswitch rows).
+// S10 (X10): when A or B takes the FB commit with r^ (Stage.h HasCommitFbRhat, e.g. DualRelease), AutoSwitch takes it
+// too and hands rhat to each running path that does (the other commits as before).
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/core/Simd.h"
@@ -127,6 +129,25 @@ struct AutoSwitch {
         }
     }
 
+    // FB with r^_fb at the committed GR (S10, X10; Stage.h HasCommitFbRhat): commitFb above, each running path
+    // committed with rhat where it takes it.
+    static void commitFb(const Coeffs& c, State& s, simd::f32x4 r, simd::f32x4 rhat) noexcept FCDSP_NONBLOCKING
+        requires (HasCommitFbRhat<A> || HasCommitFbRhat<B>)
+    {
+        const float goal = c.useB ? 1.0f : 0.0f;
+        if (s.wB < 0.0f)
+            s.wB = goal;
+        if (s.wB != 1.0f)                       // A ran this sample
+            commitPath<A>(c.a, s.a, r, rhat);
+        if (s.wB != 0.0f)                       // B ran this sample
+            commitPath<B>(c.b, s.b, r, rhat);
+        if (s.wB != goal)
+        {
+            begin(s);
+            s.wB = advance(s.wB, goal, c.step);
+        }
+    }
+
     static void seed(State& s, simd::f32x4 grDb) noexcept FCDSP_NONBLOCKING
     {
         A::seed(s.a, grDb);
@@ -163,6 +184,16 @@ struct AutoSwitch {
     }
 
 private:
+    template <class P>
+    static void commitPath(const typename P::Coeffs& c, typename P::State& s, simd::f32x4 r, simd::f32x4 rhat) noexcept
+        FCDSP_NONBLOCKING
+    {
+        if constexpr (HasCommitFbRhat<P>)
+            P::commitFb(c, s, r, rhat);
+        else
+            P::commitFb(c, s, r);
+    }
+
     // A switch leaves an end of the blend: the path that was not running starts from the running one's GR.
     static void begin(State& s) noexcept FCDSP_NONBLOCKING
     {

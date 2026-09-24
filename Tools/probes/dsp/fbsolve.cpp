@@ -26,9 +26,11 @@
 //   fbsolve.entry.static_gr.max_err_db            the probe-local ModeEntry's staticGr (topo FB) is the static FB curve
 //   fbsolve.engine.<cfg>.<branch>.max_err_db      ModeEngine<FB traits> through the EngineRig, per sample: the tapped
 //                          GR r[n] against the bisection root of the branch the predictor picks from the tapped
-//                          r[n - 1] and detector level x[n]; held samples (r[n] == r[n - 1] while the release root is
-//                          lower) are counted, and every hold run lasts exactly round(holdMs fs / 1000) samples
-//                          (.hold_runs_wrong)
+//                          r[n - 1] and detector level x[n]; held samples (the engine's hold phase, ControlIo::bits b0-1
+//                          = 2; S10: before, r[n] == r[n - 1] while the release root lay 1e-6 dB lower, which cannot see
+//                          a hold that starts on a carried sub-ulp fall) are counted: every hold run lasts exactly
+//                          round(holdMs fs / 1000) samples (.hold_runs_wrong), the GR does not move while held
+//                          (.hold_moved) and a run starts where the release root lies below the GR (.hold_starts_wrong)
 //   fbsolve.engine.zdf.<cfg>.*                    the same per-sample rows with FeedbackZdf<QuadKnee> as the computer
 //   fbsolve.engine.auto.nonfinite                 TIME MODE AUTO (CrestAuto) in the FB kernel stays finite
 //   fbsolve.stable.<fs>.<ratio>.{ptp_db,settle_err_db,reversals}   a 20 us attack at 4:1, 20:1 and inf:1 (hard knee,
@@ -42,6 +44,27 @@
 //                          inf:1: the engine follows the delayed formula to 1e-5 dB and settles on the ZDF equilibrium)
 //                          and falls back beyond it (20 us at 48 kHz, 4:1: the engine is bit-identical to
 //                          FeedbackZdf's)
+// S10 interface revision (X10; FbAffine::base, SmoothBranching.h "FB sub-ulp carry"):
+//   fbsolve.base.<closed|zdf>.root_err_db   a based solve {A, B, base} (base = a GR up to 50 dB, A = a SmoothBranching
+//                          move lo - c (base + lo), c log-uniform 1e-8 ... 0.3) returns r - base: base + the result
+//                          against the exact root in double (bisection of r = base + A + B r^_fb(x - r), via QuadKnee's
+//                          closed forms in double; .reference_err_db checks those against the bisection) <= 1e-5 dB
+//   fbsolve.base.delayed.step_err_ulp   FeedbackDelayed's based step (explicit; it reads r^ in float at a float sense
+//                          point, as its FZ0 step does) is A + B u(x - (base + A) / (1 - B)) with the solver's float u,
+//                          correctly rounded: <= 0.5 ulp of the result
+//   fbsolve.base.<...>.inc_rel_err   ... and its rounding scales with the increment's terms, not with the GR: |d -
+//                          d_ref| / (|A| + B (1 + k)(|x - T| + |base| + W + 1)) <= 1e-6, d_ref the exact increment (the
+//                          delayed step's formula in double at its float sense point); a NOTE gives the same ratio for
+//                          the FZ0 absolute solve, whose error is an ulp of the GR
+//   fbsolve.base.<...>.zero_base_mismatch   base = 0 is the FZ0 solve, bit for bit (against probe-local copies of the
+//                          FZ0 closed form, Newton and delayed step, op for op)
+//   fbsolve.carry.<fs>.{max_dev_db, span_db, nonfinite}   a 25 s release (4:1, T -30, hard knee) through the probe-
+//                          local FB engine at 48 and 384 kHz: a square at T + 40 (30 dB of GR), then T + 20 for 35 s (the
+//                          loop open while the GR is above 20 dB, then closed towards 15 dB at (1 - c) / (1 + c k) per
+//                          sample). Every sample's tapped GR against the exact discrete FB recurrence in double (QuadKnee's
+//                          closed form on {(1 - c) v, c} at the tapped detector level, from the tapped GR before the
+//                          drop): <= 1e-4 dB, over >= 14 dB of release. A NOTE gives the FZ0 recurrence's deviation (the
+//                          absolute root every sample: the sub-ulp stall this carry removes)
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -212,6 +235,7 @@ namespace
     struct Render
     {
         std::vector<float> gr, det;             // lane 0 per sample: applied GR, detector level
+        std::vector<std::uint8_t> bits;         // ControlIo::bits per sample (b0-1: the phase, 2 = hold)
         std::int64_t nonfinite = 0;
         std::vector<std::size_t> edges;
     };
@@ -241,6 +265,7 @@ namespace
             const std::vector<float> g = rig.tap().lane(rig.tap().grDb, 0), d = rig.tap().lane(rig.tap().detDb, 0);
             out.gr.insert(out.gr.end(), g.begin(), g.end());
             out.det.insert(out.det.end(), d.begin(), d.end());
+            out.bits.insert(out.bits.end(), rig.tap().bits.begin(), rig.tap().bits.end());
             rig.tap().clear();
         }
         for (std::size_t k = 0; k < in.size(); ++k)
@@ -456,13 +481,17 @@ namespace
         const auto n = static_cast<std::int64_t>(simd::lane<0>(bc.n));
 
         double errA = 0.0, errR = 0.0;
-        std::int64_t nA = 0, nR = 0, held = 0, runs = 0, wrongRuns = 0, heldRun = 0;
+        std::int64_t nA = 0, nR = 0, held = 0, runs = 0, wrongRuns = 0, heldRun = 0, heldMoved = 0, badStarts = 0;
         for (std::size_t i = 1; i < run.gr.size(); ++i)
         {
             const double r1 = run.gr[i - 1], r = run.gr[i], x = run.det[i];
             const BranchRoot ref = branchRoot(law, x, r1, cA, cR);
-            if (r == r1 && ref.r < r1 - 1e-6)
+            // held: the engine reports a hold (ControlIo::bits phase 2, Hold::status); the GR must not move, and a run
+            // must start where the release root lies below the GR
+            if ((run.bits[i] & 3u) == 2u)
             {
+                badStarts += heldRun == 0 && !(ref.r < r1) ? 1 : 0;
+                heldMoved += r == r1 ? 0 : 1;
                 ++held;
                 ++heldRun;
                 continue;
@@ -488,6 +517,8 @@ namespace
         {
             P.ge(k + ".hold_runs", static_cast<double>(runs), 1.0);
             P.eq(k + ".hold_runs_wrong", wrongRuns, 0);
+            P.eq(k + ".hold_moved", heldMoved, 0);
+            P.eq(k + ".hold_starts_wrong", badStarts, 0);
         }
         else
             P.eq(k + ".held_samples", held, 0);
@@ -652,6 +683,279 @@ namespace
             P.eq("fbsolve.guard.delayed_22k.nonfinite", a.nonfinite, 0);
         }
     }
+
+    // ---- S10: FbAffine::base and the FB sub-ulp carry ------------------------------------------------------------
+    // The root of r = A + B r^_fb(x - r) for QuadKnee's law in double by the closed forms (the knee region as the map
+    // itself at q = u: no cancellation); baseRows checks it against root()'s bisection.
+    double rootD(const Law& l, double x, double a, double b)
+    {
+        const double o = x - l.t, bb = o + 0.5 * l.w, c = bb - a;
+        if (!(c > 0.0) || !(b > 0.0))
+            return a;
+        const double bk = b * l.k, kappa = bk / (2.0 * l.w);
+        const double u = 2.0 * c / (1.0 + std::sqrt(1.0 + 4.0 * kappa * c));
+        return u <= l.w ? a + kappa * u * u : (a + bk * o) / (1.0 + bk);
+    }
+
+    // The FZ0 closed form (QuadKnee.h before S10), op for op: the pin of the base = 0 path.
+    float closedFz0(float x, const LevelCtl& lc, float aA, float aB)
+    {
+        const simd::f32x4 xv = simd::set1(x);
+        const simd::f32x4 zero = simd::set1(0.0f), one = simd::set1(1.0f);
+        const simd::f32x4 w = simd::max(simd::set1(st::QuadKnee::kMinKneeDb), lc.kneeDb);
+        const simd::f32x4 k = st::QuadKnee::loopGain(lc.slope);
+        const simd::f32x4 A = simd::set1(aA), B = simd::set1(aB);
+        const simd::f32x4 bk = simd::mul(B, k);
+        const simd::f32x4 o = simd::sub(xv, lc.thrDb);
+        const simd::f32x4 b = simd::fma(o, simd::set1(0.5f), w);
+        const simd::f32x4 c = simd::sub(b, A);
+        const simd::f32x4 kappa = simd::div(bk, simd::add(w, w));
+        const simd::f32x4 cPos = simd::max(zero, c);
+        const simd::f32x4 disc = simd::fma(one, simd::mul(simd::set1(4.0f), kappa), cPos);
+        const simd::f32x4 u = simd::div(simd::add(cPos, cPos), simd::add(one, simd::sqrt(disc)));
+        const simd::f32x4 rKnee = simd::sub(b, u);
+        const simd::f32x4 rLin = simd::sub(o, simd::div(simd::sub(o, A), simd::add(one, bk)));
+        const simd::f32x4 r = simd::sel(simd::gt(u, w), rLin, rKnee);
+        const simd::f32x4 root = simd::sel(simd::band(simd::gt(c, zero), simd::gt(B, zero)), r, A);
+        return simd::lane<0>(simd::fma(root, xv, zero));
+    }
+
+    // FeedbackZdf's FZ0 Newton (FeedbackZdf.h before S10), op for op.
+    float zdfFz0(float x, const LevelCtl& lc, float aA, float aB)
+    {
+        using Zdf = st::FeedbackZdf<st::QuadKnee>;
+        const Zdf::Coeffs c{};
+        const LevelCtl fb = st::QuadKnee::fbLevel(lc);
+        const simd::f32x4 xv = simd::set1(x), A = simd::set1(aA), B = simd::set1(aB);
+        const simd::f32x4 zero = simd::set1(0.0f), one = simd::set1(1.0f), half = simd::set1(0.5f);
+        simd::f32x4 lo = A;
+        simd::f32x4 hi = simd::fma(A, B, Zdf::curveFb(c, simd::sub(xv, A), fb));
+        simd::f32x4 r = lo;
+        for (int i = 0; i < Zdf::kNewtonSteps; ++i)
+        {
+            const simd::f32x4 y = simd::sub(xv, r);
+            const simd::f32x4 f = simd::sub(simd::sub(r, A), simd::mul(B, Zdf::curveFb(c, y, fb)));
+            const simd::m32x4 below = simd::ge(zero, f);
+            lo = simd::sel(below, r, lo);
+            hi = simd::sel(below, hi, r);
+            const simd::f32x4 df = simd::fma(one, B, Zdf::slopeFb(c, y, fb));
+            const simd::f32x4 next = simd::sub(r, simd::div(f, df));
+            const simd::m32x4 inside = simd::band(simd::ge(next, lo), simd::ge(hi, next));
+            r = simd::sel(inside, next, simd::mul(half, simd::add(lo, hi)));
+        }
+        return simd::lane<0>(simd::fma(r, xv, zero));
+    }
+
+    void baseRows(Probe& P)
+    {
+        using Zdf = st::FeedbackZdf<st::QuadKnee>;
+        using Del = st::FeedbackDelayed<st::QuadKnee>;
+        fcmp::probe::sig::Pcg32 g(0x5eedfb0au, 0x10u);
+        constexpr int kCases = 20000;
+        constexpr std::array<const char*, 3> kSolvers{ "closed", "zdf", "delayed" };
+        std::array<double, 3> rootErr{}, rel{}, relAbs{};
+        std::array<std::int64_t, 3> zeroMismatch{};
+        double refErr = 0.0;
+        std::int64_t delayedCases = 0;
+        EngineParams dp;
+        dp.atkTauMs = 10.0f;                                   // kLimit ~ 479 at 48 kHz: every loop gain runs delayed
+        Del::Coeffs dc{};
+        Del::design(dc, dp, ctxAt(48000.0f));
+        for (int i = 0; i < kCases; ++i)
+        {
+            const float thr = uniform(g, -60.0f, 0.0f);
+            const float knee = g.bounded(4) == 0 ? 0.0f : uniform(g, 0.0f, 24.0f);
+            const std::uint32_t sPick = g.bounded(10);
+            const float slope = sPick == 0 ? 0.0f : (sPick == 1 ? 1.0f : uniform(g, 0.0f, 1.0f));
+            const float x = uniform(g, thr - 20.0f, thr + 50.0f);
+            const float base = uniform(g, 0.01f, 50.0f);
+            const float c = logUniform(g, 1e-8f, 0.3f);
+            const float ulp = std::nextafter(base, 100.0f) - base;
+            const float lo = (uniform(g, 0.0f, 1.0f) - 0.5f) * ulp;
+            // SmoothBranching's move: lo - c (base + lo), as its solveFb forms it
+            const simd::f32x4 cv = simd::set1(c), lov = simd::set1(lo), bv = simd::set1(base);
+            const float moveA = simd::lane<0>(simd::fms(simd::fms(lov, cv, lov), cv, bv));
+
+            const Law law = lawOf(thr, knee, slope);
+            const LevelCtl l = levelCtl(thr, slope, knee);
+            const simd::f32x4 xv = simd::set1(x);
+            const FbAffine based{ simd::set1(moveA), cv, bv };
+            const double aAbs = static_cast<double>(base) + static_cast<double>(moveA);
+            const double cd = static_cast<double>(c), xd = static_cast<double>(x), bd = static_cast<double>(base);
+            const double wantRoot = rootD(law, xd, aAbs, cd);
+            refErr = std::max(refErr, std::fabs(wantRoot - root(law, xd, aAbs, cd)));
+            const double scale = std::fabs(static_cast<double>(moveA))
+                               + cd * (1.0 + law.k) * (std::fabs(xd - law.t) + bd + law.w + 1.0);
+            // the delayed step's own formula, A + B r^_fb(x - r~) with r~ = (base + A) / (1 - B), at the solver's float
+            // sense point (the FZ0 step's: its rounding is the GR's, B k ulp(r~), and not what base changes)
+            const bool delayed = Del::delayedAt(dc, l, based);
+            delayedCases += delayed ? 1 : 0;
+            const float held = (base + moveA) / (1.0f - c);
+            const double wantDelayed = delayed ? aAbs + cd * rhatFb(law, static_cast<double>(x - held)) : wantRoot;
+            // ... and with the solver's own float r^ there (its rounding, k ulp(x - r~ - T), is the FZ0 step's)
+            const float uF = simd::lane<0>(Zdf::curveFb({}, simd::set1(x - held), st::QuadKnee::fbLevel(l)));
+
+            const std::array<float, 3> got{ simd::lane<0>(st::QuadKnee::solveFb({}, xv, l, based)),
+                                            simd::lane<0>(Zdf::solveFb({}, xv, l, based)),
+                                            simd::lane<0>(Del::solveFb(dc, xv, l, based)) };
+            // the FZ0 way: the absolute root of {base + A, B}, then minus base
+            const float aF = base + moveA;
+            const FbAffine absMap{ simd::set1(aF), cv };
+            const std::array<double, 3> gotAbs{
+                static_cast<double>(simd::lane<0>(st::QuadKnee::solveFb({}, xv, l, absMap))) - bd,
+                static_cast<double>(simd::lane<0>(Zdf::solveFb({}, xv, l, absMap))) - bd,
+                static_cast<double>(simd::lane<0>(Del::solveFb(dc, xv, l, absMap))) - bd };
+            for (std::size_t s = 0; s < kSolvers.size(); ++s)
+            {
+                const double want = s == 2 ? wantDelayed : wantRoot;
+                // closed, zdf: base + d against the exact root (dB). The delayed step is explicit and reads r^ in float
+                // at a float sense point, as its FZ0 step does: d must be A + B u with the solver's float u, correctly
+                // rounded (in ulp of d; its float r^ is the FZ0 step's own rounding, B k ulp(x - r~ - T))
+                if (s == 2)
+                {
+                    const float mag = std::fabs(got[s]);
+                    const double inc = static_cast<double>(moveA) + cd * static_cast<double>(uF);
+                    const double ulpD = static_cast<double>(std::nextafter(mag, 1e30f) - mag);
+                    rootErr[s] = std::max(rootErr[s], std::fabs(static_cast<double>(got[s]) - inc) / ulpD);
+                }
+                else
+                    rootErr[s] = std::max(rootErr[s], std::fabs(bd + static_cast<double>(got[s]) - want));
+                rel[s] = std::max(rel[s], std::fabs(static_cast<double>(got[s]) - (want - bd)) / scale);
+                relAbs[s] = std::max(relAbs[s], std::fabs(gotAbs[s] - (want - bd)) / scale);
+            }
+
+            // base = 0 is the FZ0 solve, bit for bit (the absolute map {A0, c} at a GR r0 = base)
+            const float a0 = simd::lane<0>(simd::fms(bv, cv, bv));
+            const FbAffine abs0{ simd::set1(a0), cv };
+            zeroMismatch[0] +=
+                simd::lane<0>(st::QuadKnee::solveFb({}, xv, l, abs0)) == closedFz0(x, l, a0, c) ? 0 : 1;
+            zeroMismatch[1] += simd::lane<0>(Zdf::solveFb({}, xv, l, abs0)) == zdfFz0(x, l, a0, c) ? 0 : 1;
+            {
+                // FeedbackDelayed's FZ0 step: A + B r^_fb(x - A / (1 - B)) when delayed, else the FZ0 Newton
+                const float held0 = a0 / (1.0f - c);
+                const float fz0 = Del::delayedAt(dc, l, abs0)
+                                      ? simd::lane<0>(simd::fma(simd::set1(a0), cv,
+                                                                Zdf::curveFb({}, simd::set1(x - held0),
+                                                                             st::QuadKnee::fbLevel(l))))
+                                      : zdfFz0(x, l, a0, c);
+                zeroMismatch[2] += simd::lane<0>(Del::solveFb(dc, xv, l, abs0)) == fz0 ? 0 : 1;
+            }
+        }
+        std::printf("NOTE     fbsolve.base: %d case(s) (%lld delayed); closed-form reference vs bisection %.3g dB\n",
+                    kCases, static_cast<long long>(delayedCases), refErr);
+        P.le("fbsolve.base.reference_err_db", refErr, 1e-9);
+        P.eq("fbsolve.base.delayed.cases_delayed", delayedCases, kCases);   // kLimit ~ 479 > 99: every case delayed
+        for (std::size_t s = 0; s < kSolvers.size(); ++s)
+        {
+            const std::string k = std::string("fbsolve.base.") + kSolvers[s];
+            std::printf("NOTE     %s: %s %.3g; increment error / its terms' scale %.3g (the FZ0 absolute solve: "
+                        "%.3g)\n",
+                        k.c_str(), s == 2 ? "step ulp" : "root dB", rootErr[s], rel[s], relAbs[s]);
+            if (s == 2)
+                P.le(k + ".step_err_ulp", rootErr[s], 0.5);
+            else
+                P.le(k + ".root_err_db", rootErr[s], tol::kFbSolveDb);
+            P.le(k + ".inc_rel_err", rel[s], 1e-6);
+            P.eq(k + ".zero_base_mismatch", zeroMismatch[s], 0);
+        }
+    }
+
+    // A 25 s FB release through the probe-local FB engine, against the exact discrete recurrence (file comment).
+    struct CarryRun
+    {
+        double maxDev = 0.0, plainDev = 0.0, from = 0.0, to = 0.0;
+        std::int64_t nonfinite = 0, samples = 0;
+    };
+
+    CarryRun carryRelease(const ModeEntry& entry, float fs)
+    {
+        constexpr float kThr = -30.0f, kSlope = 0.75f, kRelMs = 25000.0f;
+        constexpr std::size_t kBlock = 4096;
+        const EngineParams e = fbParams(kThr, kSlope, 0.0f, 1.0f, kRelMs, 0.0f);
+        const Law law = lawOf(e.thrDb, e.kneeDb, e.slope);
+        const LevelCtl l = levelCtl(e.thrDb, e.slope, e.kneeDb);
+        using B = FbTraits::Ballistics;
+        const B::Coeffs bc = ballistics<B>(e.atkTauMs, e.relTauMs, 0.0f, fs);
+        const simd::f32x4 cA = bc.inner.inner.cA, cR = bc.inner.inner.cR;
+        const double c = static_cast<double>(simd::lane<0>(cR));
+
+        const auto edge = static_cast<std::int64_t>(0.3 * static_cast<double>(fs) + 0.5);
+        const std::int64_t total = edge + static_cast<std::int64_t>(35.0 * static_cast<double>(fs) + 0.5);
+        const auto aHi = static_cast<float>(fcmp::probe::measure::amplitudeFromDb(kThr + 40.0));
+        const auto aLo = static_cast<float>(fcmp::probe::measure::amplitudeFromDb(kThr + 20.0));
+        const std::int64_t half =
+            std::max<std::int64_t>(1, static_cast<std::int64_t>(static_cast<double>(fs) / 2000.0));   // ~1 kHz
+
+        fcmp::probe::EngineRig rig(entry, e, fs);
+        rig.setTapping(true);
+        std::vector<float> in(kBlock), yl(kBlock), yr(kBlock);
+        CarryRun out;
+        double v = 0.0;                                      // the exact recurrence
+        float plain = 0.0f;                                  // the FZ0 recurrence: the absolute root every sample
+        for (std::int64_t off = 0; off < total; off += static_cast<std::int64_t>(kBlock))
+        {
+            const auto m = static_cast<std::size_t>(
+                std::min<std::int64_t>(static_cast<std::int64_t>(kBlock), total - off));
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                const std::int64_t i = off + static_cast<std::int64_t>(k);
+                const float a = i < edge ? aHi : aLo;
+                in[k] = (i / half) % 2 == 0 ? a : -a;
+            }
+            rig.process(in.data(), in.data(), yl.data(), yr.data(), m);
+            const fcmp::probe::RigTap& tap = rig.tap();
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                const std::int64_t i = off + static_cast<std::int64_t>(k);
+                out.nonfinite += (std::isfinite(yl[k]) ? 0 : 1) + (std::isfinite(yr[k]) ? 0 : 1);
+                const float gr = simd::lane<0>(tap.grDb[k]), x = simd::lane<0>(tap.detDb[k]);
+                if (i == edge - 1)
+                {
+                    v = static_cast<double>(gr);
+                    plain = gr;
+                    out.from = v;
+                }
+                else if (i >= edge)
+                {
+                    v = rootD(law, static_cast<double>(x), (1.0 - c) * v, c);
+                    const simd::f32x4 xv = simd::set1(x), pv = simd::set1(plain);
+                    const FbAffine mapA{ simd::fms(pv, cA, pv), cA }, mapR{ simd::fms(pv, cR, pv), cR };
+                    const float rA = simd::lane<0>(st::QuadKnee::solveFb({}, xv, l, mapA));
+                    const float rR = simd::lane<0>(st::QuadKnee::solveFb({}, xv, l, mapR));
+                    plain = rA > plain ? rA : rR;
+                    out.maxDev = std::max(out.maxDev, std::fabs(static_cast<double>(gr) - v));
+                    out.plainDev = std::max(out.plainDev, std::fabs(static_cast<double>(plain) - v));
+                    out.to = static_cast<double>(gr);
+                    ++out.samples;
+                }
+            }
+            rig.tap().clear();
+        }
+        return out;
+    }
+
+    void carryRows(Probe& P)
+    {
+        struct Run
+        {
+            const char* key;
+            const ModeEntry* entry;
+            float fs;
+        };
+        for (const Run& r : { Run{ "fbsolve.carry.48000", &kFbEntry, 48000.0f },
+                              Run{ "fbsolve.carry.384000", &kFbEntry, 384000.0f },
+                              Run{ "fbsolve.carry.zdf.48000", &kFbZdfEntry, 48000.0f } })
+        {
+            const CarryRun c = carryRelease(*r.entry, r.fs);
+            const std::string k = r.key;
+            std::printf("NOTE     %s: 25 s release %.6g -> %.6g dB over %lld samples; max %.3g dB from the exact "
+                        "recurrence (the FZ0 absolute-root recurrence: %.3g dB)\n",
+                        k.c_str(), c.from, c.to, static_cast<long long>(c.samples), c.maxDev, c.plainDev);
+            P.le(k + ".max_dev_db", c.maxDev, 1e-4);
+            P.ge(k + ".span_db", c.from - c.to, 14.0);
+            P.eq(k + ".nonfinite", c.nonfinite, 0);
+        }
+    }
 } // namespace
 
 FCMP_PROBE(dsp, fbsolve)
@@ -662,5 +966,7 @@ FCMP_PROBE(dsp, fbsolve)
     engineRows(P);
     stabilityRows(P);
     guardRows(P);
+    baseRows(P);
+    carryRows(P);
     return P.finish();
 }
