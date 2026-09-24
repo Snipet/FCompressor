@@ -9,7 +9,7 @@ SPRINTS beats 03 §4.9 on scheduling and ownership only.
 ## Who you are
 
 - **Lead**: the user's main session. Only the lead commits, merges, tags, blesses goldens, bumps the FunkGui pin,
-  installs, and touches the main checkouts (`/Users/seanfunk/audio/plugins/FCompressor`,
+  installs, pushes, opens and merges GitHub PRs (`Snipet/FCompressor`, `Snipet/FunkGui`), and touches the main checkouts (`/Users/seanfunk/audio/plugins/FCompressor`,
   `/Users/seanfunk/audio/libraries/FunkGui`).
 - **Agent**: one card of `docs/sprints/s<N>.md` (your manifest: TASK, OWNS, FROZEN, FUNKGUI, DONE). At most 3 agents
   run at once across both repositories. Read your manifest and the sections it cites before writing anything.

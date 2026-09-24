@@ -199,6 +199,16 @@ chain                            F6 ──────────┴───�
 12. **Carry-over**: an unfinished card keeps its worktree and OWNS in S<N+1>; the lead displaces the lowest-priority
     card of S<N+1> (never a card on the §2.2 chain) and updates §1.
 
+### 3.2a GitHub PRs (from Sprint 7; user instruction 2026-09-24)
+
+Both repositories have a private GitHub `origin` (`Snipet/FCompressor`, `Snipet/FunkGui`). At each sprint end the lead
+pushes every card branch `s<N>/<code>` and opens one PR per card into `main` (body = the handoff summary + the lead's
+rulings), then does the §3.2 integration on a branch `s<N>/lead` (card merges `--no-ff`, lead fixes, pin bump, goldens,
+outcome), pushes it and opens the **Sprint N integration** PR. After the integration verify is green the lead merges
+that PR with a merge commit (`gh pr merge --merge`, never squash/rebase — pinned SHAs and history must survive); the card
+PRs then show as merged. The lead pulls `main`, tags (`fcmp-s<N>`; FunkGui `v0.x.0` on the merged commit) and pushes
+tags. FunkGui goes first so FCompressor can pin the merged, tagged commit. Agents never push.
+
 ### 3.3 FunkGui fixes between G cards
 
 A FunkGui bug found by an FCompressor card goes into its handoff. If the fix is small, the lead makes it on FunkGui
