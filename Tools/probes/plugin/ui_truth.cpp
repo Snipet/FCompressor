@@ -32,6 +32,21 @@
 //   truth.curve.overlay_px      TRANSFER_CURVE lies on staticGain over resolve(raw) + overlaySmoothed(frame) <= 0.5 px
 //                               (K1 #7, K2 #24: never from UiFrame alone)
 //   truth.threshold.px          THRESHOLD_MARK at y(T_in) of that EngineParams <= 0.5 px
+// Characteristics rows (U3, S9; 03 §3.6 "the CONTROL PATH internal0 lane's newest point, and READOUTS rows 11–18, equal
+// UiFrame.internals[i] through their declared ranges"): at the end of the same run the Panel switches to chars.sidechain
+// (instant) and draws one more frame; no audio is rendered in between, so the feed is still fresh and the frame the same.
+//   truth.chars.live            the Characteristics screen is shown and the feed still live
+//   truth.cp.applied_db         CONTROL PATH's newest column (CP_APPLIED area, through CP_AXIS) equals the tap's max GR
+//                               over that plot column's samples (the louder lane) <= 0.1 dB
+//   truth.cp.min_db             its grMinDb line equals the tap's min over those samples of the louder lane's GR <= 0.1 dB
+//   truth.cp.target_db          CP_TARGET's newest column equals the tap's max target GR over those samples <= 0.1 dB
+//   truth.cp.hist_aligned       CONTROL PATH's column edges are HISTORY's (HIST_GR's segment edges)
+//   truth.cp.internal_px        the internal lane's newest point equals UiFrame.internals[h] (h: the history-flagged
+//                               internal) through its declared lo…hi, <= 0.5 px of the lane
+//   truth.readouts.internal.<i> READOUTS row 11+i prints UiFrame.internals[i] with its declared decimals and unit (a11y
+//                               row = the text drawn), for every declared internal
+//   truth.readouts.{det,target,applied}  rows 1, 3, 4: the operating dot's x (the 10 ms envelope), the target dot's GR
+//                               and the frame's applied GR, of the lane with the larger GR, 1 decimal
 // History store rows (a FakeFacade with scripted frames and columns; 01 §6.3, 02 §6.5, §9.6):
 //   history.lap.*               a lap (5000 columns between two drains) leaves exactly one gap marker, drawn as GAP, and
 //                               every trace breaks there (never interpolated)
@@ -42,7 +57,8 @@
 //   history.span.click          a click on the 10 S cell sets the preference and the span (UiPreferences, sandboxed)
 //
 // Visual inspection (not a test): probe-own flags after "--":  -- --png <end.png> [--png-mid <mid.png>] [--dump <x>]
-// write the last frame (and the frame 2.0 s in, mid-bursts) at dpi 2.
+// [--png-chars <chars.png>] write the last frame (and the frame 2.0 s in, mid-bursts; and the Characteristics screen at
+// the end) at dpi 2.
 //
 // The probe writes UiPreferences (the span click): it refuses to run without FCMP_PREFS_DIR (CTest sets a sandbox).
 #include "ProbeRegistry.h"
@@ -65,6 +81,7 @@
 #include <funkgui/canvas/Axis.h>
 #include <funkgui/canvas/Prim.h>
 #include <funkgui/canvas/PrimList.h>
+#include <funkgui/core/Format.h>
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
@@ -150,7 +167,7 @@ namespace
 
     struct Flags
     {
-        std::string png, pngMid, dump;
+        std::string png, pngMid, dump, pngChars;
     };
 
     Flags flags()
@@ -175,6 +192,8 @@ namespace
                 f.pngMid = argv[++i];
             else if (a == "--dump")
                 f.dump = argv[++i];
+            else if (a == "--png-chars")
+                f.pngChars = argv[++i];
         }
         return f;
     }
@@ -453,6 +472,119 @@ namespace
         writePng(P, host, fl.png);
         if (!fl.dump.empty() && (!makeParent(fl.dump) || !host.writeDump(fl.dump.c_str())))
             P.harnessError("ui.truth: cannot write " + fl.dump);
+
+        // ---- the Characteristics screen over the same run (U3, S9): CONTROL PATH and READOUTS ------------------------
+        const ui::ViewSpec* chars = ui::findView("chars.sidechain");
+        if (chars == nullptr)
+        {
+            P.harnessError("ui.truth: no chars.sidechain view");
+            return;
+        }
+        panel.setView(*chars, true);
+        host.tick(1, kDt);                                        // no audio in between: the same frame, still fresh
+        const funkgui::PrimList& cl = host.draw();
+        P.eq("truth.chars.live", panel.screen() == ui::Screen::characteristics && f.live ? 1 : 0, 1);
+        const funkgui::AxisRec* cpAx = axisOf(cl, ui::tag::cpAxis);
+        if (cpAx == nullptr || !cpAx->hasY)
+        {
+            P.harnessError("ui.truth: no CP_AXIS on the Characteristics screen");
+            return;
+        }
+        {
+            // The newest plot column (HISTORY's rule, W = span / 210 ms on this screen): the partial one when it holds an
+            // entry, else the last complete one; its value is the strip's last sample, at the plot's right edge.
+            const layout::ControlPathGeom& cg = layout::kControlPath;
+            const double w = static_cast<double>(ctx.historySpanTenths) * 100.0 / static_cast<double>(cg.columns);
+            const double k = std::floor(static_cast<double>(count) / w);
+            auto c0 = static_cast<uint64_t>(std::ceil(k * w));
+            uint64_t c1 = count;
+            if (c0 >= c1)
+            {
+                c1 = c0;
+                c0 = static_cast<uint64_t>(std::ceil((k - 1.0) * w));
+            }
+            float grMax = 0.0f, grMin = 1.0e9f, tgtMax = 0.0f;
+            for (uint64_t n = c0 * 48; n < c1 * 48 && n <= last; ++n)
+            {
+                const float g = maxLane(facade.tapGr(n, 0), facade.tapGr(n, 1));
+                grMax = std::max(grMax, g);
+                grMin = std::min(grMin, g);
+                tgtMax = std::max(tgtMax, maxLane(facade.tapTgt(n, 0), facade.tapTgt(n, 1)));
+            }
+            const auto newest = [&](funkgui::Tag t, bool clearFill) {
+                float v = -1.0e9f;
+                for (const funkgui::Prim* p : tagged(cl, t))
+                    if (const Col c = colOf(*p); std::fabs(c.x1 - cg.plot.right()) < 0.01f && ((p->c0 >> 24) == 0) == clearFill)
+                        v = toValue(cpAx->y, c.bot1);
+                return v;
+            };
+            const float app = newest(ui::tag::cpApplied, false), mn = newest(ui::tag::cpApplied, true);
+            const float tg0 = newest(ui::tag::cpTarget, true);
+            P.le("truth.cp.applied_db", app < -1.0e8f ? 99.0 : std::fabs(app - grMax), 0.1);
+            P.le("truth.cp.min_db", mn < -1.0e8f ? 99.0 : std::fabs(mn - grMin), 0.1);
+            P.le("truth.cp.target_db", tg0 < -1.0e8f ? 99.0 : std::fabs(tg0 - tgtMax), 0.1);
+            std::printf("NOTE     ui.truth: CONTROL PATH newest column [%llu, %llu) ms: applied %.3f (tap %.3f), min %.3f "
+                        "(tap %.3f), target %.3f (tap %.3f) dB\n", static_cast<unsigned long long>(c0),
+                        static_cast<unsigned long long>(c1), static_cast<double>(app), static_cast<double>(grMax),
+                        static_cast<double>(mn), static_cast<double>(grMin), static_cast<double>(tg0),
+                        static_cast<double>(tgtMax));
+
+            std::vector<float> cpEdges, histEdges;
+            for (const funkgui::Prim* p : tagged(cl, ui::tag::cpTarget))
+                cpEdges.push_back(p->x0);
+            for (const funkgui::Prim* p : tagged(cl, ui::tag::histGr))
+                histEdges.push_back(p->x0);
+            P.eq("truth.cp.hist_aligned", !cpEdges.empty() && cpEdges == histEdges ? 1 : 0, 1);
+        }
+
+        // The history internal's newest point, and READOUTS rows 11–18, against UiFrame.internals.
+        const std::vector<funkgui::A11yItem> items = host.accessibility();
+        const uint32_t rbase = ui::plotIdBase(ui::ViewIndex::charScreen, 3);
+        const auto rowValue = [&](std::size_t row) -> std::string {  // 0-based row
+            for (const funkgui::A11yItem& it : items)
+                if (it.id == rbase + 2 + static_cast<uint32_t>(row) && it.visible)
+                    return it.value;
+            return "<no row>";
+        };
+        const auto text = [](float v, int dp, const char* unit) {
+            char b[40];
+            if (funkgui::fmt::db(v, std::clamp(dp, 0, 6), b, sizeof b) < 0)
+                return std::string("\xE2\x80\x93");
+            std::string s = b;
+            if (unit != nullptr && unit[0] != '\0' && std::isfinite(v))
+                s += std::string(" ") + unit;
+            return s;
+        };
+        for (std::size_t i = 0; i < desc.internals.size() && i < 8; ++i)
+        {
+            const fcdsp::InternalSpec& in = desc.internals[i];
+            const std::string want = text(f.ui.internals[i], in.decimals, in.unit);
+            const std::string got = rowValue(layout::readouts::kFirstInternalRow + i);
+            P.eq("truth.readouts.internal." + std::to_string(i), got == want ? 1 : 0, 1);
+            if (got != want)
+                std::printf("NOTE     ui.truth: READOUTS %s: '%s', want '%s'\n", in.name, got.c_str(), want.c_str());
+            if (!in.history)
+                continue;
+            const funkgui::Rect& il = layout::kControlPath.internalLane;
+            float y = -1.0f, xMax = -1.0f;
+            for (const funkgui::Prim* p : tagged(cl, ui::tag::cpInternal))
+                if (const Col c = colOf(*p); p->d2[2] > 2.5f && c.x1 > xMax)   // AREA prims (text is its label)
+                {
+                    xMax = c.x1;
+                    y = c.top1;
+                }
+            const float v = std::clamp((f.ui.internals[i] - in.lo) / (in.hi - in.lo), 0.0f, 1.0f);
+            P.le("truth.cp.internal_px", y < 0.0f ? 99.0 : std::fabs(y - (il.bottom() - v * il.h)), 0.5);
+            std::printf("NOTE     ui.truth: history internal %s: frame %.4f, newest point %.3f px from the frame's\n",
+                        in.name, static_cast<double>(f.ui.internals[i]),
+                        y < 0.0f ? 99.0 : static_cast<double>(y - (il.bottom() - v * il.h)));
+        }
+        P.eq("truth.readouts.det", rowValue(0) == text(cx, 1, nullptr) ? 1 : 0, 1);
+        P.eq("truth.readouts.target", rowValue(2) == text(std::max(tgt, 0.0f), 1, nullptr) ? 1 : 0, 1);
+        P.eq("truth.readouts.applied", rowValue(3) == text(gr, 1, nullptr) ? 1 : 0, 1);
+        std::printf("NOTE     ui.truth: READOUTS DET '%s' TARGET '%s' APPLIED '%s'\n", rowValue(0).c_str(),
+                    rowValue(2).c_str(), rowValue(3).c_str());
+        writePng(P, host, fl.pngChars);
     }
 
     // ---- HistoryStore and HISTORY over scripted columns -------------------------------------------------------------------

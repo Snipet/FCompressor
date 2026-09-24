@@ -1,11 +1,13 @@
 // Source/editor/views/CharScreen.cpp — the Characteristics screen's composition (see CharScreen.h): nine plots at
 // their Layout.h geometries and the SC|COLOUR tab cells, every SubView call dispatched. U1a writes the composition
-// complete; the plots are U2's, U3's and U4's.
+// complete; the plots are U2's, U3's and U4's. U3 (S9) adds the SC meter's "–" while no external key is active.
 #include "editor/views/CharScreen.h"
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
 #include "editor/Tags.h"
+
+#include "fcdsp/telemetry/UiFrame.h"
 
 #include <funkgui/canvas/Canvas.h>
 #include <funkgui/canvas/Tags.h>
@@ -23,6 +25,8 @@ namespace fcmp::ui
     {
         constexpr int kHistory = 0, kTransfer = 1, kSidechain = 7, kColour = 8;
         constexpr std::size_t kMaxStops = 256;
+        constexpr const char* kScDash = "\xE2\x80\x93";            // U+2013: the SC meter without an external key
+        constexpr float kScDashDy = 8.0f;                          // its centre, above the bar's floor
 
         void outline(funkgui::Canvas& c, const funkgui::Rect& r, funkgui::Col col)
         {
@@ -108,6 +112,18 @@ namespace fcmp::ui
         for (int k = 0; k < kPlots; ++k)
             if (plotShown(k))
                 plots_[static_cast<std::size_t>(k)]->draw(c, th);
+        // 02 §7.3 METERS: "SC = scPeakDb while kUiExtKeyActive, else –". MeterColumn draws the bar while the frame says
+        // an external key is active; otherwise the bar stays empty and this names it n/a (ink16, at the bar's floor).
+        const FrameState& f = ctx_.frame;
+        if (!(f.fresh && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0))
+            for (int i = 0; i < layout::kCharsMeters.nBars; ++i)
+                if (const layout::MeterGeom::Bar& b = layout::kCharsMeters.bars[static_cast<std::size_t>(i)];
+                    b.what == layout::MeterBar::sc)
+                {
+                    const funkgui::Canvas::Scope scope(c, tag::meterSc, true);
+                    c.text(kScDash, b.r.centreX(), c.capCentreTop(b.r.bottom() - kScDashDy, funkgui::type::kMicro),
+                           funkgui::type::kMicro, th.ink16, funkgui::Align::centre);
+                }
         // The SC|COLOUR tab cells (02 §7.3: kCaption, text style, tab-pinned): active ink70, rest ink32.
         const funkgui::Canvas::Scope scope(c, tag::tab, false);
         for (std::size_t i = 0; i < kTabs.size(); ++i)
