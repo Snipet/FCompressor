@@ -19,7 +19,7 @@ struct UiState {                                   // <UI charExpanded="0|1" scT
     ScTab scTab = ScTab::sidechain;
 };
 struct StateNotice {                               // footer notices after a state load (01 §9.1)
-    uint32_t serial = 0;                           // bumps on every setStateInformation
+    uint32_t serial = 0;                           // bumps on every accepted state load (a non-<PARAMS> blob is ignored)
     bool     newerSession = false;                 // stateVersion > kStateVersion
     bool     modeMigrated = false;                 // modeId unknown or retired → successor or clean
     bool     modeRevised  = false;                 // saved modeRev < the Mode's current revision (K2 #10)

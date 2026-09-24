@@ -16,7 +16,8 @@
 //          }
 //      and list it in kMigrations;
 //   3. add a released v1 fixture for it to tests/fixtures/state/ (write-once, from the shipped build; proc.fixtures).
-// A migration never touches the stateVersion/modeId/modeRev attributes (loadState reads them before it migrates) and
+// A migration never touches the stateVersion/modeId/modeRev attributes (loadState reads stateVersion before it migrates
+// and modeId/modeRev after) and
 // never throws: a tree it does not recognise is left as it is.
 #include "plugin/State.h"
 
