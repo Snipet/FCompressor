@@ -512,3 +512,5 @@ on generic traits) fit `ParamSpec`/`ModeDescriptor` with **no declaration change
   40 %); a fix links the gain-computer term inside the affine map (a coupled solve) — M6 decides.
 - **Mu 67** `AC THRESH` reads 0–10 with 10 = no compression (not inverted); 01 §10.2's matrix cell is corrected.
 - **G5:** `WordModel : ToggleModel` with `visible()` accepted for AUTO/EXT/LISTEN words; RuleSlider API additions accepted.
+
+- **Q6 answered by the user (2026-09-24): v1 ships arm64-only; Rosetta skipped.** The `universal` preset stays a compile gate; `release.sh` builds, signs and notarises arm64 only. Intel is a post-v1 backlog item.
