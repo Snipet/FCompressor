@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=dsp.null  scope=modes/brickwall
+# key	value	tolerance
+null.eco.thd_db	-156.718737	abs:0.5

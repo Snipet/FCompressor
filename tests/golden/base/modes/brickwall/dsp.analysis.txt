@@ -1,0 +1,19 @@
+# funkgui-golden 2  probe=dsp.analysis  scope=modes/brickwall
+# key	value	tolerance
+analysis.sc.def.f20_db	0	abs:0.01
+analysis.sc.def.f100_db	0	abs:0.01
+analysis.sc.def.f1000_db	0	abs:0.01
+analysis.sc.def.f10000_db	0	abs:0.01
+analysis.harm.clean.h2_db	-120	abs:0.5
+analysis.harm.clean.h3_db	-120	abs:0.5
+analysis.harm.clean.thd_db	-120	abs:0.5
+analysis.harm.loud.h2_db	-120	abs:0.5
+analysis.harm.loud.h3_db	-19.1397362	abs:0.5
+analysis.harm.loud.thd_db	-19.1397362	abs:0.5
+analysis.gain.x-10_db	0	abs:0.001
+analysis.gain.x0_db	-1.24999988e-05	abs:0.001
+analysis.gain.x10_db	-10	abs:0.001
+analysis.gain.x20_db	-20	abs:0.001
+analysis.invratio.x20	1.90734136e-05	abs:0.0001
+analysis.step.attack_s	1.31691786e-05	rel:0.01
+analysis.step.release_s	0.0500415936	rel:0.01

@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.print  scope=modes/brickwall
+# key	value	tolerance
+print.default.l.hash	7098268aaec8cfb9	exact
+print.default.r.hash	9e995721fdde534f	exact
+print.lo.l.hash	907998d019f4f662	exact
+print.lo.r.hash	cb4496e493361260	exact
+print.hi.l.hash	6a27592d6ae5fa66	exact
+print.hi.r.hash	434dac111824d710	exact
+print.mid.l.hash	df399b57495481da	exact
+print.mid.r.hash	3b09a3242ac10d4f	exact
