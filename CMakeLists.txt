@@ -69,6 +69,8 @@ include(FcmpSources)    # the glob -> target map (FCMP_*_SOURCES), BuildInfo.cpp
 
 # fcdsp: the JUCE-free engine (01 §2.1). The generated BuildInfo.cpp keeps it non-empty before any fcdsp .cpp exists.
 add_library(fcdsp STATIC ${FCMP_DSP_SOURCES})
+# Hidden, so a plugin binary exports only its entry points (K2 #26f; release.sh checks nm -gU; found by R1's dry run).
+set_target_properties(fcdsp PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 target_link_libraries(fcdsp PUBLIC fcmp_flags PRIVATE fcmp_warnings fcmp_lto)
 target_include_directories(fcdsp PUBLIC ${PROJECT_SOURCE_DIR}/Source)
 
