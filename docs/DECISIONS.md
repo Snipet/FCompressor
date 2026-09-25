@@ -531,3 +531,17 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
 - **ADR-70 GAIN REDUCTION readout = peak hold + live bar (user decision).** The big readout shows the maximum GR over the
   last 1 s (holds, then falls), refreshed at ≈ 4 Hz, with a thin live GR bar beside it (card UF1a). The THRESHOLD slot's
   DET readout uses the operating dot's 10 ms rule (no jitter).
+- **ADR-68a Zoom steps that do not fit (lead, from G7c).** FunkGui draws a zoom whose window exceeds the user area of
+  the editor's display at the largest step that fits. On the user's MacBook (user area 1470 × 849 pt) only 100 % and
+  125 % fit FCompressor's 960 × 640 panel. A silent fallback would read as a broken button, so FunkGui v0.8.0 adds
+  `HostServices::zoomFits()`. The ZOOM cells draw a step that does not fit as unavailable, with a footer hint, and a
+  click on it does nothing (UF1b).
+
+## HardwareReverb migration
+
+- **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
+  `preset.attributes` column, which FCompressor needs for `modeId`/`modeRev`, with `schema_min_reader` still 1, so
+  older builds keep reading and writing the file. Moving HR's presets onto it (migration phase 2) changes HR's
+  `schema.user_version` golden from 1 to 2, and the "newer build" fixtures move to 3. This is a deliberate, versioned
+  and backward-compatible format change, not a regression. It is the one approved exception to the gate's "never edit
+  HR's expectations" rule. Every other preset golden must hold unedited.

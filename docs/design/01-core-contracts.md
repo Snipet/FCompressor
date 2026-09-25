@@ -2139,6 +2139,18 @@ Their descriptors are written **in full** by the descriptor-wave task DW (03 §4
 `provisional = true`, so the schema is proven on all eight Modes before it freezes at FZ3 (K3 #9); the Mode tasks M1–M7
 then replace the traits and fit the [H] constants. Each lives in `Source/fcdsp/modes/<key>/`. [H] values are placeholders.
 
+**As built (S10–S11 revision).** The sketches below were the DW starting point. For the final traits and fitted
+constants, the Mode sheets `docs/modes/<key>.md` are authoritative. The main differences:
+
+- **Mu 67.** `ProgressiveKnee` carries its own safeguarded Newton (`solveFb`), so the Mode does not instantiate
+  `FeedbackZdf<ProgressiveKnee>`; that remains a valid wrapper. The knee and TC constants were refitted, and AC THRESH
+  is not inverted.
+- **Bus 25.** The detector is `bus25::RmsCatch` (an RMS window of the release / 50, with a 20 dB jump catch), not
+  `RmsLog`. The OLD link is solved inside the FB loop (`bus25::CvSumBranching`, the ADR-67 fix), not after the
+  per-lane solve.
+- **Brickwall.** `D_tp` = 12 samples. LOUD adds 2.25 dB of makeup. The STD ceiling spec is judged on a music program;
+  the 2× IIR round trip adds the overshoot.
+
 **Mu 67 (slot 4, `mu-67`)** follows D §2.3 and E §2.7. Its traits are `ProgressiveKnee` inside `FeedbackZdf`, with `TcSelector` ballistics.
 
 ```cpp
