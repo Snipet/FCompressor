@@ -514,3 +514,20 @@ on generic traits) fit `ParamSpec`/`ModeDescriptor` with **no declaration change
 - **G5:** `WordModel : ToggleModel` with `visible()` accepted for AUTO/EXT/LISTEN words; RuleSlider API additions accepted.
 
 - **Q6 answered by the user (2026-09-24): v1 ships arm64-only; Rosetta skipped.** The `universal` preset stays a compile gate; `release.sh` builds, signs and notarises arm64 only. Intel is a post-v1 backlog item.
+
+## Ableton test feedback (user, 2026-09-24)
+
+The user tested the Sprint 10 build in Ableton Live ("worked and functioned incredibly well") and reported three issues:
+
+- **ADR-68 UI zoom (user decision).** Text at 10–11 px was too small. A machine-wide zoom preference 100 / 125 / 150 /
+  175 % (default **125 %**) scales the whole panel uniformly — window size, render density, input and accessibility
+  coordinates — with the layout unchanged (logical 960×640). Revises ADR-06's "one `setSize`": the editor resizes when
+  the zoom changes. FunkGui `EditorHost` gains the zoom (card G7c → v0.8.0); FCompressor adds ZOOM cells beside THEME in
+  the footer (card UF1b). Headless fingerprints stay in logical coordinates; `gui-live` runs at a pinned zoom.
+- **ADR-69 No "disabled" look when audio stops (user report).** When the host stops calling `processBlock`, telemetry
+  goes stale and the panel dimmed live content, which read as disabled/frozen. From now on: controls, labels and chrome
+  are never dimmed by staleness; HISTORY keeps scrolling (silence / gap) at wall-clock rate; meters and live readouts
+  fall to zero; the operating dot fades; the UI runs at full frame rate while the user interacts (card UF1a).
+- **ADR-70 GAIN REDUCTION readout = peak hold + live bar (user decision).** The big readout shows the maximum GR over the
+  last 1 s (holds, then falls), refreshed at ≈ 4 Hz, with a thin live GR bar beside it (card UF1a). The THRESHOLD slot's
+  DET readout uses the operating dot's 10 ms rule (no jitter).
