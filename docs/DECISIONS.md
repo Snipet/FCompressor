@@ -553,6 +553,19 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     mass-spring with ζ 0.8127 and ω0 13.51 rad/s: 99 % in 300 ms, 1.25 % overshoot. It is drawn on a display clock
     40 ms behind the newest audio, so host blocks never make it step.
 
+- **ADR-73 PAPER contrast (user request, 2026-09-25).** The user asked for the white theme's contrast to be
+  "majorly increased". FunkGui's `Theme::paper()` is HR's palette and stays as it is, since HR's goldens hold it.
+  FCompressor draws with its **own** high-contrast PAPER instead: the Panel maps `themeIndex()` 1 to a product palette
+  (`Source/editor`), and FunkGui changes nothing. The ground (the clear colour) stays `EDEBE6`, so EditorHost's clear
+  and fallback screen still match. GRAPHITE is unchanged.
+  - Measured on the old PAPER (WCAG ratio against the ground, with GRAPHITE's in brackets): ink70 5.47 (9.00), ink52
+    3.76 (5.45), ink32 1.84 (2.66), ink16 1.27 (1.50), accent 3.33 (5.75), accentDim 1.42 (2.10), signal 3.93 (10.66).
+    Every level was weaker than GRAPHITE's.
+  - **Targets for the new PAPER (spec rows):** ink100 ≥ 15, ink70 ≥ 9, ink52 ≥ 6, ink32 ≥ 3.5, ink16 ≥ 1.8, accent
+    ≥ 4.5, accentDim ≥ 2.2, signal ≥ 5.5. The ladder stays strictly ordered (ink100 > ink70 > ink52 > ink32 > ink16).
+    `textGamma` is re-tuned so thin dark text does not read lighter than its ink.
+  - Card H1a (S13), first deliverable. It adds a `ui.contrast` probe and PAPER PNGs of every view.
+
 ## HardwareReverb migration
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
