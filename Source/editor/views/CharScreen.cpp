@@ -6,6 +6,7 @@
 #include "editor/Layout.h"
 #include "editor/Panel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/telemetry/UiFrame.h"
 
@@ -115,7 +116,7 @@ namespace fcmp::ui
         // 02 §7.3 METERS: "SC = scPeakDb while kUiExtKeyActive, else –". MeterColumn draws the bar while the frame says
         // an external key is active; otherwise the bar stays empty and this names it n/a (ink16, at the bar's floor).
         const FrameState& f = ctx_.frame;
-        if (!(f.fresh && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0))
+        if (!(telemetry::feed(ctx_) != telemetry::Feed::none && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0))
             for (int i = 0; i < layout::kCharsMeters.nBars; ++i)
                 if (const layout::MeterGeom::Bar& b = layout::kCharsMeters.bars[static_cast<std::size_t>(i)];
                     b.what == layout::MeterBar::sc)

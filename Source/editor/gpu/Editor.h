@@ -2,7 +2,7 @@
 // Source/plugin/CreateEditorGpu.cpp constructs it, and cmake/FcmpSources.cmake compiles Source/editor/gpu/ into the GPU
 // plugin alone (never into fcmp_probe_plugin, which runs the same Panel headless).
 //
-// fcmp::ui::Editor is a funkgui::EditorHost (FunkGui v0.7.0) running one fcmp::ui::Panel:
+// fcmp::ui::Editor is a funkgui::EditorHost (FunkGui v0.7.1) running one fcmp::ui::Panel:
 // - Size: 960 × 640 logical px (layout::kWidth/kHeight). EditorHost calls setResizable(false, false) and then setSize()
 //   exactly once, in its constructor; nothing here calls setSize again (02 §6.1; K1 #34).
 // - Ownership: EditorHost owns the Panel (its unique_ptr); this class keeps a typed reference for the teardown. The
@@ -10,13 +10,9 @@
 // - Teardown (02 §5.1 teardown rule; K2 #27): ~Editor() calls Panel::shutdown() — the PreviewWorker stops first, then
 //   the open gestures close — before ~EditorHost runs (which closes gestures again, a no-op by then, then drops the
 //   telemetry attach, leaves the FramePump and detaches the surface).
-// - Placement: EditorHost re-places its render view when the editor itself moves (Component::moved) or changes peer,
-//   but not when an ANCESTOR moves inside the same peer. JUCE's Standalone window does exactly that after the view is
-//   attached (the content component with the editor is laid out under the title bar and the "input muted" bar), which
-//   left the Metal view 27 px too high over the notification bar and a blank strip under it. An AncestorWatcher
-//   (juce::ComponentMovementWatcher) calls moved() whenever the editor's position in its top-level window changes, so
-//   the view follows. Plug-in wrappers keep the editor at the origin of its own peer and never trigger it. (A FunkGui
-//   EditorHost gap, reported with U7's handoff; this is the product-side workaround until EditorHost tracks it.)
+// - Placement: FunkGui v0.7.1's EditorHost keeps its render view on the editor when an ANCESTOR moves inside the same
+//   window (JUCE's Standalone lays its content out under the title bar after the view attaches), so U7's product-side
+//   AncestorWatcher is gone (UF1a, S11).
 // - Telemetry: EditorConfig::setUiAttached is ProcessorFacade::setUiAttached, so the processor publishes UiFrames and
 //   history columns exactly while an editor lives (count-based: two open editors keep it on until both close).
 // - Batches: EditorConfig::beginBatch/endBatch stay empty. The Panel's own HostServices proxy already brackets every
@@ -71,13 +67,10 @@ namespace fcmp::ui
         const Panel& ui() const noexcept { return ui_; }
 
     private:
-        class AncestorWatcher;                       // Editor.cpp: moved() when an ancestor moves (see the top)
-
         static funkgui::EditorConfig  makeConfig(ProcessorFacade&);
         static std::unique_ptr<Panel> makePanel(ProcessorFacade&, const EditorOptions&);
 
         Panel& ui_;                                  // == EditorHost::panel(); valid for the editor's whole life
-        std::unique_ptr<AncestorWatcher> watcher_;   // destroyed before ~EditorHost, like every member here
 
         JUCE_LEAK_DETECTOR(Editor)
     };

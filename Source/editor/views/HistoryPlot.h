@@ -2,26 +2,32 @@
 // IN area, OUT line, hanging GR, DET (always on the Characteristics screen, else only when it
 // can differ from IN), the grid and 0 DBFS label, the state lane, the threshold line into the TRANSFER handle (a
 // vertical drag writes THRESHOLD through its SlotModel), press-and-hold freeze (PanelContext::freeze), Mode ticks
-// and gaps, dimming when stale; the span cells (a preference). Band: kBandHistory; CharScreen: kCharsHistory.
+// and gaps; the span cells (a preference). Band: kBandHistory; CharScreen: kCharsHistory.
 //
 // A plot is a SubView of its composite (Band or CharScreen), which constructs it at a Layout.h geometry and gives it
 // the a11y ids idBase + 1 … idBase + 255 (1..127 its cells and image, 128..255 its handles and markers; SubView.h).
 //
 // U2 (S7) — how it draws (HistoryPlot.cpp):
-// - Columns. geom.columns columns of span / columns ms each, cut at ABSOLUTE multiples of that width over the
-//   HistoryStore's 1 ms entries (entry e counts in the column whose window [a, a + W) holds e, W fractional on the
-//   Characteristics screen), so a column's content never changes once complete and only the newest (partial) one
-//   grows. The whole strip is offset by the partial column's phase, which is the smooth scroll of 02 §6.5; "now" is
-//   the plot's right edge. A column is the max of its entries (IN, OUT, DET, GR) and the phase of its max-GR entry.
-// - Gaps. A column holding a gap entry (bits.b5: a lap marker of the store, or the first column after an attach) or no
-//   entry at all is empty: every trace breaks there (one areaStrip per run of columns, never interpolated across) and
-//   a GAP-tagged dotted ink16 line marks it on the floor.
+// - Columns. geom.columns columns of span / columns ms each, cut at ABSOLUTE multiples of that width over the timeline
+//   (views/Telemetry.h HistoryTimeline: the HistoryStore's 1 ms entries, placed in audio time while the feed is fresh;
+//   an entry counts in the column whose window [a, a + W) holds its position, W fractional on the Characteristics
+//   screen; HistoryStore::columnWindows' arithmetic), so a column's content never changes once complete and only the
+//   newest (partial) one grows. The whole strip is offset by the partial column's phase, which is the smooth scroll of
+//   02 §6.5; "now" is the plot's right edge. A column is the max of its entries (IN, OUT, DET, GR) and the phase of its
+//   max-GR entry.
+// - Gaps. A column holding a gap entry (bits.b5: a lap marker of the store, or the first column after an attach), or
+//   timeline time no entry maps to (the audio stopped), or no entry at all is empty: every trace breaks there (one
+//   areaStrip per run of columns, never interpolated across); the first two are marked by a GAP-tagged dotted ink16
+//   line on the floor.
 // - Traces are seam-free areaStrips through the column centres, each run flat to its outer column edges: HIST_IN (floor
 //   to IN, ink16 fill, 1 px ink32 top), HIST_OUT (stroke only, ink70), HIST_DET (stroke only, ink52; only when it can
 //   differ from IN, unless alwaysDet), HIST_GR (hanging from the plot top by GR · px/dB, premix(ground, signal, 0.18)
-//   fill, 1.5 px signal bottom). Every colour is pre-mixed over the ground (a stale dim is a premix toward it).
-// - Audio time. The strip advances only while the feed is live (fresh and kUiLive): stale or silent, the head holds
-//   and the traces dim to 50 % over 0.4 s; a press-and-hold freezes it too.
+//   fill, 1.5 px signal bottom). Every colour is pre-mixed over the ground; nothing ever dims.
+// - Time (UF1a, ADR-69, revising 02 §6.5's "audio time" rule for the stopped case): while the feed is fresh (live or
+//   silent) the strip advances with the audio, as before; once it is stale (the host stopped calling processBlock) it
+//   keeps scrolling at wall-clock rate over a gap, so the picture never freezes; when the audio returns it lands after
+//   the gap. A press-and-hold freezes the view. Full rate while ink the head moves is in view (a data column above the
+//   floor, a Mode tick, a state-lane run, a gap's inner edge); at rest otherwise.
 // - Threshold line (THRESHOLD_MARK): a hairline at y(T_in) from the plot's left edge to the TRANSFER threshold handle
 //   of the TransferGeom on the same level map; accent while THRESHOLD is under the hand. A vertical drag within ±4 px
 //   writes THRESHOLD: absolute through SlotModel::plotToHost01 (T_in has slope 1 in thr), keeping the grab offset; a

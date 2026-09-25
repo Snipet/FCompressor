@@ -26,11 +26,14 @@
 //                     are HISTORY's (the same segment edges as HIST_GR); applied / min / target at every column centre
 //                     equal the column's max grMaxDb / min grMinDb / max tgtMaxDb (<= 0.01 dB, through CP_AXIS); the
 //                     internal lane equals internal0 through the declared lo…hi (<= 0.5 px); the phase lane's runs and
-//                     inks; each event row's stripes; gaps break every trace; stale and press-and-hold (HISTORY) hold
-//                     the strip and the freeze cursor crosses both plots at one x; the image title names the internal
+//                     inks; each event row's stripes; gaps break every trace; press-and-hold (HISTORY) holds the strip
+//                     and the freeze cursor crosses both plots at one x; stale (UF1a, ADR-69) the strip keeps scrolling
+//                     at wall-clock rate, still column for column with HISTORY; the image title names the internal
 //   readouts.*        READOUTS over scripted frames, through their a11y rows (the text drawn): names; single values, the
-//                     10 ms envelope for DET / TARGET, L/R and M/S pairs (caption and title), "–" when not live or while
-//                     the audio runs another Mode; every row fits; the drawn glyph count equals the text's
+//                     10 ms envelope for DET / TARGET, L/R and M/S pairs (caption and title); a silent fresh frame prints
+//                     as it is; stale (ADR-69) the rows print the frame at rest (GR 0.0, levels −∞, EFF RATIO 1.0:1,
+//                     crest 0.0, IDLE, times and internals held), never "–"; "–" while the audio runs another Mode;
+//                     every row fits; the drawn glyph count equals the text's
 //   meters.*          the IN SC GR OUT labels never touch (lead revision 5a) nor TRANSFER's labels on the same row, and
 //                     stay near their bars; the SC meter shows "–" without an external key and its bar with one
 //   stage.*           STAGE_CURVE on this screen iff the Mode has a second stage, on staticGain({stage2 = false}) <= 0.5 px
@@ -47,6 +50,7 @@
 #include "editor/SlotModel.h"
 #include "editor/SubView.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Units.h"
@@ -1224,14 +1228,16 @@ namespace
                                          && segmentEdges(tagged(r.host.draw(), ui::tag::cpTarget)) != during), 1);
         }
 
-        // Stale: no publish for more than 0.5 s; arriving columns do not scroll the strip.
+        // Stale (UF1a, ADR-69): no publish for more than 0.5 s; the strip keeps scrolling at wall-clock rate, column for
+        // column with HISTORY, over a gap.
         {
             r.host.tick(40, kDt);
             const std::set<float> before = segmentEdges(tagged(r.host.draw(), ui::tag::cpTarget));
-            s.push(300);
             r.host.tick(1, kDt);
-            const std::set<float> after = segmentEdges(tagged(r.host.draw(), ui::tag::cpTarget));
-            P.eq("cp.stale.holds", b(!ctx.frame.live && !before.empty() && before == after), 1);
+            const funkgui::PrimList& sl = r.host.draw();
+            const std::set<float> after = segmentEdges(tagged(sl, ui::tag::cpTarget));
+            P.eq("cp.stale.scrolls", b(!ctx.frame.fresh && !before.empty() && !after.empty() && before != after), 1);
+            P.eq("cp.stale.hist_aligned", b(!after.empty() && after == segmentEdges(tagged(sl, ui::tag::histGr))), 1);
         }
 
         // A lap (5000 columns between two drains): one gap, every CONTROL PATH trace breaks there.
@@ -1270,6 +1276,14 @@ namespace
         if (sign && std::isfinite(v) && std::round(static_cast<double>(v) * std::pow(10.0, dp)) > 0.0)
             t = "+" + t;
         return t;
+    }
+
+    // A level row (DET, OVER): the telemetry floor prints "−∞" (ADR-69), else num().
+    std::string level(float v, bool sign = false)
+    {
+        if (std::isfinite(v) && v <= -199.0f)
+            return "\xE2\x88\x92\xE2\x88\x9E";
+        return num(v, 1, sign);
     }
 
     std::string ratio(float r)
@@ -1311,25 +1325,31 @@ namespace
         return out;
     }
 
-    // The values 02 §7.3 prescribes for frame u, computed here from the frame, the store and resolve() + overlaySmoothed.
-    std::vector<std::string> expectedValues(const Rig& r, const fcdsp::ModeEntry& entry, const fcdsp::UiFrame& u,
-                                            bool live, std::string& pairs)
+    // How READOUTS reads the frame (views/Telemetry.h): "–" (another Mode), fresh (as it is), stale (at rest).
+    enum class Feed { dash, fresh, stale };
+
+    // The values 02 §7.3 prescribes for frame u, computed here from the frame, the store and resolve() + overlaySmoothed
+    // (UF1a: a stale frame is read at rest, without the store's envelope).
+    std::vector<std::string> expectedValues(const Rig& r, const fcdsp::ModeEntry& entry, const fcdsp::UiFrame& frame,
+                                            Feed feed, std::string& pairs)
     {
         const fcdsp::ModeDescriptor& d = *entry.desc;
         std::vector<std::string> v;
         pairs.clear();
         const std::size_t n = 10 + std::min<std::size_t>(d.internals.size(), 8);
-        if (!live)
+        if (feed == Feed::dash)
             return std::vector<std::string>(n, kDash);
+        const fcdsp::UiFrame u = feed == Feed::stale ? ui::telemetry::atRest(frame) : frame;
         fcdsp::Resolution res;
         fcdsp::resolve(entry, r.facade.currentRaw(), res);
         fcdsp::EngineParams eng = res.eng;
-        fcdsp::overlaySmoothed(u, eng);
+        if ((u.flags & fcdsp::kUiLive) != 0)
+            fcdsp::overlaySmoothed(u, eng);
         const int lane = u.appliedGrDb[1] > u.appliedGrDb[0] ? 1 : 0;
         const auto ul = static_cast<std::size_t>(lane);
         float cx = u.curveXDb[ul], tgt = u.targetGrDb[ul];
         const ui::HistoryStore& h = r.ctx().history;
-        for (uint64_t e = h.count() >= 10 ? h.count() - 10 : 0; e < h.count(); ++e)
+        for (uint64_t e = h.count() >= 10 ? h.count() - 10 : 0; e < h.count() && feed == Feed::fresh; ++e)
             if (!ui::HistoryStore::isGap(h.at(e)))
             {
                 cx = std::max(cx, h.at(e).detMaxDb);
@@ -1339,12 +1359,12 @@ namespace
         const bool grPair = eng.link < 1.0f && std::fabs(u.appliedGrDb[0] - u.appliedGrDb[1]) > 0.1f;
         if (detPair || grPair)
             pairs = (u.flags & fcdsp::kUiMidSide) != 0 ? "M/S" : "L/R";
-        v.push_back(detPair ? num(u.curveXDb[0], 1) + "/" + num(u.curveXDb[1], 1) : num(cx, 1));
-        v.push_back(num(cx - fcdsp::analysis::inputThresholdDb(eng), 1, true));
+        v.push_back(detPair ? level(u.curveXDb[0]) + "/" + level(u.curveXDb[1]) : level(cx));
+        v.push_back(cx <= -199.0f ? level(cx) : num(cx - fcdsp::analysis::inputThresholdDb(eng), 1, true));
         v.push_back(num(std::max(tgt, 0.0f), 1));
         v.push_back(grPair ? num(u.appliedGrDb[0], 1) + "/" + num(u.appliedGrDb[1], 1) : num(u.appliedGrDb[ul], 1));
         v.push_back(d.stage2 == fcdsp::Stage2Kind::none ? std::string(kDash) : num(u.s2GrDb[ul], 1));
-        v.push_back(ratio(fcdsp::analysis::localRatio(entry, eng, cx)));
+        v.push_back(cx <= -199.0f ? std::string("1.0:1") : ratio(fcdsp::analysis::localRatio(entry, eng, cx)));
         const auto law = [&](Pid p) {
             const fcdsp::ParamSpec* sp = res.view.spec[fcdsp::idx(p)];
             return fcdsp::lawFactor(sp != nullptr ? sp->law : fcdsp::TimeLaw::expDb);
@@ -1387,7 +1407,7 @@ namespace
             P.eq("readouts.names", b(got.names == want), 1);
         }
 
-        struct Case { const char* name; fcdsp::UiFrame f; bool live; const char* pairs; int envelope; };
+        struct Case { const char* name; fcdsp::UiFrame f; Feed feed; const char* pairs; int envelope; };
         fcdsp::UiFrame f = quiet;
         f.flags |= fcdsp::kUiLive | (1u << 16);                   // lane 0 in ATTACK
         f.curveXDb[0] = -14.23f;
@@ -1412,19 +1432,20 @@ namespace
         ms.flags |= fcdsp::kUiMidSide;
         fcdsp::UiFrame linked = lr;                               // linked: no pairs, whatever the lanes say
         linked.link = 1.0f;
-        fcdsp::UiFrame silent = f;                                // not live
+        fcdsp::UiFrame silent = f;                                // not live: a fresh frame, printed as it is
         silent.flags &= ~static_cast<uint32_t>(fcdsp::kUiLive);
         fcdsp::UiFrame other = f;                                 // the audio runs another Mode
         other.modeSlot = static_cast<uint16_t>(slot == 0 ? 1 : 0);
 
-        const std::array<Case, 7> cases { {
-            { "single", f, true, "", 0 },
-            { "envelope", f, true, "", 1 },
-            { "lr", lr, true, "L/R", 0 },
-            { "ms", ms, true, "M/S", 0 },
-            { "linked", linked, true, "", 0 },
-            { "not_live", silent, false, "", 0 },
-            { "other_mode", other, false, "", 0 },
+        const std::array<Case, 8> cases { {
+            { "single", f, Feed::fresh, "", 0 },
+            { "envelope", f, Feed::fresh, "", 1 },
+            { "lr", lr, Feed::fresh, "L/R", 0 },
+            { "ms", ms, Feed::fresh, "M/S", 0 },
+            { "linked", linked, Feed::fresh, "", 0 },
+            { "not_live", silent, Feed::fresh, "", 0 },
+            { "stale", f, Feed::stale, "", 0 },                   // then no frame for 0.67 s (ADR-69)
+            { "other_mode", other, Feed::dash, "", 0 },
         } };
         for (const Case& c : cases)
         {
@@ -1444,8 +1465,10 @@ namespace
             }
             r.facade.publish(c.f);
             r.host.tick(1, kDt);
+            if (c.feed == Feed::stale)
+                r.host.tick(40, kDt);                             // no publish for 0.67 s: stale
             std::string pairs;
-            const std::vector<std::string> want = expectedValues(r, entry, c.f, c.live, pairs);
+            const std::vector<std::string> want = expectedValues(r, entry, c.f, c.feed, pairs);
             const Rows got = readRows(r);
             const std::string k = std::string("readouts.") + c.name;
             const bool ok = got.values == want;

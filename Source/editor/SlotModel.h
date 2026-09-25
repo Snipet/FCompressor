@@ -100,6 +100,7 @@ namespace fcmp::ui
         const FrameState&  frame_;
         fcdsp::Pid         pid_;
         funkgui::ParamPort& port_;
+        const fcdsp::HistoryRing& ring_;                         // UF1a: the DET readout's 10 ms envelope (additive)
 
         mutable std::array<funkgui::Detent, kMaxDetents> detents_{};   // view(): stepped detents, hybrid end cells
         mutable std::array<float, kMaxDetents> notches_{};             // view(): soft notches on the track

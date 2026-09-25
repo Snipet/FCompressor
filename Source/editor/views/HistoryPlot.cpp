@@ -1,11 +1,12 @@
 // Source/editor/views/HistoryPlot.cpp — HISTORY (see HistoryPlot.h; 02 §6.5, §7.3, §9.2, §9.6): the columns rebuilt
-// in tick() from the HistoryStore (draw() only emits), the four traces, the grid, the threshold line and its drag, the
-// state lane, Mode ticks and gaps, the stale dim, press-and-hold freeze and the span cells.
+// in tick() from the HistoryStore over the wall-clock timeline (draw() only emits), the four traces, the grid, the
+// threshold line and its drag, the state lane, Mode ticks and gaps, press-and-hold freeze and the span cells.
 #include "editor/views/HistoryPlot.h"
 
 #include "editor/HistoryStore.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -49,7 +50,7 @@ namespace fcmp::ui
         constexpr float kGapDotStep = 3.0f;
         constexpr float kGapDotDy = 3.0f;                          // the GAP dots, above the plot's bottom edge
         constexpr float kTitleS = 0.25f;                           // a11y title <= 4 Hz (02 §7.5, §9.6)
-        constexpr float kDimRate = (1.0f - layout::band::kStaleDim) / layout::band::kStaleDimS;   // per second
+        constexpr float kInkGrDb = 0.01f;                          // a column with less GR draws no GR ink
         constexpr float kTrackPx = 240.0f;                         // RuleSlider: 240 px per full track ...
         constexpr float kPitchMin = 24.0f, kPitchMax = 64.0f;     // ... stepped: clamp(240/(n−1), 24, 64) px per detent
         constexpr uint32_t kImageId = 1, kGroupId = 2, kLineId = 7; // local ids (cells: kGroupId + 1 + i)
@@ -95,16 +96,19 @@ namespace fcmp::ui
         }
 
         // 02 §6.5: HIST_DET only where it can differ from IN (SC HPF on, SC EMPH ≠ 0, a non-peak law, an external key,
-        // link < 1, or a feedback topology).
-        bool detCanDiffer(const FrameState& f) noexcept
+        // link < 1, or a feedback topology). The key and the topology are the last frame's (ADR-69: they do not change
+        // when the audio stops).
+        bool detCanDiffer(const PanelContext& ctx) noexcept
         {
+            const FrameState& f = ctx.frame;
             if (f.entry == nullptr)
                 return false;
             const fcdsp::EngineParams& e = f.eng;
             const bool law = f.entry->desc->detectorLaw != nullptr
                           && f.entry->desc->detectorLaw(e) != fcdsp::DetectorLaw::peak;
-            const bool ext = f.fresh && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
-            const bool fb = e.topo == fcdsp::kTopoFB || (f.fresh && (f.ui.flags & fcdsp::kUiTopoFB) != 0);
+            const bool known = telemetry::feed(ctx) != telemetry::Feed::none;
+            const bool ext = known && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
+            const bool fb = e.topo == fcdsp::kTopoFB || (known && (f.ui.flags & fcdsp::kUiTopoFB) != 0);
             return e.scHpfHz > 0.0f || e.sceDbOct != 0.0f || law || ext || e.link < 1.0f || fb;
         }
 
@@ -151,7 +155,8 @@ namespace fcmp::ui
         }
 
         void rebuild(const PanelContext&, const layout::HistoryGeom&) noexcept;
-        void aggregate(const HistoryStore&, int64_t e0, int64_t e1, Column&, float right) noexcept;
+        void aggregate(const HistoryStore&, int64_t t0, int64_t t1, Column&, float right) noexcept;
+        void take(const fcdsp::HistoryColumn&, int64_t pos, Column&, float right) noexcept;
         const Column* columnAt(float x) const noexcept;
 
         funkgui::PrefCells         spanModel;
@@ -172,12 +177,13 @@ namespace fcmp::ui
         int nTicks = 0;
         int64_t lastSlot = -1;                                    // aggregate(): the previous data entry's slot
 
-        uint64_t head = 0;                                        // the store count "now" stands for
+        telemetry::HistoryTimeline timeline;                      // audio time, wall clock while stale (ADR-69)
+        uint64_t head = 0;                                        // the timeline ms "now" stands for (held by a freeze)
         uint64_t builtHead = ~uint64_t{ 0 }, builtCount = 0;
         int      builtSpan = 0, builtScale = 0;
         double   pxPerMs = 0.0;
+        bool     moving = false;                                  // ink in view that the next head moves (full rate)
 
-        float dim = 1.0f;                                         // 1 live … kStaleDim stale (02 §6.5)
         bool  freeze = false;                                     // press and hold
         float freezeX = 0.0f;
         bool  lineHover = false, cellHover = false, pointerOver = false;
@@ -194,55 +200,67 @@ namespace fcmp::ui
         uint32_t titleSerial = ~0u;
     };
 
-    // Aggregates store entries [e0, e1) into c: max levels, the max-GR entry's bits; entries older than the store's
-    // oldest are missing. A change of Mode slot between two data entries leaves a tick at the later one.
-    void HistoryPlot::State::aggregate(const HistoryStore& h, int64_t e0, int64_t e1, Column& c, float right) noexcept
+    // Aggregates the store entries on timeline ms [t0, t1) into c: max levels, the max-GR entry's bits; entries older
+    // than the store's oldest are missing, and timeline ms no entry maps to after the first (a stale span, ADR-69) make
+    // the column a gap.
+    void HistoryPlot::State::aggregate(const HistoryStore& h, int64_t t0, int64_t t1, Column& c, float right) noexcept
     {
-        const auto oldest = static_cast<int64_t>(h.oldest());
-        for (int64_t e = std::max(e0, oldest); e < e1; ++e)
+        if (timeline.gapIn(t0, t1))
         {
-            const fcdsp::HistoryColumn& col = h.at(static_cast<uint64_t>(e));
-            if (HistoryStore::isGap(col))
-            {
-                c.gap = true;
-                lastSlot = -1;
-                continue;
-            }
-            const auto slot = static_cast<int64_t>((col.bits & kSlotMask) >> kSlotShift);
-            if (lastSlot >= 0 && slot != lastSlot && nTicks < kMaxTicks)
-                ticks[static_cast<std::size_t>(nTicks++)]
-                    = right - static_cast<float>(static_cast<double>(static_cast<int64_t>(head) - e) * pxPerMs);
-            lastSlot = slot;
-            if (!c.data)
-            {
-                c.in = col.inPeakDb;
-                c.out = col.outPeakDb;
-                c.det = col.detMaxDb;
-                c.gr = col.grMaxDb;
-                c.grMin = col.grMinDb;
-                c.tgt = col.tgtMaxDb;
-                c.bits = col.bits;
-                c.data = true;
-            }
-            else
-            {
-                c.in = std::max(c.in, col.inPeakDb);
-                c.out = std::max(c.out, col.outPeakDb);
-                c.det = std::max(c.det, col.detMaxDb);
-                c.grMin = std::min(c.grMin, col.grMinDb);
-                c.tgt = std::max(c.tgt, col.tgtMaxDb);
-                if (col.grMaxDb > c.gr)
-                {
-                    c.gr = col.grMaxDb;
-                    c.bits = col.bits;
-                }
-            }
-            c.internal = col.internal0;                           // the last value (01 §6.3)
+            c.gap = true;
+            lastSlot = -1;
         }
+        const auto oldest = static_cast<int64_t>(h.oldest());
+        timeline.forEntries(t0, t1, [&](int64_t e0, int64_t e1, int64_t offset) {
+            for (int64_t e = std::max(e0, oldest); e < e1; ++e)
+                take(h.at(static_cast<uint64_t>(e)), e + offset, c, right);
+        });
     }
 
-    // 02 §6.5, §9.6: the columns at absolute multiples of W = span / columns ms over the 1 ms entries, offset by the
-    // partial column's phase, then the strips, the state lane and the gaps in logical px.
+    // One entry at timeline position `pos` into c. A change of Mode slot between two data entries leaves a tick at the
+    // later one.
+    void HistoryPlot::State::take(const fcdsp::HistoryColumn& col, int64_t pos, Column& c, float right) noexcept
+    {
+        if (HistoryStore::isGap(col))
+        {
+            c.gap = true;
+            lastSlot = -1;
+            return;
+        }
+        const auto slot = static_cast<int64_t>((col.bits & kSlotMask) >> kSlotShift);
+        if (lastSlot >= 0 && slot != lastSlot && nTicks < kMaxTicks)
+            ticks[static_cast<std::size_t>(nTicks++)]
+                = right - static_cast<float>(static_cast<double>(static_cast<int64_t>(head) - pos) * pxPerMs);
+        lastSlot = slot;
+        if (!c.data)
+        {
+            c.in = col.inPeakDb;
+            c.out = col.outPeakDb;
+            c.det = col.detMaxDb;
+            c.gr = col.grMaxDb;
+            c.grMin = col.grMinDb;
+            c.tgt = col.tgtMaxDb;
+            c.bits = col.bits;
+            c.data = true;
+        }
+        else
+        {
+            c.in = std::max(c.in, col.inPeakDb);
+            c.out = std::max(c.out, col.outPeakDb);
+            c.det = std::max(c.det, col.detMaxDb);
+            c.grMin = std::min(c.grMin, col.grMinDb);
+            c.tgt = std::max(c.tgt, col.tgtMaxDb);
+            if (col.grMaxDb > c.gr)
+            {
+                c.gr = col.grMaxDb;
+                c.bits = col.bits;
+            }
+        }
+        c.internal = col.internal0;                               // the last value (01 §6.3)
+    }
+
+    // 02 §6.5, §9.6: the columns at absolute multiples of W = span / columns ms over the timeline (1 ms entries, audio
+    // time while fresh), offset by the partial column's phase, then the strips, the state lane and the gaps in logical px.
     void HistoryPlot::State::rebuild(const PanelContext& ctx, const layout::HistoryGeom& g) noexcept
     {
         const HistoryStore& h = ctx.history;
@@ -252,6 +270,7 @@ namespace fcmp::ui
         builtScale = ctx.meterScaleDb;
         nCols = nRuns = nLanes = nGaps = nTicks = 0;
         lastSlot = -1;
+        moving = false;
 
         const float left = g.plot.x, right = g.plot.right();
         const double w = static_cast<double>(builtSpan) * 100.0 / static_cast<double>(g.columns);   // ms per column
@@ -297,6 +316,13 @@ namespace fcmp::ui
         const float floorDb = layout::kLevelTopDb - s;
         const float top = g.plot.y, bottom = g.plot.bottom();
         const float ppd = g.level.pxPerDb(s);
+        // Anything the next head would move (full rate, ADR-69): a column with ink above the floor, a Mode tick, a state
+        // lane run, or a gap's inner edge. A silent strip at the floor or a plot all gap is at rest.
+        for (int i = 0; i < nCols && !moving; ++i)
+        {
+            const Column& c = cols[static_cast<std::size_t>(i)];
+            moving = c.valid() && (c.in > floorDb || c.out > floorDb || c.det > floorDb || c.gr > kInkGrDb);
+        }
         const auto yOf = [&](float db) {
             return std::clamp(g.level.y(std::max(db, floorDb), s), top, bottom);
         };
@@ -362,6 +388,9 @@ namespace fcmp::ui
             else if (nGaps < kMaxRuns)
                 gaps[static_cast<std::size_t>(nGaps++)] = { c.xl, c.xr, 0u };
         }
+        for (int i = 0; i < nGaps && !moving; ++i)
+            moving = gaps[static_cast<std::size_t>(i)].x0 > left + 0.5f;
+        moving = moving || nTicks > 0 || nLanes > 0;
     }
 
     const HistoryPlot::State::Column* HistoryPlot::State::columnAt(float x) const noexcept
@@ -382,7 +411,6 @@ namespace fcmp::ui
     {
         ctx_.historySpanTenths = spanTenths(st_->spanModel.value());
         st_->head = ctx_.history.count();
-        st_->dim = ctx_.frame.live ? 1.0f : layout::band::kStaleDim;
     }
 
     HistoryPlot::~HistoryPlot() = default;
@@ -396,15 +424,13 @@ namespace fcmp::ui
         s.span.tick(dt, s.pointerOver ? s.pointer : funkgui::Point{ -1.0f, -1.0f });
         s.thr.tick(dt, false, false, false);
 
-        // Audio time: the head follows the store only while the feed is live and nothing holds the view.
+        // The head: the timeline's now (audio time while fresh, the wall clock over a gap once the audio stops, ADR-69)
+        // unless a press and hold keeps the view.
         const FrameState& f = ctx_.frame;
         const HistoryStore& h = ctx_.history;
-        if (f.live && !s.freeze)
-            s.head = h.count();
-        s.head = std::min<uint64_t>(s.head, h.count());
-        const float step = kDimRate * std::max(dt, 0.0f);
-        const float dimTarget = f.live ? 1.0f : layout::band::kStaleDim;
-        s.dim = s.dim < dimTarget ? std::min(dimTarget, s.dim + step) : std::max(dimTarget, s.dim - step);
+        s.timeline.tick(ctx_);
+        if (!s.freeze)
+            s.head = s.timeline.head();
 
         if (s.head != s.builtHead || h.count() != s.builtCount || ctx_.historySpanTenths != s.builtSpan
             || ctx_.meterScaleDb != s.builtScale)
@@ -494,10 +520,10 @@ namespace fcmp::ui
                 c.text("0 DBFS", p.x + layout::band::kZeroLabelDx, y0 + layout::band::kZeroLabelDy, T::kMicro, th.ink32);
         }
 
-        // Traces (02 §6.5): IN area, DET, OUT, hanging GR; pre-mixed over the ground, dimmed when stale.
+        // Traces (02 §6.5): IN area, DET, OUT, hanging GR; pre-mixed over the ground, never dimmed (ADR-69).
         {
-            const float d = s.dim;
-            const bool det = geom_.alwaysDet || detCanDiffer(f);
+            constexpr float d = 1.0f;
+            const bool det = geom_.alwaysDet || detCanDiffer(ctx_);
             for (int r = 0; r < s.nRuns; ++r)
             {
                 const State::Run& run = s.runs[static_cast<std::size_t>(r)];
@@ -572,7 +598,7 @@ namespace fcmp::ui
             {
                 const State::Span& sp = s.lanes[static_cast<std::size_t>(i)];
                 const funkgui::Col ink = sp.phase == 1 ? th.ink70 : sp.phase == 2 ? th.ink100 : th.ink32;
-                c.rrect(sp.x0, ln.y, sp.x1 - sp.x0, ln.h, 0.0f, funkgui::premix(th.ground, ink, s.dim));
+                c.rrect(sp.x0, ln.y, sp.x1 - sp.x0, ln.h, 0.0f, funkgui::premix(th.ground, ink, 1.0f));
             }
         }
 
@@ -768,9 +794,10 @@ namespace fcmp::ui
 
     bool HistoryPlot::wantsFullRate() const
     {
+        // ADR-69: the strip scrolls at full rate while it holds ink the head moves; at rest (nothing in view, or all
+        // silence / gap) it leaves the rate to the rest of the panel.
         const State& s = *st_;
-        const float dimTarget = ctx_.frame.live ? 1.0f : layout::band::kStaleDim;
-        return !s.span.settled() || s.dim != dimTarget || s.freeze;
+        return !s.span.settled() || s.freeze || (s.moving && s.timeline.started());
     }
 
     // ---- accessibility ------------------------------------------------------------------------------------------------------

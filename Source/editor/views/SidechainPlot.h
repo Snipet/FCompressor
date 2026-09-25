@@ -15,7 +15,7 @@
 //   SlotModel::plotToHost01 (left past 20 Hz = OFF), a stepped SC HPF snaps to its detents with 6 px hysteresis,
 //   locked/derived draw an ink32 cross and refuse, n/a has no handle. Wheel, double-click, keys and a11y go through a
 //   RuleSlider bound to the same SlotModel (never drawn).
-// - Caption inside the plot: INTERNAL, or EXTERNAL · <SC peak> DB PK while fresh telemetry says an external key is
+// - Caption inside the plot: INTERNAL, or EXTERNAL · <SC peak> DB PK while the telemetry says an external key is
 //   active (live text); LISTENING in ink100 while `listen` is on.
 #pragma once
 

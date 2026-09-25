@@ -1,10 +1,13 @@
 // Source/editor/SlotModel.cpp — see SlotModel.h. U1a built the view straight from the resolved ParamView; U1s (S6) adds
 // the fit of every text to the slot (value abbreviation, the sub-line priority), the live sub-readouts of the primary
 // row (DET, EFF, the knee span, AUTO, DRY: 02 §6.4, quantised into key() through the text they print), CLAMPED FROM,
-// the remap sub-lines and the universal-unit helper the slot grid's spec lines use.
+// the remap sub-lines and the universal-unit helper the slot grid's spec lines use. UF1a (S11): the operating point the
+// live readouts read (DET, EFF ratio, a derived program ratio) is the TRANSFER dot's, the 10 ms peak envelope of
+// views/Telemetry.h over the ring's newest columns, so THRESHOLD's DET no longer jitters with the waveform's phase.
 #include "editor/SlotModel.h"
 
 #include "editor/Layout.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Units.h"
@@ -195,9 +198,6 @@ namespace fcmp::ui
             return s != nullptr && s->label != nullptr ? s->label : layout::universalLabel(p);
         }
 
-        // The lane the band's operating dot uses: the one with the larger applied GR (02 §6.5).
-        int grLane(const fcdsp::UiFrame& f) noexcept { return f.appliedGrDb[1] > f.appliedGrDb[0] ? 1 : 0; }
-
         bool programTime(const fcdsp::ParamSpec& s, const fcdsp::ResolvedParam& r) noexcept
         {
             return (s.flags & fcdsp::kFlagProgram) != 0 || (r.tag & fcdsp::kTagProgram) != 0;
@@ -229,7 +229,9 @@ namespace fcmp::ui
         };
 
         // Fills `out` for Pid `pid` of `frame` when the telemetry is live and a readout applies (else leaves it empty).
-        void liveReadout(const FrameState& frame, fcdsp::Pid pid, bool primary, LiveOut& out) noexcept
+        // The operating point's x is the dot's (the 10 ms peak envelope over `ring`'s newest columns, Telemetry.h).
+        void liveReadout(const FrameState& frame, const fcdsp::HistoryRing& ring, fcdsp::Pid pid, bool primary,
+                         LiveOut& out) noexcept
         {
             if (!frame.live || frame.entry == nullptr || fcdsp::idx(pid) >= fcdsp::kNumModeParams)
                 return;
@@ -238,8 +240,9 @@ namespace fcmp::ui
                 return;
             const fcdsp::ResolvedParam& r = frame.res.view.p[fcdsp::idx(pid)];
             const fcdsp::UiFrame& ui = frame.ui;
-            const int lane = grLane(ui);
-            const float cx = ui.curveXDb[lane];
+            const int lane = telemetry::grLane(ui);
+            const bool usesX = pid == fcdsp::Pid::thr || pid == fcdsp::Pid::ratio;   // DET, EFF, a derived ratio
+            const float cx = usesX ? telemetry::operatingX(ui, ring) : ui.curveXDb[lane];
             const bool writable = r.state == fcdsp::SlotState::live || r.state == fcdsp::SlotState::stepped;
 
             // A derived program value reads live (02 §8.1 derived value: "the live EFF value when kFlagProgram").
@@ -356,7 +359,7 @@ namespace fcmp::ui
     // ---- SlotModel ------------------------------------------------------------------------------------------------------
 
     SlotModel::SlotModel(ProcessorFacade& facade, const FrameState& frame, fcdsp::Pid pid)
-        : frame_(frame), pid_(pid), port_(facade.port(pid))
+        : frame_(frame), pid_(pid), port_(facade.port(pid)), ring_(facade.history())
     {
     }
 
@@ -391,7 +394,7 @@ namespace fcmp::ui
         mix(h, r.tag);
         mix(h, wordVisible(frame_, pid_) ? 1u : 0u);             // a tag moves to the sub line beside a visible word
         LiveOut live;
-        liveReadout(frame_, pid_, isPrimary(pid_), live);         // the quantised live value is the text it prints
+        liveReadout(frame_, ring_, pid_, isPrimary(pid_), live);  // the quantised live value is the text it prints
         mixText(h, live.sub.s);
         if (live.derivedValue)
         {
@@ -540,7 +543,7 @@ namespace fcmp::ui
         const float w = layout::kSlotW;
 
         LiveOut live;
-        liveReadout(frame_, pid_, isPrimary(pid_), live);
+        liveReadout(frame_, ring_, pid_, isPrimary(pid_), live);
         fcdsp::FormattedValue f;
         fcdsp::formatParts(frame_.res.view, pid_, f);
         if (live.derivedValue)

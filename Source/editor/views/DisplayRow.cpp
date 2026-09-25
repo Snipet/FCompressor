@@ -6,6 +6,7 @@
 #include "editor/Panel.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/engine/Oversampler.h"
 #include "fcdsp/modes/Registry.h"
@@ -51,6 +52,7 @@ namespace fcmp::ui
         constexpr float kValueMaxW = D::kSubX - 8.0f - D::kValue.x;   // value + unit end 8 px before the sub-readout
         constexpr float kUnitGap   = 6.0f;                               // value, then unit (HR, RuleSlider)
         constexpr float kLevelFloorDb = -99.95f;                         // quieter prints −∞ (the meters floor at −200)
+        constexpr float kSilentDb = telemetry::kFloorDb;                  // the telemetry floor: nothing arrived
         constexpr funkgui::Point kNowhere { -1.0e6f, -1.0e6f };          // "the pointer is not over this row"
 
         constexpr const char* kSep  = " \xC2\xB7 ";                       // " · "
@@ -287,6 +289,7 @@ namespace fcmp::ui
     {
         quality_.setSpokenTitle("Quality");
         budget_.setSpokenTitle("Lookahead budget");
+        activity_ = activityOf(ctx);                             // the state at birth is no input
     }
 
     // ---- state ----------------------------------------------------------------------------------------------------------
@@ -329,8 +332,74 @@ namespace fcmp::ui
         return -1;
     }
 
+    DisplayRow::Activity DisplayRow::activityOf(const PanelContext& ctx) noexcept
+    {
+        Activity a;
+        a.x = ctx.pointer.x;
+        a.y = ctx.pointer.y;
+        a.moves = ctx.pointerMoves;
+        a.downs = ctx.pointerDowns;
+        a.focus = ctx.focus;
+        a.handItem = ctx.hand.item;
+        a.touchedAt = ctx.touchedAt;
+        a.handKind = ctx.hand.kind;
+        a.screen = ctx.screen;
+        a.overlay = ctx.overlay;
+        a.scTab = ctx.scTab;
+        a.in = ctx.pointerIn;
+        a.pressed = ctx.pointerPressed;
+        a.focusVisible = ctx.focusVisible;
+        return a;
+    }
+
+    // ADR-70: the GAIN REDUCTION hold (refreshed at ≈ 4 Hz of panel time) and the live GR bar; ADR-69: with no frame
+    // arriving the bar falls at 20 dB/s, the hold empties within kGrHoldS and IN · OUT read −∞.
+    void DisplayRow::tickTelemetry(float dt) noexcept
+    {
+        const telemetry::Feed fd = telemetry::feed(ctx_);
+        if (fd == telemetry::Feed::none)
+        {
+            grHold_ = grBar_ = 0.0f;
+            inShown_ = outShown_ = inAcc_ = outAcc_ = kSilentDb;
+            refreshSlot_ = -1;
+            seen_ = false;
+            return;
+        }
+        const fcdsp::UiFrame& u = ctx_.frame.ui;
+        if (fd == telemetry::Feed::fresh)
+        {
+            const float gr = std::max(u.appliedGrDb[0], u.appliedGrDb[1]);
+            grBar_ = std::isfinite(gr) ? std::max(gr, 0.0f) : 0.0f;
+            inAcc_ = std::max({ inAcc_, u.inPeakDb[0], u.inPeakDb[1] });
+            outAcc_ = std::max({ outAcc_, u.outPeakDb[0], u.outPeakDb[1] });
+        }
+        else
+        {
+            grBar_ = std::max(0.0f, grBar_ - layout::meters::kFallDbPerS * std::max(dt, 0.0f));
+        }
+        // Quantised in time: the text changes at multiples of kGrRefreshS of panel time (and at once for the first frame).
+        const auto slot = static_cast<int64_t>(std::floor(ctx_.seconds / static_cast<double>(D::kGrRefreshS)));
+        if (!seen_ || slot != refreshSlot_)
+        {
+            grHold_ = telemetry::grHoldDb(ctx_);
+            inShown_ = inAcc_;
+            outShown_ = outAcc_;
+            inAcc_ = outAcc_ = kSilentDb;
+            refreshSlot_ = slot;
+            seen_ = true;
+        }
+    }
+
     void DisplayRow::tick(float dt)
     {
+        // Input activity: full rate for kActiveS after any change (DisplayRow.h).
+        if (const Activity a = activityOf(ctx_); !(a == activity_))
+        {
+            activity_ = a;
+            activeAt_ = ctx_.seconds;
+        }
+        tickTelemetry(dt);
+
         const funkgui::Point p = pointerForWidgets();
         quality_.tick(dt, p);
         budget_.tick(dt, p);
@@ -367,8 +436,10 @@ namespace fcmp::ui
 
     bool DisplayRow::wantsFullRate() const
     {
+        const bool active = activeAt_ >= 0.0 && ctx_.seconds - activeAt_ < static_cast<double>(layout::live::kActiveS);
+        const bool falling = grBar_ > 0.0f && telemetry::feed(ctx_) != telemetry::Feed::fresh;   // the bar falls
         return !quality_.settled() || !budget_.settled() || !delta_.settled() || !bypass_.settled()
-            || !chars_.settled();
+            || !chars_.settled() || active || falling;
     }
 
     fcdsp::Pid DisplayRow::shownPid() const noexcept
@@ -483,12 +554,13 @@ namespace fcmp::ui
             return;
         }
 
-        // GAIN REDUCTION (02 §6.6): signal when live and above 0.05 dB, 0.0 at zero, – when not live.
+        // GAIN REDUCTION (02 §6.6; ADR-70): the 1 s hold, signal above 0.05 dB, 0.0 at zero; ADR-69: "–" only before the
+        // first frame ever — once the audio stops it rests at 0.0 (the hold empties), IN · OUT at −∞.
         caption.add("GAIN REDUCTION");
         spoken.add("Gain reduction, ");
-        if (f.live)
+        if (seen_ && telemetry::feed(ctx_) != telemetry::Feed::none)
         {
-            const float gr = std::max(f.ui.appliedGrDb[0], f.ui.appliedGrDb[1]);
+            const float gr = grHold_;
             if (gr > D::kGrShownDb)
             {
                 addLevel(value, -gr);
@@ -501,10 +573,10 @@ namespace fcmp::ui
             }
             unit.add("DB");
             sub.add("IN ");
-            addLevel(sub, std::max(f.ui.inPeakDb[0], f.ui.inPeakDb[1]));
+            addLevel(sub, inShown_);
             sub.add(kSep);
             sub.add("OUT ");
-            addLevel(sub, std::max(f.ui.outPeakDb[0], f.ui.outPeakDb[1]));
+            addLevel(sub, outShown_);
             r.live = true;
             spoken.add(r.value);
             spoken.add(" dB");
@@ -536,6 +608,25 @@ namespace fcmp::ui
                amount >= 0.5f ? th.ground : th.ink52, funkgui::Align::centre);
         if (ctx_.focusVisible && ctx_.focus == bypass_.a11yId())
             funkgui::drawFocusRing(c, r, th.accent);
+    }
+
+    void DisplayRow::drawGrBar(funkgui::Canvas& c, const funkgui::Theme& th) const
+    {
+        // ADR-70: the live GR bar beside the value, on the band's GR scale (4 px/dB at the default 48 dB), with the held
+        // readout's tick; the track is chrome (static), the bar and tick telemetry (live).
+        const funkgui::Rect& b = D::kGrBar;
+        {
+            const funkgui::Canvas::Scope scope(c, tag::displayValue, false);
+            c.hairlineH(b.x, D::kGrTrackY, b.w, th.ink16);
+        }
+        if (!seen_ || telemetry::feed(ctx_) == telemetry::Feed::none)
+            return;
+        const float ppd = layout::kBandTransfer.level.pxPerDb(static_cast<float>(ctx_.meterScaleDb));
+        const funkgui::Canvas::Scope scope(c, tag::displayValue, true);
+        if (const float len = std::clamp(grBar_ * ppd, 0.0f, b.w); len >= 0.5f)
+            c.rrect(b.x, b.y, len, b.h, 0.0f, th.signal);
+        if (grHold_ > D::kGrShownDb)
+            c.hairlineV(b.x + std::clamp(grHold_ * ppd, 0.0f, b.w - 1.0f), D::kGrTickTop, D::kGrTickH, th.ink100);
     }
 
     void DisplayRow::draw(funkgui::Canvas& c, const funkgui::Theme& th) const
@@ -572,6 +663,8 @@ namespace fcmp::ui
             funkgui::text::fitEllipsis(ctx_.atlas, r.sub, T::kLabel, D::kSubMaxW, sub, sizeof sub);
             c.text(sub, D::kSubX, c.capCentreTop(D::kSubCentreY, T::kLabel), T::kLabel, r.subInk);
         }
+        if (!ctx_.freeze.active && shownPid() == fcdsp::kNoPid)
+            drawGrBar(c, th);                                    // only beside GAIN REDUCTION
 
         const auto focused = [this](uint32_t id) { return ctx_.focusVisible && ctx_.focus == id; };
         quality_.draw(c, th, focused(quality_.a11yId()));

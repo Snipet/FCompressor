@@ -5,6 +5,7 @@
 #include "editor/Panel.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -303,7 +304,8 @@ namespace fcmp::ui
         {
             s.titleAge = 0.0f;
             const funkgui::ValueView& v = s.slider.view();
-            const bool external = f.fresh && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
+            const bool external = telemetry::feed(ctx_) != telemetry::Feed::none
+                               && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
             const bool listening = ctx_.facade.port(Pid::listen).value01() >= 0.5f;
             if (f.entry == nullptr)
                 std::snprintf(s.title, sizeof s.title, "Side-chain response");
@@ -353,13 +355,16 @@ namespace fcmp::ui
                             funkgui::premix(th.ground, hotCurve ? th.accent : th.ink70, 1.0f));
         }
         // The caption, top-right (the HPF handle lives on the left): INTERNAL | EXTERNAL · −14 DB PK (live text), and
-        // LISTENING under it.
-        const bool external = f.fresh && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
+        // LISTENING under it. ADR-69: the key the last frame reported stays named when the audio stops (its level
+        // then falls away: "EXTERNAL").
+        const telemetry::Feed fd = telemetry::feed(ctx_);
+        const bool external = fd != telemetry::Feed::none && (f.ui.flags & fcdsp::kUiExtKeyActive) != 0;
         char caption[48] = "INTERNAL";
         if (external)
         {
             char v[16];
-            if (scPeak(f.ui) > kNoLevelDb && funkgui::fmt::db(scPeak(f.ui), 0, v, sizeof v) >= 0)
+            const float peak = fd == telemetry::Feed::fresh ? scPeak(f.ui) : telemetry::kFloorDb;
+            if (peak > kNoLevelDb && funkgui::fmt::db(peak, 0, v, sizeof v) >= 0)
                 std::snprintf(caption, sizeof caption, "EXTERNAL · %s DB PK", v);
             else
                 std::snprintf(caption, sizeof caption, "EXTERNAL");
