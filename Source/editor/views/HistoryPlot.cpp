@@ -1,11 +1,13 @@
 // Source/editor/views/HistoryPlot.cpp — HISTORY (see HistoryPlot.h; 02 §6.5, §7.3, §9.2, §9.6): the columns rebuilt
 // in tick() from the HistoryStore over the wall-clock timeline (draw() only emits), the four traces, the grid, the
-// threshold line and its drag, the state lane, Mode ticks and gaps, press-and-hold freeze and the span cells.
+// threshold line and its drag, the state lane, Mode ticks and gaps, press-and-hold freeze and the span cells; on the
+// band, the HISTORY · VU switch and the GR VU meter it shows instead of the traces (UF2, ADR-72).
 #include "editor/views/HistoryPlot.h"
 
 #include "editor/HistoryStore.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/GrVuMeter.h"
 #include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
@@ -54,11 +56,14 @@ namespace fcmp::ui
         constexpr float kTrackPx = 240.0f;                         // RuleSlider: 240 px per full track ...
         constexpr float kPitchMin = 24.0f, kPitchMax = 64.0f;     // ... stepped: clamp(240/(n−1), 24, 64) px per detent
         constexpr uint32_t kImageId = 1, kGroupId = 2, kLineId = 7; // local ids (cells: kGroupId + 1 + i)
+        constexpr uint32_t kViewGroupId = 8, kVuId = 11;           // UF2: the GR view group (cells 9, 10), the meter
+        constexpr const char* kViewKey = "grView";                 // UiPreferences (ADR-72): 0 HISTORY, 1 VU
         constexpr uint32_t kSlotShift = 8, kSlotMask = 0xFFu << kSlotShift;
         constexpr uint32_t kPhaseMask = 3u;
         constexpr funkgui::Col kClear { 0, 0, 0, 0 };
 
         constexpr const char* kSpanSpec = "HISTORY SPAN   2.5 · 5 · 10 · 20 S   CLICK A SPAN (EVERY WINDOW)";
+        constexpr const char* kViewSpec = "GR VIEW   HISTORY · VU   CLICK A VIEW (EVERY WINDOW)";
 
         void outline(funkgui::Canvas& c, const funkgui::Rect& r, funkgui::Col col)
         {
@@ -72,6 +77,20 @@ namespace fcmp::ui
         {
             const float top = g.spanCells[0].y;
             return { g.plot.x, top, g.plot.w, g.timeLabelY + 14.0f - top };
+        }
+
+        // UF2 (ADR-72): the band's HISTORY has the HISTORY · VU switch; the Characteristics screen's does not.
+        bool isBand(const layout::HistoryGeom& g) noexcept
+        {
+            const funkgui::Rect& a = g.plot;
+            const funkgui::Rect& b = layout::kBandHistory.plot;
+            return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+        }
+
+        std::vector<funkgui::CellText> viewTexts()
+        {
+            return { { "HISTORY", "History", "The scrolling gain reduction history" },
+                     { "VU", "VU meter", "One needle meter of gain reduction, with VU ballistics" } };
         }
 
         // The TRANSFER plot the threshold line runs into: the one on this plot's level map (02 §6.5, §7.3).
@@ -149,19 +168,38 @@ namespace fcmp::ui
             : spanModel(kSpanKey, { 25, 50, 100, 200 }, spanTexts(), layout::kDefaultSpanTenths),
               span(spanModel, std::vector<funkgui::Rect>(g.spanCells.begin(), g.spanCells.end()),
                    funkgui::CellStyle::text, nullptr, funkgui::Point{}, idBase + kGroupId),
-              thr(ctx.slot(fcdsp::Pid::thr), layout::slotGeom(*layout::slotOf(fcdsp::Pid::thr)), idBase + kLineId)
+              thr(ctx.slot(fcdsp::Pid::thr), layout::slotGeom(*layout::slotOf(fcdsp::Pid::thr)), idBase + kLineId),
+              hasView(isBand(g)),
+              viewModel(kViewKey, { layout::vu::kHistory, layout::vu::kVu }, viewTexts(), layout::vu::kDefaultView),
+              view(viewModel, std::vector<funkgui::Rect>(layout::vu::kViewCells.begin(), layout::vu::kViewCells.end()),
+                   funkgui::CellStyle::text, nullptr, funkgui::Point{}, idBase + kViewGroupId)
         {
             span.setSpokenTitle("History span");
+            view.setSpokenTitle("GR view");
+            if (hasView)
+                vu = std::make_unique<GrVuMeter>(ctx, idBase + kVuId);
         }
 
         void rebuild(const PanelContext&, const layout::HistoryGeom&) noexcept;
         void aggregate(const HistoryStore&, int64_t t0, int64_t t1, Column&, float right) noexcept;
         void take(const fcdsp::HistoryColumn&, int64_t pos, Column&, float right) noexcept;
         const Column* columnAt(float x) const noexcept;
+        void syncView(PanelContext&) noexcept;                    // UF2: follow the preference (tick, cells, keys)
 
         funkgui::PrefCells         spanModel;
         funkgui::SegmentedSelector span;
         funkgui::RuleSlider        thr;                           // never drawn: THRESHOLD's spec line and detents
+
+        // UF2 (ADR-72): the HISTORY · VU switch and the meter, on the band only (hasView).
+        const bool                 hasView;
+        funkgui::PrefCells         viewModel;
+        funkgui::SegmentedSelector view;
+        std::unique_ptr<GrVuMeter> vu;
+        bool     vuShown = false;                                 // VU is shown (the preference as of the last tick)
+        bool     viewHover = false;
+        uint32_t revision = 0;                                    // bumps when VU is shown or hidden (a11y structure)
+
+        bool showVu() const noexcept { return hasView && viewModel.value() == layout::vu::kVu; }
 
         // the displayed columns, left to right, and what tick() derived from them for draw()
         std::array<Column, kMaxColumns> cols{};
@@ -183,6 +221,7 @@ namespace fcmp::ui
         int      builtSpan = 0, builtScale = 0;
         double   pxPerMs = 0.0;
         bool     moving = false;                                  // ink in view that the next head moves (full rate)
+        bool     laneMoving = false;                              // the state lane holds a run (full rate under VU)
 
         bool  freeze = false;                                     // press and hold
         float freezeX = 0.0f;
@@ -390,7 +429,33 @@ namespace fcmp::ui
         }
         for (int i = 0; i < nGaps && !moving; ++i)
             moving = gaps[static_cast<std::size_t>(i)].x0 > left + 0.5f;
+        laneMoving = nLanes > 0;
         moving = moving || nTicks > 0 || nLanes > 0;
+    }
+
+    // UF2 (ADR-72): VU shown or hidden follows the "grView" preference: at every tick (another editor may have changed
+    // it) and at once after this plot's own switch. Showing VU ends what only HISTORY offers — a threshold-line drag (its
+    // gesture closes), a press-and-hold freeze, the line and span hovers — and bumps the a11y revision, since the image
+    // and the span group give way to the meter.
+    void HistoryPlot::State::syncView(PanelContext& ctx) noexcept
+    {
+        const bool shown = showVu();
+        if (shown == vuShown)
+            return;
+        vuShown = shown;
+        ++revision;
+        if (!shown)
+            return;
+        if (drag == Drag::line && ctx.gestures != nullptr)
+            ctx.gestures->endDrag();
+        if (drag == Drag::line || drag == Drag::freeze)
+            drag = Drag::none;
+        if (freeze)
+        {
+            freeze = false;
+            ctx.freeze.active = false;
+        }
+        lineHover = cellHover = false;
     }
 
     const HistoryPlot::State::Column* HistoryPlot::State::columnAt(float x) const noexcept
@@ -411,6 +476,7 @@ namespace fcmp::ui
     {
         ctx_.historySpanTenths = spanTenths(st_->spanModel.value());
         st_->head = ctx_.history.count();
+        st_->vuShown = st_->showVu();
     }
 
     HistoryPlot::~HistoryPlot() = default;
@@ -421,8 +487,15 @@ namespace fcmp::ui
     {
         State& s = *st_;
         ctx_.historySpanTenths = spanTenths(s.spanModel.value());   // the preference, mirrored (no file access here)
-        s.span.tick(dt, s.pointerOver ? s.pointer : funkgui::Point{ -1.0f, -1.0f });
+        s.syncView(ctx_);                                         // UF2: HISTORY or VU, the same way
+        constexpr funkgui::Point kAway { -1.0f, -1.0f };
+        s.span.tick(dt, s.pointerOver && !s.vuShown ? s.pointer : kAway);
         s.thr.tick(dt, false, false, false);
+        if (s.hasView)
+        {
+            s.view.tick(dt, s.pointerOver ? s.pointer : kAway);
+            s.vu->tick(dt);                                       // every frame, shown or not: the needle is current
+        }
 
         // The head: the timeline's now (audio time while fresh, the wall clock over a gap once the audio stops, ADR-69)
         // unless a press and hold keeps the view.
@@ -473,8 +546,14 @@ namespace fcmp::ui
         {
             ctx_.offerHand(fcdsp::kNoPid, HandKind::hover, idBase_ + kGroupId, kSpanSpec);
         }
-        if (ctx_.focusVisible && ctx_.focus == idBase_ + kGroupId)
+        else if (s.pointerOver && s.viewHover)
+        {
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::hover, idBase_ + kViewGroupId, kViewSpec);
+        }
+        if (ctx_.focusVisible && ctx_.focus == idBase_ + kGroupId && !s.vuShown)
             ctx_.offerHand(fcdsp::kNoPid, HandKind::focus, idBase_ + kGroupId, kSpanSpec);
+        if (ctx_.focusVisible && s.hasView && ctx_.focus == idBase_ + kViewGroupId)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::focus, idBase_ + kViewGroupId, kViewSpec);
 
         // The image's title (02 §7.5): regenerated at <= 4 Hz.
         s.titleAge += std::max(dt, 0.0f);
@@ -508,7 +587,13 @@ namespace fcmp::ui
             outline(c, p, th.ink16);
         }
 
+        // UF2 (ADR-72): with VU shown the meter fills the plot instead of the grid and the traces (the columns keep
+        // advancing in tick(), so HISTORY comes back without a gap).
+        if (s.vuShown)
+            s.vu->draw(c, th);
+
         // Grid: every 12 dB (every 6 at S <= 24); 0 dBFS always, labelled.
+        if (!s.vuShown)
         {
             const funkgui::Canvas::Scope scope(c, tag::grid, false);
             const float step = scale <= 24.0f ? layout::band::kGridDbFine : layout::band::kGridDb;
@@ -521,6 +606,7 @@ namespace fcmp::ui
         }
 
         // Traces (02 §6.5): IN area, DET, OUT, hanging GR; pre-mixed over the ground, never dimmed (ADR-69).
+        if (!s.vuShown)
         {
             constexpr float d = 1.0f;
             const bool det = geom_.alwaysDet || detCanDiffer(ctx_);
@@ -571,17 +657,19 @@ namespace fcmp::ui
             }
         }
 
-        // The threshold line at T_in, into the TRANSFER handle (02 §6.5; K1 #9).
+        // The threshold line at T_in, into the TRANSFER handle (02 §6.5; K1 #9). Under VU only its part outside the plot
+        // (from the frame's right edge on, so every pixel right of the plot is the same), and it is not draggable.
         if (f.entry != nullptr)
         {
             const float tIn = fcdsp::analysis::inputThresholdDb(f.eng);
             if (tIn > floorDb && tIn < layout::kLevelTopDb)
             {
                 const layout::TransferGeom& tg = transferOf(geom_);
+                const float x0 = s.vuShown ? p.right() - 1.0f : p.x;
                 const float x1 = layout::transferX(tg, tIn, scale);
                 const bool hand = ctx_.hand.kind != HandKind::none && ctx_.hand.pid == fcdsp::Pid::thr;
                 const funkgui::Canvas::Scope scope(c, tag::thresholdMark, false);
-                c.hairlineH(p.x, lm.y(tIn, scale), x1 - p.x, hand ? th.accent : th.ink32);
+                c.hairlineH(x0, lm.y(tIn, scale), x1 - x0, hand ? th.accent : th.ink32);
             }
         }
 
@@ -608,11 +696,19 @@ namespace fcmp::ui
             c.hairlineV(s.freezeX, p.y, p.h, th.ink52);
         }
 
-        // Chrome: caption, span cells, unit word, time labels.
+        // Chrome: caption (on the band the HISTORY · VU switch in its place, UF2), span cells, unit word, time labels —
+        // the last three hidden under VU.
+        if (s.hasView)
+        {
+            s.view.draw(c, th, ctx_.focusVisible && ctx_.focus == idBase_ + kViewGroupId);
+        }
+        else
         {
             const funkgui::Canvas::Scope scope(c, tag::caption, false);
             c.text("HISTORY", geom_.caption.x, geom_.caption.y, T::kCaption, th.ink52);
         }
+        if (s.vuShown)
+            return;
         s.span.draw(c, th, ctx_.focusVisible && ctx_.focus == idBase_ + kGroupId);
         {
             const funkgui::Canvas::Scope scope(c, tag::unitWord, false);
@@ -639,7 +735,10 @@ namespace fcmp::ui
 
     // ---- hit testing and input -------------------------------------------------------------------------------------------
 
-    bool HistoryPlot::hit(funkgui::Point p) const { return area(geom_).contains(p); }
+    bool HistoryPlot::hit(funkgui::Point p) const
+    {
+        return area(geom_).contains(p) || (st_->hasView && st_->view.contains(p));   // UF2: the switch starts at x 33
+    }
 
     namespace
     {
@@ -668,14 +767,15 @@ namespace fcmp::ui
         State& s = *st_;
         s.pointerOver = true;
         s.pointer = { e.x, e.y };
-        s.lineHover = onLine(ctx_, geom_, s.pointer);
-        s.cellHover = s.span.contains(s.pointer);
+        s.lineHover = !s.vuShown && onLine(ctx_, geom_, s.pointer);
+        s.cellHover = !s.vuShown && s.span.contains(s.pointer);
+        s.viewHover = s.hasView && s.view.contains(s.pointer);
     }
 
     void HistoryPlot::pointerExit()
     {
         State& s = *st_;
-        s.pointerOver = s.lineHover = s.cellHover = false;
+        s.pointerOver = s.lineHover = s.cellHover = s.viewHover = false;
     }
 
     void HistoryPlot::pointerDown(const funkgui::PointerEvent& e)
@@ -687,6 +787,15 @@ namespace fcmp::ui
         s.drag = State::Drag::none;
         if (ctx_.gestures == nullptr || ctx_.host == nullptr)
             return;
+        if (s.hasView && s.view.contains(p))
+        {
+            s.view.pointerDown(e, *ctx_.gestures);                // UF2: HISTORY or VU (a preference, no parameter)
+            s.syncView(ctx_);
+            s.drag = State::Drag::cells;
+            return;
+        }
+        if (s.vuShown)
+            return;                                               // the meter takes no input
         if (s.span.contains(p))
         {
             s.span.pointerDown(e, *ctx_.gestures);
@@ -776,6 +885,10 @@ namespace fcmp::ui
     funkgui::Cursor HistoryPlot::cursor(funkgui::Point p) const
     {
         const State& s = *st_;
+        if (s.hasView && s.view.contains(p))
+            return s.view.cursorAt(p);
+        if (s.vuShown)
+            return funkgui::Cursor::normal;
         if (s.drag == State::Drag::line || onLine(ctx_, geom_, p))
             return funkgui::Cursor::upDown;
         if (s.span.contains(p))
@@ -785,7 +898,14 @@ namespace fcmp::ui
 
     bool HistoryPlot::key(const funkgui::KeyEvent& e)
     {
-        if (ctx_.gestures == nullptr || ctx_.focus != idBase_ + kGroupId)
+        State& s = *st_;
+        if (ctx_.gestures != nullptr && s.hasView && ctx_.focus == idBase_ + kViewGroupId)
+        {
+            const bool used = s.view.key(e, *ctx_.gestures);
+            s.syncView(ctx_);
+            return used;
+        }
+        if (ctx_.gestures == nullptr || ctx_.focus != idBase_ + kGroupId || s.vuShown)
             return false;
         const bool used = st_->span.key(e, *ctx_.gestures);
         ctx_.historySpanTenths = spanTenths(st_->spanModel.value());
@@ -797,13 +917,24 @@ namespace fcmp::ui
         // ADR-69: the strip scrolls at full rate while it holds ink the head moves; at rest (nothing in view, or all
         // silence / gap) it leaves the rate to the rest of the panel.
         const State& s = *st_;
-        return !s.span.settled() || s.freeze || (s.moving && s.timeline.started());
+        if (!s.span.settled() || s.freeze || (s.hasView && !s.view.settled()))
+            return true;
+        if (s.vuShown)                                            // UF2: the needle, and the state lane under it
+            return s.vu->wantsFullRate() || (s.laneMoving && s.timeline.started());
+        return s.moving && s.timeline.started();
     }
 
     // ---- accessibility ------------------------------------------------------------------------------------------------------
 
     void HistoryPlot::accessibility(std::vector<funkgui::A11yItem>& out) const
     {
+        const State& s = *st_;
+        if (s.vuShown)                                            // UF2: the meter, then the switch; no span group
+        {
+            s.vu->accessibility(out);
+            s.view.accessibility(out);
+            return;
+        }
         funkgui::A11yItem it;
         it.id = idBase_ + kImageId;
         it.role = funkgui::A11yRole::image;
@@ -812,24 +943,36 @@ namespace fcmp::ui
         it.help = "Press and hold to read a moment; drag the threshold line to set the threshold";
         it.readOnly = true;
         out.push_back(std::move(it));
-        st_->span.accessibility(out);
+        if (s.hasView)
+            s.view.accessibility(out);
+        s.span.accessibility(out);
     }
 
     int HistoryPlot::focusOrder(std::span<uint32_t> out) const
     {
-        if (out.empty())
-            return 0;
-        out[0] = idBase_ + kGroupId;                               // 02 §8.9 item 5: the span group
-        return 1;
+        // 02 §8.9 item 5: the GR view group (UF2, the band only), then the span group (hidden under VU).
+        const State& s = *st_;
+        std::size_t n = 0;
+        if (s.hasView && n < out.size())
+            out[n++] = idBase_ + kViewGroupId;
+        if (!s.vuShown && n < out.size())
+            out[n++] = idBase_ + kGroupId;
+        return static_cast<int>(n);
     }
 
     void HistoryPlot::a11yAction(uint32_t id, funkgui::A11yAction a, double value)
     {
         if (ctx_.gestures == nullptr || a == funkgui::A11yAction::focus)
             return;
-        if (st_->span.a11yAction(id, a, value, *ctx_.gestures))
-            ctx_.historySpanTenths = spanTenths(st_->spanModel.value());
+        State& s = *st_;
+        if (s.hasView && s.view.a11yAction(id, a, value, *ctx_.gestures))
+        {
+            s.syncView(ctx_);
+            return;
+        }
+        if (!s.vuShown && s.span.a11yAction(id, a, value, *ctx_.gestures))
+            ctx_.historySpanTenths = spanTenths(s.spanModel.value());
     }
 
-    uint32_t HistoryPlot::a11yRevision() const { return 0; }
+    uint32_t HistoryPlot::a11yRevision() const { return st_->revision; }
 }

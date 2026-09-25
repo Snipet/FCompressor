@@ -49,7 +49,9 @@ namespace fcmp::ui
             p->draw(c, th);
     }
 
-    bool Band::hit(funkgui::Point p) const { return layout::kBand.contains(p); }
+    // UF2 (ADR-72): the HISTORY · VU switch's first cell starts 7 px left of the band region (its label keeps the old
+    // caption's x 40), so the band also claims what the HISTORY plot claims.
+    bool Band::hit(funkgui::Point p) const { return layout::kBand.contains(p) || history_.hit(p); }
 
     void Band::pointerDown(const funkgui::PointerEvent& e)
     {
