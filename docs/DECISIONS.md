@@ -537,6 +537,18 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   `HostServices::zoomFits()`. The ZOOM cells draw a step that does not fit as unavailable, with a footer hint, and a
   click on it does nothing (UF1b).
 
+- **ADR-72 GR VU meter (user request, 2026-09-25).** The band's HISTORY caption becomes a two-cell switch, **HISTORY ·
+  VU**. VU replaces the scrolling GR history, in the same plot rectangle (40, 140, 500 × 192), with one large
+  analog-style needle meter for gain reduction.
+  - **Look:** panel style (the user's choice). Theme inks, a thin arc scale with ticks, a needle and a pivot; it
+    follows GRAPHITE/PAPER.
+  - **Scale and ballistics:** the classic GR-on-a-VU scale, with the needle at rest on 0 and swinging left as GR grows
+    (0, −1, −2, −3, −5, −7, −10, −20 dB). VU ballistics: 99 % of a step in 300 ms, 1–1.5 % overshoot.
+  - **Other settings:** the span cells do not apply while VU is shown. The choice is a machine-wide preference, like
+    the span. Nothing else on the panel moves, and the history keeps recording while it is hidden. The Characteristics
+    screen's HISTORY is unchanged. When audio stops, the needle falls back to rest with the same ballistics (ADR-69).
+    Card UF2.
+
 ## HardwareReverb migration
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
