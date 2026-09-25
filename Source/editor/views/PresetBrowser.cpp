@@ -1,5 +1,6 @@
-// Source/editor/views/PresetBrowser.cpp — the preset browser (see PresetBrowser.h): filters, rows, save as and rename
-// (LineEdit), delete, import and export (juce::FileChooser), context menus (funkgui::MenuLook) over PresetAccess.
+// Source/editor/views/PresetBrowser.cpp — the preset browser (see PresetBrowser.h): filters, rows, save (P3c: over the
+// current user preset), save as and rename (LineEdit), delete, import and export (juce::FileChooser), context menus
+// (funkgui::MenuLook) over PresetAccess.
 #include "editor/views/PresetBrowser.h"
 
 #include "editor/Layout.h"
@@ -220,7 +221,8 @@ namespace fcmp::ui
                 w = std::max(w, funkgui::text::width(ctx_.atlas, l, T::kCaption));
             return 2.0f * std::ceil((w + kCellPad) * 0.5f);
         };
-        browseCells_ = { { { Action::saveAs, "SAVE AS", { 0.0f, kBarTop, width({ "SAVE AS" }), kBarH } },
+        browseCells_ = { { { Action::save, "SAVE", { 0.0f, kBarTop, width({ "SAVE" }), kBarH } },
+                           { Action::saveAs, "SAVE AS", { 0.0f, kBarTop, width({ "SAVE AS" }), kBarH } },
                            { Action::rename, "RENAME", { 0.0f, kBarTop, width({ "RENAME" }), kBarH } },
                            { Action::remove, "DELETE", { 0.0f, kBarTop, width({ "DELETE", "CONFIRM" }), kBarH } },
                            { Action::importFiles, "IMPORT", { 0.0f, kBarTop, width({ "IMPORT" }), kBarH } },
@@ -555,6 +557,17 @@ namespace fcmp::ui
             case Zone::action:
                 switch (cells()[static_cast<std::size_t>(h.index)].action)
                 {
+                    case Action::save:
+                        if (const int cur = entryOf(currentUuid_);
+                            cur >= 0 && !entries_[static_cast<std::size_t>(cur)].factory)
+                        {
+                            l.add("SAVE OVER '");
+                            l.add(entries_[static_cast<std::size_t>(cur)].shownName);
+                            l.add("'");
+                        }
+                        else
+                            l.add("SAVE THE CURRENT SOUND AS A NEW PRESET");
+                        break;
                     case Action::saveAs:      l.add("SAVE THE CURRENT SOUND AS A NEW PRESET"); break;
                     case Action::rename:
                         if (sel != nullptr && !sel->factory)
@@ -669,6 +682,33 @@ namespace fcmp::ui
             saveCategory_ = c->category;
         }
         noteEdit();
+    }
+
+    void PresetBrowser::saveCurrent()
+    {
+        // P3c (PresetBrowser.h): over the current user preset, one call and no dialog, whichever row is selected; a
+        // factory preset or none is a save as; a refused overwrite says so and starts a save as.
+        refresh();
+        const int cur = entryOf(currentUuid_);
+        if (cur < 0 || entries_[static_cast<std::size_t>(cur)].factory)
+        {
+            beginSaveAs();
+            return;
+        }
+        cancelEdit();
+        armedUuid_.clear();
+        typedLen_ = 0;
+        const std::string uuid = currentUuid_;
+        const std::string shown = entries_[static_cast<std::size_t>(cur)].shownName;
+        const int index = indexOf(uuid);
+        if (index < 0 || !ctx_.facade.presets().overwrite(index))
+        {
+            beginSaveAs();                                       // the sound is kept as a new preset instead
+            flash("COULD NOT SAVE OVER '" + shown + "'");
+            return;
+        }
+        refresh(true);
+        flash("SAVED '" + shown + "'");
     }
 
     void PresetBrowser::beginRename(int entry)
@@ -1127,6 +1167,7 @@ namespace fcmp::ui
         const Entry* sel = selectedEntry();
         switch (a)
         {
+            case Action::save:
             case Action::saveAs:
             case Action::importFiles:
             case Action::cancel:      return true;
@@ -1144,6 +1185,7 @@ namespace fcmp::ui
             return;
         switch (a)
         {
+            case Action::save:        saveCurrent(); break;
             case Action::saveAs:      beginSaveAs(); break;
             case Action::rename:      beginRename(selected_); break;
             case Action::remove:      armOrRemove(selected_); break;
@@ -1993,6 +2035,16 @@ namespace fcmp::ui
             uint32_t loc = kSaveAsLocal;
             switch (cell.action)
             {
+                case Action::save:
+                {
+                    loc = kSaveLocal;
+                    it.title = "Save";
+                    const int cur = entryOf(currentUuid_);
+                    it.help = cur >= 0 && !entries_[static_cast<std::size_t>(cur)].factory
+                                  ? "Saves over " + entries_[static_cast<std::size_t>(cur)].name
+                                  : std::string("Saves the current sound as a new preset");
+                    break;
+                }
                 case Action::saveAs:      loc = kSaveAsLocal; it.title = "Save as"; break;
                 case Action::rename:      loc = kRenameLocal; it.title = "Rename"; break;
                 case Action::remove:      loc = kDeleteLocal; it.title = armedSel ? "Confirm delete" : "Delete"; break;
@@ -2079,8 +2131,9 @@ namespace fcmp::ui
         {
             case kSaveAsLocal:
                 if (edit_ != Edit::saveAs)
-                    beginSaveAs();                               // the strip's SAVE comes this way
+                    beginSaveAs();                               // the strip's save as comes this way
                 break;
+            case kSaveLocal:     if (edit_ == Edit::none) runAction(Action::save); break;
             case kRenameLocal:   runAction(Action::rename); break;
             case kDeleteLocal:   runAction(Action::remove); break;
             case kImportLocal:   runAction(Action::importFiles); break;

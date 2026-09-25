@@ -29,6 +29,7 @@
 #include <funkgui/params/ParamPort.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -127,7 +128,8 @@ namespace fcmp::probe
         // so a forced true never corrupts the list); nullopt restores the behaviour above. Every success bumps
         // revision(). reads() counts the list reads (count, row, current, modified), so a probe can tell a view that
         // re-reads every frame from one that re-reads when revision() moves.
-        enum class Call : uint8_t { rename, remove, importFile, exportFile };
+        // P3c (S12.5; S12 lead revision 11) adds Call::overwrite: overwrite(index), below.
+        enum class Call : uint8_t { rename, remove, importFile, exportFile, overwrite };
         struct CallLog
         {
             int         index = -1;                      // the row (import: -1)
@@ -148,6 +150,15 @@ namespace fcmp::probe
         int  reads() const noexcept { return reads_; }
         void resetCounts() noexcept;                     // applies, steps, saves, reads and every call log
 
+        // ---- P3c additions (S12.5; S12 lead revision 11): additive, no declaration above changed ------------------
+        // overwrite(index): save over a user row as the processor's does (P3c): the row takes the live Mode (its
+        // modeKey: the effective slot's key) and keeps its uuid, name and category; it becomes current() and modified()
+        // is false. A factory row or an index out of range is refused (nothing changes). Counted and logged as
+        // Call::overwrite (text: empty), scripted by script(Call::overwrite, …) like the others; a success bumps
+        // revision(). overwrites() is count(Call::overwrite).
+        bool overwrite(int index) override;
+        int  overwrites() const noexcept { return count(Call::overwrite); }
+
     private:
         FakeFacade&      owner_;
         std::vector<Row> rows_;
@@ -161,8 +172,9 @@ namespace fcmp::probe
         bool nameTaken(std::string_view name, int ignoreIndex) const;
         std::string uniqueName(std::string_view wanted) const;
 
-        std::array<std::optional<bool>, 4>    scripted_{};
-        std::array<std::vector<CallLog>, 4>   calls_{};
+        static constexpr std::size_t kCalls = 5;         // Call's enumerators (P3c: overwrite is the fifth)
+        std::array<std::optional<bool>, kCalls>  scripted_{};
+        std::array<std::vector<CallLog>, kCalls> calls_{};
         std::optional<Row>                    importRow_;
         int                                   imported_ = 0;   // fresh uuids for imports
         mutable int                           reads_ = 0;

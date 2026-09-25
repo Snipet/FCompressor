@@ -1,4 +1,5 @@
-// Source/editor/views/PresetStrip.cpp — the preset strip (see PresetStrip.h): ‹ name ›, the modified marker, SAVE.
+// Source/editor/views/PresetStrip.cpp — the preset strip (see PresetStrip.h): ‹ name ›, the modified marker, SAVE (P3c:
+// over the current user preset, else save as; its context menu).
 #include "editor/views/PresetStrip.h"
 
 #include "editor/Layout.h"
@@ -13,9 +14,13 @@
 #include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
+#include <funkgui/juce/MenuLook.h>
+#include <funkgui/panel/HostServices.h>
 #include <funkgui/text/LineEdit.h>
 #include <funkgui/text/TextFit.h>
 #include <funkgui/widgets/FocusRing.h>
+
+#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -50,6 +55,8 @@ namespace fcmp::ui
         constexpr float kChevronHalf = 5.0f;
         constexpr float kChevronStroke = 1.5f;
         constexpr const char* kSep = " \xC2\xB7 ";              // " · "
+        constexpr double kSavedS = 2.0;                         // SAVED after a save over, panel time (P3c)
+        constexpr std::size_t kSpecNameMax = 64;                // bytes of the name in SAVE's footer line
 
         static_assert(kPrev.x == layout::header::kPresetStrip.x && kSave.right() == layout::header::kPresetStrip.right(),
                       "the strip's parts span layout::header::kPresetStrip");
@@ -97,6 +104,13 @@ namespace fcmp::ui
 
     PresetStrip::PresetStrip(PanelContext& ctx) : ctx_(ctx) { refresh(); }
 
+    PresetStrip::~PresetStrip()
+    {
+        alive_.reset();                                          // a menu callback still queued does nothing
+        if (menuLook_ != nullptr)
+            juce::PopupMenu::dismissAllActiveMenus();            // an open menu holds a pointer to its look
+    }
+
     // ---- state ----------------------------------------------------------------------------------------------------------
 
     void PresetStrip::refresh()
@@ -116,6 +130,9 @@ namespace fcmp::ui
             row = pa.row(current);
         const std::string name = funkgui::text::printable(trimmed(row.name));
         const std::string category = funkgui::text::printable(trimmed(row.category));
+        const int shownCurrent = current >= 0 && current < count ? current : -1;
+        if (shownCurrent != current_ || name != rawName_)
+            savedUntil_ = -1.0;                                  // SAVED belongs to the preset it saved
 
         count_ = count;
         current_ = current >= 0 && current < count ? current : -1;
@@ -128,7 +145,23 @@ namespace fcmp::ui
         else
             copyText(count_ == 0 ? "NO PRESETS" : "UNTITLED", name_, sizeof name_);
         copyText(upper(category), category_, sizeof category_);
+        rebuildSaveSpec();
         ++a11yRev_;
+    }
+
+    bool PresetStrip::savesOver() const noexcept { return current_ >= 0 && !factory_; }
+
+    void PresetStrip::rebuildSaveSpec()
+    {
+        if (!savesOver())
+        {
+            copyText("SAVE THE CURRENT SOUND AS A NEW PRESET", saveSpec_, sizeof saveSpec_);
+            return;
+        }
+        char shown[kSpecNameMax];
+        copyText(name_, shown, sizeof shown);
+        copyText("SAVE OVER '" + std::string(shown) + "'   RIGHT-CLICK OR SHIFT-RETURN: SAVE AS", saveSpec_,
+                 sizeof saveSpec_);
     }
 
     void PresetStrip::tick(float dt)
@@ -150,6 +183,8 @@ namespace fcmp::ui
 
     bool PresetStrip::wantsFullRate() const
     {
+        if (savedUntil_ >= 0.0 && ctx_.seconds <= savedUntil_)
+            return true;                                         // SAVED goes on time
         for (int p = 1; p <= 4; ++p)
             if (!funkgui::ease::sameBits(hoverAmt_[partIndex(p)], static_cast<int>(hover_) == p ? 1.0f : 0.0f))
                 return true;
@@ -164,7 +199,7 @@ namespace fcmp::ui
             case Part::next: return "NEXT PRESET";
             case Part::name: return count_ > 0 ? "PRESET   CLICK: ALL PRESETS   ARROWS: PREVIOUS / NEXT"
                                                : "PRESET   CLICK: THE PRESET BROWSER";
-            case Part::save: return "SAVE THE CURRENT SOUND AS A NEW PRESET";
+            case Part::save: return saveSpec_;
             case Part::none: break;
         }
         return "";
@@ -223,8 +258,10 @@ namespace fcmp::ui
         char subFit[192];
         funkgui::text::fitEllipsis(ctx_.atlas, sub, T::kMicro, kSubMaxW, subFit, sizeof subFit);
         c.text(subFit, kNameTextX, kSubTop, T::kMicro, th.ink32);
-        if (modified_)
+        const bool saved = !modified_ && current_ >= 0 && savedUntil_ >= 0.0 && ctx_.seconds <= savedUntil_;
+        if (modified_ || saved)
         {
+            const char* word = modified_ ? "MODIFIED" : "SAVED"; // SAVED: a save over, for kSavedS (P3c)
             float x = kNameTextX;
             if (subFit[0] != '\0')
             {
@@ -232,8 +269,8 @@ namespace fcmp::ui
                 c.text(kSep, x, kSubTop, T::kMicro, th.ink32);
                 x += c.textWidth(kSep, T::kMicro);
             }
-            if (x + c.textWidth("MODIFIED", T::kMicro) <= kNameTextX + kSubMaxW)
-                c.text("MODIFIED", x, kSubTop, T::kMicro, th.ink52);
+            if (x + c.textWidth(word, T::kMicro) <= kNameTextX + kSubMaxW)
+                c.text(word, x, kSubTop, T::kMicro, th.ink52);
         }
 
         // SAVE: an outlined button.
@@ -297,10 +334,83 @@ namespace fcmp::ui
 
     void PresetStrip::save()
     {
+        // P3c: over the current user preset, one call and no dialog; a factory preset or none, or an overwrite the
+        // processor refuses, is a save as (PresetStrip.h).
+        refresh();
+        if (savesOver())
+        {
+            if (ctx_.facade.presets().overwrite(current_))
+            {
+                refresh();
+                savedUntil_ = ctx_.seconds + kSavedS;
+                if (ctx_.host != nullptr)
+                    ctx_.host->nudgeFullRate();                  // SAVED is seen now, and goes on time
+                return;
+            }
+        }
+        saveAs();
+    }
+
+    void PresetStrip::saveAs()
+    {
         // The browser takes the name (PresetBrowser.h): open it, then press its SAVE AS through the Panel.
         openBrowser();
         ctx_.panel.a11yAction(a11yId(ViewIndex::presetBrowser, PresetBrowser::kSaveAsLocal),
                               funkgui::A11yAction::press, 0.0);
+    }
+
+    int PresetStrip::menu(std::span<MenuItem> out) const
+    {
+        std::size_t n = 0;
+        const auto add = [&](Command c, const char* label) {
+            if (n < out.size())
+                out[n++] = { c, label, true };
+        };
+        add(Command::save, "Save");
+        add(Command::saveAs, "Save As...");
+        return static_cast<int>(n);
+    }
+
+    void PresetStrip::run(Command c)
+    {
+        switch (c)
+        {
+            case Command::save:   save(); break;
+            case Command::saveAs: saveAs(); break;
+        }
+    }
+
+    void PresetStrip::showMenu()
+    {
+        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
+        if (owner == nullptr)
+            return;                                              // headless: no window to anchor a menu on
+        refresh();
+        if (menuLook_ == nullptr)
+            menuLook_ = std::make_unique<funkgui::MenuLook>(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
+        menuLook_->setTheme(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
+
+        std::array<MenuItem, 4> items{};
+        const int n = menu(items);
+        juce::PopupMenu m;
+        m.setLookAndFeel(menuLook_.get());
+        for (int i = 0; i < n; ++i)
+        {
+            const MenuItem& it = items[static_cast<std::size_t>(i)];
+            m.addItem(static_cast<int>(it.command), it.label, it.enabled);
+        }
+        const float s = static_cast<float>(owner->getWidth()) / static_cast<float>(layout::kWidth);   // the UI zoom
+        const juce::Rectangle<int> area = owner->localAreaToGlobal(
+            juce::Rectangle<float>(kSaveBox.x * s, kSaveBox.y * s, kSaveBox.w * s, kSaveBox.h * s).toNearestInt());
+        const std::weak_ptr<int> alive = alive_;
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(area),
+                        [this, alive](int id) {
+                            if (alive.expired() || id <= 0)
+                                return;
+                            run(static_cast<Command>(id));
+                            if (ctx_.host != nullptr)
+                                ctx_.host->nudgeFullRate();
+                        });
     }
 
     void PresetStrip::activate(Part p)
@@ -332,6 +442,8 @@ namespace fcmp::ui
         {
             if (p == Part::name)
                 openBrowser();                                   // no host menu for presets: the browser has one
+            else if (p == Part::save)
+                showMenu();                                      // Save, Save As... (P3c)
             return;
         }
         pressed_ = p;
@@ -366,7 +478,10 @@ namespace fcmp::ui
         {
             case funkgui::Key::enter:
             case funkgui::Key::space:
-                activate(f);
+                if (f == Part::save && e.mods.shift)
+                    saveAs();                                    // Shift-Return on SAVE: save as (P3c)
+                else
+                    activate(f);
                 return true;
             case funkgui::Key::right:
             case funkgui::Key::up:
@@ -445,7 +560,8 @@ namespace fcmp::ui
         saveItem.role = funkgui::A11yRole::button;
         saveItem.bounds = kSaveBox;
         saveItem.title = "Save preset";
-        saveItem.help = "Saves the current sound as a new preset";
+        saveItem.help = savesOver() ? "Saves over " + std::string(rawName_) + ". Its menu has Save as"
+                                    : std::string("Saves the current sound as a new preset");
         out.push_back(std::move(saveItem));
     }
 
@@ -483,6 +599,8 @@ namespace fcmp::ui
             case funkgui::A11yAction::showMenu:
                 if (p == Part::name)
                     openBrowser();
+                else if (p == Part::save)
+                    showMenu();
                 break;
             case funkgui::A11yAction::setValue:
             case funkgui::A11yAction::focus:
