@@ -1722,6 +1722,12 @@ state and marker occurs on this one layout:
 
 ### 6.6 Display row and footer
 
+> **S12 revision (UF1b, ADR-68/68a).** The footer carries ZOOM cells beside THEME: a caption at (606, 605) and cells
+> 100/125/150/175 at x 638/674/710/746 (32 × 16, y 601, 4 px apart). A step that does not fit the display is drawn
+> in ink16 and refuses clicks, and its hover hint reads "<n> % NEEDS A LARGER DISPLAY". The footer spec line narrows
+> from 740 to 554 px (`layout::footer::kSpecLineW`). The THEME spec text is "THEME   GRAPHITE · PAPER   MACHINE-WIDE,
+> NOT SAVED WITH THE SESSION".
+
 - **Display value precedence** (HR `:983-987`, 0.9 s dwell):
   1. the dragged slot or handle;
   2. else the hovered one;
@@ -2021,6 +2027,10 @@ Band: IN L/R, GR, OUT L/R. Full screen: IN, SC, GR, OUT. **Both use their screen
 - Tags `METER_IN/OUT/GR/SC/HOLD` (live).
 
 ### 8.9 Keyboard, Tab order, accessibility
+
+> **S12 revision.** The footer's last two Tab stops are ZOOM, then THEME (UF1b): a radio group "Zoom" of buttons
+> "ZOOM 125 %" with checked and enabled states. The preset strip has four stops: ‹, name, › and SAVE (U6). The
+> browsers are not in the Panel's Tab order yet; H1a adds them.
 
 **Tab order on PANEL:**
 1. Mode latch.

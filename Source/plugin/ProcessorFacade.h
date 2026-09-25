@@ -45,6 +45,9 @@ public:
     virtual bool     remove(int /*index*/) { return false; }                                 // user rows only
     virtual bool     importFile(std::string_view /*path*/) { return false; }  // a preset file; fresh uuid, unique name
     virtual bool     exportFile(int /*index*/, std::string_view /*path*/) { return false; }  // any row, PresetFile
+    // S12 lead revision 11 (U6's request), additive: save the current parameters and Mode over a user row, keeping its
+    // name, category, uuid and tags; it becomes current() and unmodified. Factory rows refuse. Default: refuse.
+    virtual bool     overwrite(int /*index*/) { return false; }
 };
 
 class ProcessorFacade {

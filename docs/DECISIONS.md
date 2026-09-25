@@ -541,7 +541,9 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
   `preset.attributes` column, which FCompressor needs for `modeId`/`modeRev`, with `schema_min_reader` still 1, so
-  older builds keep reading and writing the file. Moving HR's presets onto it (migration phase 2) changes HR's
-  `schema.user_version` golden from 1 to 2, and the "newer build" fixtures move to 3. This is a deliberate, versioned
-  and backward-compatible format change, not a regression. It is the one approved exception to the gate's "never edit
-  HR's expectations" rule. Every other preset golden must hold unedited.
+  older builds keep reading and writing the file. Moving HR's presets onto it (migration phase 2, HR PR #2) changes
+  HR's **schema-version rows**. `schema.user_version`, `corrupt.notadb.user_version`, `migrate.v0_empty.user_version`
+  and `migrate.v0_foreign.user_version` move from 1 to 2, and `migrate.newer_readable.user_version_kept` moves from 2 to
+  3 with its fixture. This is a deliberate, versioned and backward-compatible format change, not a regression. It is
+  the one approved exception to the gate's "never edit HR's expectations" rule; every other preset golden held unedited.
+  A real v1 database, written by HR's own pre-migration store, migrates in place losing nothing (30 spec rows).
