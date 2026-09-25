@@ -7,6 +7,10 @@
 // a double-click on empty band area (no plot claims it) opens CHARACTERISTICS (02 §6.5, §7.1). Tab stops: each plot's
 // chrome stops in plot order (span group, scale group, meter reset; 02 §8.9) — on PANEL the slots, not the handles,
 // are the Tab stops.
+//
+// UF2 (S12, ADR-72): HISTORY's caption is the HISTORY · VU switch, and VU shows a GR needle meter in HISTORY's plot
+// (HistoryPlot owns both; no declaration here changed). Its first cell starts 7 px left of kBand, so hit() also takes
+// what the HISTORY plot claims.
 #pragma once
 
 #include "editor/SubView.h"

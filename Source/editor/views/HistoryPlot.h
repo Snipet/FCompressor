@@ -36,6 +36,19 @@
 //   ink52), the display row reads it; release resumes.
 // - Span cells: funkgui::PrefCells over the "historySpanTenths" preference, mirrored into PanelContext each tick. One
 //   Tab stop (the group); the image and the group are its a11y items.
+//
+// UF2 (S12, ADR-72) — the band's GR view (no declaration above changed; HistoryPlot.cpp's State holds it):
+// - On the band only (kBandHistory; the Characteristics screen's HISTORY keeps its "HISTORY" caption), the caption is
+//   a two-cell switch HISTORY · VU (layout::vu::kViewCells, CellStyle::text: the span cells' look and hit rule) over
+//   the machine-wide UiPreferences int "grView" (0 HISTORY, the default; 1 VU), read every tick like the span. One more
+//   Tab stop before the span group (a radio group "GR view"), the same keys and a11y as the span cells.
+// - VU shows the GrVuMeter (views/GrVuMeter.h) in the plot rectangle instead of the grid, traces, gaps, Mode ticks and
+//   freeze; the span cells, their "S" and the time labels are hidden, not dimmed (and leave the a11y model and the Tab
+//   order); the image item gives way to the meter's. The plot frame, the state lane and the threshold line's part
+//   outside the plot are unchanged, so nothing outside the plot rectangle, the caption row and the time-label row
+//   moves. The columns keep advancing under VU, so HISTORY comes back without a gap; the meter is ticked under
+//   HISTORY too, so VU shows the needle where it is. Under VU the plot takes no pointer input (no threshold drag, no
+//   freeze); a double-click on it opens CHARACTERISTICS as on any empty band area.
 #pragma once
 
 #include "editor/Layout.h"

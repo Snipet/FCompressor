@@ -448,8 +448,9 @@ namespace fcmp::ui
     {
         // 02 §9.6: full rate while kUiLive (until the stream goes stale), an ease, a fade or a pending preview; and
         // (ADR-69) while a sub-view has something moving — HISTORY scrolling data in view at wall-clock rate after the
-        // audio stops, falling meters and bars, the operating dot's fade — or for layout::live::kActiveS after any input
-        // (DisplayRow's activity clock: hover, drag, click, wheel, keys). Idle rate only when nothing moves.
+        // audio stops, falling meters and bars, the operating dot's fade, the GR VU needle while it swings (UF2, ADR-72) —
+        // or for layout::live::kActiveS after any input (DisplayRow's activity clock: hover, drag, click, wheel, keys).
+        // Idle rate only when nothing moves.
         if (!ticked_ || fade_ < 1.0f || preview_->pending() || ctx_.frame.live)
             return true;
         if (!funkgui::ease::sameBits(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f))

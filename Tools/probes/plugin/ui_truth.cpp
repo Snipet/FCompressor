@@ -72,7 +72,8 @@
 // Characteristics screen at the end; and, with --png-seq, the panel at every GAIN REDUCTION refresh as
 // <dir>/gr-<ms>.png: the readout at 0.25 s intervals under the moving GR) at dpi 2.
 //
-// The probe writes UiPreferences (the span click): it refuses to run without FCMP_PREFS_DIR (CTest sets a sandbox).
+// The probe writes UiPreferences (the span click, and "grView" = HISTORY so the band draws the traces it reads, UF2): it
+// refuses to run without FCMP_PREFS_DIR (CTest sets a sandbox).
 #include "ProbeRegistry.h"
 
 #include "EngineFacade.h"
@@ -872,6 +873,7 @@ FCMP_PROBE(ui, truth)
     }
     funkgui::UiPreferences::get().setInt("historySpanTenths", layout::kDefaultSpanTenths);
     funkgui::UiPreferences::get().setInt("meterScaleDb", layout::kDefaultScaleDb);
+    funkgui::UiPreferences::get().setInt("grView", layout::vu::kHistory);   // UF2: the band shows HISTORY's traces
     engineRows(P, *entry, flags());
     historyRows(P, *entry);
     return P.finish();

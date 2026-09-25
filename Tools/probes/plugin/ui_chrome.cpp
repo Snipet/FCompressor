@@ -872,6 +872,7 @@ FCMP_PROBE(ui, chrome)
         return P.finish();
     }
     P.eq("font.ok", b(funkgui::FontService::get().atlas().baked() && funkgui::FontService::get().ok()), 1);
+    funkgui::UiPreferences::get().setInt("grView", L::vu::kHistory);   // UF2: the band as every row here expects it
     const fcdsp::ModeDescriptor& desc = *entry->desc;
     modeLatch(P, C.key, desc);
     cells(P, C.key);
