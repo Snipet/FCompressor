@@ -577,10 +577,13 @@ namespace fcmp::ui
             return moveFocus(e.mods.shift ? -1 : 1);             // false without a Tab stop: the host keeps Tab
         if (e.key == funkgui::Key::escape)
         {
-            // 02 §7.1, §8.9: close an open browser -> hide the focus ring -> leave the screen.
+            // 02 §7.1, §8.9: close an open browser -> hide the focus ring -> leave the screen. The open browser sees Esc
+            // first, so a name being typed in the preset browser is cancelled without closing it (U6); the Mode browser
+            // never takes it.
             if (overlay_ != Overlay::none)
             {
-                closeOverlay();
+                if (!view(overlayView(overlay_)).key(e))
+                    closeOverlay();
                 return true;
             }
             if (ctx_.focusVisible)
@@ -645,5 +648,18 @@ namespace fcmp::ui
     {
         if (gestures_)
             gestures_->closeAll();
+    }
+
+    // ---- files dropped on the window (S12 lead revision 8): preset files import through the preset browser ------------
+
+    bool Panel::filesInterest(const std::vector<std::string>& files) const
+    {
+        return static_cast<const PresetBrowser&>(view(ViewIndex::presetBrowser)).filesInterest(files);
+    }
+
+    void Panel::filesDropped(const std::vector<std::string>& files)
+    {
+        if (!shutDown_)
+            static_cast<PresetBrowser&>(view(ViewIndex::presetBrowser)).filesDropped(files);
     }
 }
