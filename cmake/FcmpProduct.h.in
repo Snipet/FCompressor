@@ -20,6 +20,7 @@ namespace fcmp::product
     inline constexpr char kEnvPrefix[]        = "@FCMP_ENV_PREFIX@";          // FCMP_PREFS_DIR, FCMP_PRESETS_DB, ...
     inline constexpr char kObjcPrefix[]       = "@FCMP_OBJC_PREFIX@";         // FunkGui ObjC class-name root (02 §1.8)
     inline constexpr char kPrefsFolder[]      = "@FCMP_PREFS_FOLDER@";        // ~/Library/Application Support/<this>
+    inline constexpr char kPresetExtension[]  = ".fcmppreset";                // FunkPresets ProductConfig::fileExtension (S13)
 
     static_assert(sizeof(kManufacturerCode) == 5 && sizeof(kPluginCode) == 5, "four-character codes");
 } // namespace fcmp::product
