@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -112,6 +113,10 @@ namespace fcmp::ui
         uint32_t a11yRevision() const override;
         void  a11yAction(uint32_t id, funkgui::A11yAction, double value = 0) override;
         void  closeGestures() override;
+
+        // ---- U6 addition (S12 lead revision 8): a preset file dropped on the panel imports (PresetBrowser) -------------
+        bool  filesInterest(const std::vector<std::string>&) const override;
+        void  filesDropped(const std::vector<std::string>&) override;
 
     private:
         class HostProxy;                                         // HostServices over the host + the facade's batch

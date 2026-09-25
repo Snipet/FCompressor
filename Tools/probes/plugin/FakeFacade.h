@@ -88,7 +88,9 @@ namespace fcmp::probe
         int         depth_ = 0, begins_ = 0, sets_ = 0, ends_ = 0, outside_ = 0;
     };
 
-    // PresetAccess over an in-memory row list (empty by default, like the processor's until P3).
+    // PresetAccess over an in-memory row list, by default the processor's at its defaults (empty until P3; since U6, S12:
+    // the compiled factory bank, Init current, unmodified, as a fresh instance of the processor has it). setRows()
+    // replaces it.
     class FakePresets final : public PresetAccess
     {
     public:
@@ -110,6 +112,42 @@ namespace fcmp::probe
         int  steps() const noexcept { return steps_; }
         int  saves() const noexcept { return saves_; }
 
+        // ---- U6 additions (S12 lead revision 8): additive, no FZ4 declaration above changed ----------------------------
+        // User-preset management as the processor's PresetAccess does it over the store (P3b), in memory:
+        // - rename(index, name): user rows only; a name that is empty after trimming, or taken by another row
+        //   (ASCII case-insensitive, factory rows included, as PresetStore::rename) is refused.
+        // - remove(index): user rows only; removing the current row leaves current() = −1 (the parameters untouched), a
+        //   row before it moves it down by one.
+        // - importFile(path): appends a user row named after the file's stem (the part after the last '/', without its
+        //   extension), made unique the store's way ("Name", "Name 2", …); setImportRow() gives the row instead (its name
+        //   made unique the same way). The path is never opened.
+        // - exportFile(index, path): any row in range; the file is never written.
+        // Each call is counted and its arguments logged, refused or not. script(call, result) forces the calls' result
+        // from now on: false refuses (nothing changes), true takes the path above (a refusal it would make still fails,
+        // so a forced true never corrupts the list); nullopt restores the behaviour above. Every success bumps
+        // revision(). reads() counts the list reads (count, row, current, modified), so a probe can tell a view that
+        // re-reads every frame from one that re-reads when revision() moves.
+        enum class Call : uint8_t { rename, remove, importFile, exportFile };
+        struct CallLog
+        {
+            int         index = -1;                      // the row (import: -1)
+            std::string text;                            // rename: the new name; import, export: the path
+            bool        ok = false;                      // what the call returned
+        };
+
+        bool rename(int index, std::string_view newName) override;
+        bool remove(int index) override;
+        bool importFile(std::string_view path) override;
+        bool exportFile(int index, std::string_view path) override;
+
+        void script(Call, std::optional<bool>) noexcept;
+        void setImportRow(std::optional<Row>);
+        void setCurrent(int index) noexcept;             // a host or state load chose `index` (−1: none); not counted
+        const std::vector<CallLog>& calls(Call) const noexcept;
+        int  count(Call) const noexcept;                 // calls(call).size()
+        int  reads() const noexcept { return reads_; }
+        void resetCounts() noexcept;                     // applies, steps, saves, reads and every call log
+
     private:
         FakeFacade&      owner_;
         std::vector<Row> rows_;
@@ -117,6 +155,17 @@ namespace fcmp::probe
         bool             modified_ = false;
         uint32_t         revision_ = 0;
         int              applies_ = 0, steps_ = 0, saves_ = 0;
+
+        // ---- U6 additions ---------------------------------------------------------------------------------------------
+        bool refuse(Call) const noexcept;                // a scripted false
+        bool nameTaken(std::string_view name, int ignoreIndex) const;
+        std::string uniqueName(std::string_view wanted) const;
+
+        std::array<std::optional<bool>, 4>    scripted_{};
+        std::array<std::vector<CallLog>, 4>   calls_{};
+        std::optional<Row>                    importRow_;
+        int                                   imported_ = 0;   // fresh uuids for imports
+        mutable int                           reads_ = 0;
     };
 
     class FakeFacade final : public ProcessorFacade
