@@ -13,7 +13,7 @@
 // Rows (spec; "bitwise" compares the raw plain value: the APVTS atomic the processor reads, which is the truth, 01 §1.3):
 //   state.xml.*                   A's blob: <PARAMS stateVersion="1" modeId=<key> modeRev=<revision> product build>, the
 //                                 29 PARAMs in kApvtsOrder with A's raw values, <UI charExpanded="1" scTab="colour"/>,
-//                                 no other child
+//                                 at most one <PRESET> (P3's hook; proc.presets checks it), no other child
 //   state.restore.raw.mismatches  B vs A after B loads the blob, the 27 parameters other than listen/delta, bitwise: 0
 //   state.restore.monitoring      B's listen and delta are exactly 0 although A saved them ON (K2 #25c): 0 wrong
 //   state.restore.mode            B's effective slot is this Mode's (the Mode travels as its key): 1
@@ -334,6 +334,7 @@ FCMP_PROBE(proc, state)
                                       && xml->getStringAttribute("build") == fcmp::product::kVersion ? 1 : 0, 1);
         std::int64_t params = 0, order = 0, valueBad = 0, others = 0;
         const juce::XmlElement* ui = nullptr;
+        bool preset = false;
         for (const juce::XmlElement* e : xml->getChildIterator())
         {
             if (e->hasTagName("PARAM"))
@@ -352,6 +353,8 @@ FCMP_PROBE(proc, state)
             }
             else if (e->hasTagName("UI") && ui == nullptr)
                 ui = e;
+            else if (e->hasTagName("PRESET") && !preset)         // P3's <PRESET> hook (01 §9.1 save step 3)
+                preset = true;
             else
                 ++others;
         }
