@@ -14,6 +14,8 @@ namespace fcmp::ui
 {
     namespace
     {
+        constexpr const char* kZoomPrefKey = "uiZoom";      // UiPreferences, beside the theme (ADR-68; 02 §5.9)
+
         // A product flag: on for any value but "" and "0" (CaptureConfig's rule for GPU_LOG).
         bool envFlag(const char* name)
         {
@@ -46,6 +48,10 @@ namespace fcmp::ui
         config.height = layout::kHeight;
         config.fallbackTitle = nullptr;              // FUNKGUI_PRODUCT_NAME upper-cased: "FCOMPRESSOR" (FcmpSources.cmake)
         config.setUiAttached = [&facade](bool on) { facade.setUiAttached(on); };   // the processor outlives the editor
+        // UI zoom (ADR-68, ADR-68a; UF1b): the Footer's ZOOM cells offer the same steps (layout::footer::kZoomSteps).
+        config.zoomSteps.assign(layout::footer::kZoomSteps.begin(), layout::footer::kZoomSteps.end());
+        config.defaultZoomPercent = layout::footer::kDefaultZoomPercent;
+        config.zoomPrefKey = kZoomPrefKey;           // machine-wide, like the theme; never saved with the session
         return config;                               // beginBatch/endBatch: empty on purpose (Editor.h)
     }
 

@@ -100,7 +100,7 @@ namespace fcmp::ui::layout
     namespace footer
     {
         inline constexpr Point kSpec { 40.0f, 604.0f };         // spec line, kLabel ink32, fitEllipsis to kSpecMaxW
-        inline constexpr float kSpecMaxW = 740.0f;
+        inline constexpr float kSpecMaxW = 740.0f;              // retired by UF1b (the ZOOM cells): kSpecLineW below
         inline constexpr std::array<Rect, 2> kThemeCells { { { 790.0f, 601.0f, 72.0f, 16.0f },        // GRAPHITE
                                                              { 866.0f, 601.0f, 54.0f, 16.0f } } };    // PAPER
         inline constexpr float kHintS    = 6.0f;                // first-run hint
@@ -530,5 +530,28 @@ namespace fcmp::ui::layout
         inline constexpr float kGrTrackY    = 111.0f;
         inline constexpr float kGrTickTop   = 107.0f;
         inline constexpr float kGrTickH     = 6.0f;
+    }
+
+    // ---- UF1b additions (S12; ADR-68, ADR-68a): additive, no FZ4 declaration above changed ------------------------------
+    // The ZOOM cells beside THEME in the footer band. EditorHost (FunkGui v0.8.0) does the whole zoom: gpu/Editor.cpp passes
+    // kZoomSteps and kDefaultZoomPercent to its EditorConfig, and the Footer draws one cell per step, so the two never
+    // disagree. The panel stays 960 × 640 logical px at every zoom; nothing here scales.
+    // Geometry (the display row's cell rule, above): each cell is w("100") in kCaption (17.6 px) + 14 = 32 px wide, 16 px
+    // tall on the THEME cells' row (y 601), 4 px apart as the THEME cells are; the last one ends 12 px before GRAPHITE
+    // (its label 30 px from GRAPHITE's). The caption "ZOOM" (kCaption ink52, 24.2 px) sits 4 px under the cells' top, as
+    // the display row's captions do, and 8 px before the first cell. The spec line gives up the room: it is fitted to
+    // kSpecLineW (x 40–594, 12 px before the caption) instead of footer::kSpecMaxW (740, retired: nothing reads it). 554 px
+    // still holds the longest line that is not a slot's spec, the lookahead hint ("BRICKWALL WITHOUT LOOKAHEAD CAN
+    // OVERSHOOT — SET LOOKAHEAD 5 MS ABOVE (+5 MS LATENCY)", 552.8 px); slot spec lines were already cut at 740.
+    namespace footer
+    {
+        inline constexpr std::array<int, 4> kZoomSteps { 100, 125, 150, 175 };   // percent, ascending (ADR-68)
+        inline constexpr int   kDefaultZoomPercent = 125;                        // a missing or unlisted preference
+        inline constexpr Point kZoomCaption { 606.0f, 605.0f };                  // "ZOOM", kCaption ink52
+        inline constexpr std::array<Rect, 4> kZoomCells { { { 638.0f, 601.0f, 32.0f, 16.0f },      // 100
+                                                            { 674.0f, 601.0f, 32.0f, 16.0f },      // 125
+                                                            { 710.0f, 601.0f, 32.0f, 16.0f },      // 150
+                                                            { 746.0f, 601.0f, 32.0f, 16.0f } } };  // 175
+        inline constexpr float kSpecLineW = 554.0f;                              // the spec line's fit width
     }
 }
