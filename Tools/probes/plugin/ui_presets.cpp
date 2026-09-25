@@ -43,6 +43,15 @@
 //   draw.*      every BROWSER_* primitive inside the browser's ground, the strip's inside its rectangle, no missing
 //               glyph in any state drawn here.
 //   writes.none the views never write a parameter: every recall is PresetAccess's.
+//   focus.*     (S13 H1a) opened from the keyboard (the strip's name, Return) the focus comes onto the selected row with
+//               one ring in the frame; while open, Tab walks the browser only (the filters, the rows shown, the available
+//               action cells, left to right), wrapping, one ring on each stop, applying nothing; Tab onto a row selects
+//               it (Return then loads it and closes); ↓ on a focused row applies and the focus follows; on the filters
+//               the arrows choose the filter; Return on a focused SAVE AS starts the edit with the focus on its commit
+//               cell, Esc cancels it (nothing saved or applied) and the focus returns to the selection (the last row
+//               Tab passed); Esc closes and the focus goes back to the
+//               strip's name; with the browser open, no item of another view centred under its ground is visible in
+//               a11y, and the 21 slots are.
 //
 // Review pictures (not a test): `fcmp_probe_plugin ui.presets … -- --png-dir <dir>` writes presets-<state>.png (dpi 2,
 // theme 0; one in theme 1).
@@ -62,6 +71,7 @@
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/canvas/Prim.h>
 #include <funkgui/canvas/PrimList.h>
+#include <funkgui/canvas/Tags.h>
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/params/GestureController.h>
@@ -73,6 +83,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1175,6 +1186,172 @@ namespace
         P.eq("draw.inside", b(inside), 1);
     }
 
+    // ---- keyboard focus and what the overlay covers (S13 H1a) -----------------------------------------------------------
+
+    // Every FOCUS_RING primitive of the frame lies in one ring around `want` (FocusRing: want.reduced(1), AA apron).
+    bool oneRingAround(Rig& r, const funkgui::Rect& want)
+    {
+        int n = 0;
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        for (const funkgui::Prim& p : r.host->draw().prims)
+            if (p.tag == funkgui::tags::focusRing)
+            {
+                ++n;
+                x0 = std::min(x0, p.x0);
+                y0 = std::min(y0, p.y0);
+                x1 = std::max(x1, p.x1);
+                y1 = std::max(y1, p.y1);
+            }
+        const funkgui::Rect w = want.reduced(1.0f);
+        const auto near = [](float a, float c) { return std::fabs(a - c) <= 2.5f; };
+        const bool ok = n > 0 && near(x0, w.x) && near(y0, w.y) && near(x1, w.right()) && near(y1, w.bottom());
+        if (!ok)
+            std::printf("NOTE     rings: %d prims over {%g,%g}-{%g,%g}, want one around {%g,%g}-{%g,%g}\n", n,
+                        static_cast<double>(x0), static_cast<double>(y0), static_cast<double>(x1),
+                        static_cast<double>(y1), static_cast<double>(w.x), static_cast<double>(w.y),
+                        static_cast<double>(w.right()), static_cast<double>(w.bottom()));
+        return ok;
+    }
+
+    // Opens the browser from the keyboard: the strip's name focused (its ring shown), then Return.
+    void openByKeys(Rig& r)
+    {
+        r.a11y(stripId(PS::kNameLocal), funkgui::A11yAction::focus);
+        r.keys("return");
+        r.settle();
+    }
+
+    // The stops the browser should offer, in order: the filters, the rows shown (top to bottom), the enabled buttons of
+    // the bottom bar (left to right).
+    std::vector<uint32_t> expectedStops(const Rig& r)
+    {
+        std::vector<uint32_t> stops { browserId(PB::kFiltersLocal) };
+        for (const funkgui::A11yItem& it : rows(r))
+            stops.push_back(it.id);
+        std::vector<funkgui::A11yItem> cells;
+        for (const funkgui::A11yItem& it : r.items())
+            if (ui::viewIndexOf(it.id) == static_cast<int>(ui::ViewIndex::presetBrowser)
+                && it.role == funkgui::A11yRole::button && it.visible && it.enabled
+                && it.bounds.y >= L::kOverlay.y + 200.0f)
+                cells.push_back(it);
+        std::stable_sort(cells.begin(), cells.end(),
+                         [](const funkgui::A11yItem& a, const funkgui::A11yItem& c) { return a.bounds.x < c.bounds.x; });
+        for (const funkgui::A11yItem& it : cells)
+            stops.push_back(it.id);
+        return stops;
+    }
+
+    void focus(Probe& P)
+    {
+        {   // opened from the keyboard: the focus comes onto the selection (the current row), one ring in the frame
+            Rig r;
+            openByKeys(r);
+            P.eq("focus.open_from_keys", b(r.open() && r.presets().applies() == 0 && r.ctx().focus == rowId(1)
+                                           && r.ctx().focusVisible && oneRingAround(r, bounds(r, rowId(1)))), 1);
+
+            // Tab walks the browser only: the filters, the rows shown, the available cells; it wraps; nothing applies
+            const std::vector<uint32_t> want = expectedStops(r);
+            const auto at = std::find(want.begin(), want.end(), rowId(1));
+            bool trap = at != want.end() && want.size() >= 1 + 11 + 4;
+            std::size_t i = trap ? static_cast<std::size_t>(at - want.begin()) : 0;
+            bool rings = trap;
+            for (std::size_t k = 0; trap && k < want.size(); ++k)
+            {
+                i = (i + 1) % want.size();
+                r.keys("tab");
+                trap = trap && r.ctx().focus == want[i] && r.open();
+                const uint32_t loc = want[i] & 0xFFFFu;
+                if (loc != PB::kFiltersLocal)                     // the filters' ring is the chosen filter's
+                    rings = rings && oneRingAround(r, bounds(r, want[i]));
+                else
+                    rings = rings && oneRingAround(r, bounds(r, browserId(PB::kFilterLocal0)));   // ALL
+            }
+            r.keys("shift+tab");
+            trap = trap && r.ctx().focus == want[(i + want.size() - 1) % want.size()];
+            P.eq("focus.tab_trap", b(trap), 1);
+            P.eq("focus.tab_rings", b(rings), 1);
+            P.eq("focus.tab_applies_nothing", b(r.presets().applies() == 0 && r.facade.writes().empty()), 1);
+        }
+        {   // Tab onto a row selects it without applying; Return then loads that row and closes
+            Rig r;
+            openByKeys(r);
+            r.keys("tab");                                        // row 1 -> row 2
+            const bool selected = r.ctx().focus == rowId(2) && r.presets().applies() == 0;
+            r.keys("return");
+            r.settle();
+            P.eq("focus.tab_selects", b(selected && r.presets().applies() == 1 && r.presets().current() == 2
+                                        && !r.open()), 1);
+        }
+        {   // the arrows on a focused row: one apply each, and the focus moves with the selection
+            Rig r;
+            openByKeys(r);
+            r.keys("down");
+            P.eq("focus.arrows_follow", b(r.presets().applies() == 1 && r.presets().current() == 2
+                                          && r.ctx().focus == rowId(2) && oneRingAround(r, bounds(r, rowId(2)))), 1);
+        }
+        {   // the filters: the arrows choose the filter, nothing applies, the ring is on the chosen filter
+            Rig r;
+            openByKeys(r);
+            r.keys("shift+tab");                                  // row 1 -> row 0
+            r.keys("shift+tab");                                  // -> the filters
+            const bool onFilters = r.ctx().focus == browserId(PB::kFiltersLocal);
+            r.keys("right");
+            P.eq("focus.filters_keys", b(onFilters && value(r, browserId(PB::kFiltersLocal)) == "FACTORY"
+                                         && r.presets().applies() == 0 && r.ctx().focus == browserId(PB::kFiltersLocal)
+                                         && oneRingAround(r, bounds(r, browserId(PB::kFilterLocal0 + 1)))), 1);
+        }
+        {   // an action cell: Return presses it (SAVE AS: the edit starts, the focus goes to its commit cell); Esc
+            // cancels the edit, keeps the browser open, and the focus comes back to the selection
+            Rig r;
+            openByKeys(r);
+            uint32_t lastRow = rowId(1);                          // Tab selects each row it passes (the last one stays)
+            for (int k = 0; k < 40 && r.ctx().focus != browserId(PB::kSaveAsLocal); ++k)
+            {
+                r.keys("tab");
+                if ((r.ctx().focus & 0xFFFFu) >= PB::kRowLocal0)
+                    lastRow = r.ctx().focus;
+            }
+            const bool onCell = r.ctx().focus == browserId(PB::kSaveAsLocal);
+            r.keys("return");
+            const bool edit = editing(r) && r.ctx().focus == browserId(PB::kCommitLocal)
+                           && oneRingAround(r, bounds(r, browserId(PB::kCommitLocal)));
+            r.keys("escape");
+            P.eq("focus.cell_return", b(onCell && edit), 1);
+            P.eq("focus.edit_escape", b(!editing(r) && r.open() && r.ctx().focus == lastRow
+                                        && r.presets().saves() == 0 && r.presets().applies() == 0), 1);
+        }
+        {   // Esc closes, and the focus goes back to the strip's name with its ring
+            Rig r;
+            openByKeys(r);
+            r.keys("down");
+            r.keys("escape");
+            r.settle();
+            P.eq("focus.returns_to_strip", b(!r.open() && r.ctx().focus == stripId(PS::kNameLocal)
+                                             && r.ctx().focusVisible), 1);
+        }
+        {   // with the browser open, what it covers is not visible in a11y; the slot rows (below it) are
+            Rig r;
+            openBrowser(r);
+            int covered = 0, slots = 0;
+            for (const funkgui::A11yItem& it : r.items())
+            {
+                if (!it.visible)
+                    continue;
+                const int v = ui::viewIndexOf(it.id);
+                if (v != static_cast<int>(ui::ViewIndex::presetBrowser)
+                    && kGround.contains({ it.bounds.centreX(), it.bounds.centreY() }))
+                {
+                    ++covered;
+                    std::printf("NOTE     covered but visible: %s\n", funkgui::a11yDumpLine(it).c_str());
+                }
+                if (v == static_cast<int>(ui::ViewIndex::slotGrid) && (it.id & 0xFFFFu) >= 1 && (it.id & 0xFFFFu) <= 21)
+                    ++slots;
+            }
+            P.eq("focus.a11y_covered_hidden", covered, 0);
+            P.eq("focus.a11y_slots_visible", slots, 21);
+        }
+    }
+
     // `-- --png-dir <dir>` (after the lone "--": the probe's own flags); "" when absent.
     std::string pngDir()
     {
@@ -1206,5 +1383,6 @@ FCMP_PROBE(ui, presets)
     import(P);
     exportAndMenus(P);
     a11yAndDraw(P, pngDir());
+    focus(P);
     return P.finish();
 }

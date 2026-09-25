@@ -202,6 +202,7 @@ namespace fcmp::ui
         bool showVu() const noexcept { return hasView && viewModel.value() == layout::vu::kVu; }
 
         // the displayed columns, left to right, and what tick() derived from them for draw()
+        std::array<HistoryStore::ColumnWindow, kMaxColumns> windows{};   // HistoryStore::columnWindows' output
         std::array<Column, kMaxColumns> cols{};
         int nCols = 0;
         std::array<float, kMaxSamples> xs{}, yIn{}, yOut{}, yDet{}, yTop{}, yGr{};
@@ -311,43 +312,19 @@ namespace fcmp::ui
         lastSlot = -1;
         moving = false;
 
+        // The windows are HistoryStore::columnWindows', the rule CONTROL PATH lines up with column for column (S13 H1a:
+        // this plot kept its own copy of the arithmetic until then); the timeline ms of each are aggregated.
         const float left = g.plot.x, right = g.plot.right();
-        const double w = static_cast<double>(builtSpan) * 100.0 / static_cast<double>(g.columns);   // ms per column
-        const double colW = static_cast<double>(g.colWidth);
-        pxPerMs = colW / w;
-        const auto hd = static_cast<double>(head);
-        const double k = std::floor(hd / w);                      // complete columns since the store began
-        const double phase = (hd - k * w) / w;                    // [0, 1): the smooth scroll
-        const int jMax = std::min(static_cast<int>(std::ceil(static_cast<double>(g.plot.w) / colW - phase)) - 1,
-                                  kMaxColumns - 2);
-        for (int j = jMax; j >= -1; --j)                          // oldest first; j = −1 is the partial column
+        const int nWin = HistoryStore::columnWindows(head, builtSpan, g.columns, g.colWidth, left, g.plot.w,
+                                                     std::span<HistoryStore::ColumnWindow>(windows), &pxPerMs);
+        for (int i = 0; i < nWin; ++i)
         {
-            double a = 0.0, b = 0.0, xr = 0.0, xl = 0.0;
-            if (j >= 0)
-            {
-                a = (k - 1.0 - j) * w;
-                b = (k - j) * w;
-                xr = static_cast<double>(right) - (phase + j) * colW;
-                xl = xr - colW;
-            }
-            else
-            {
-                a = k * w;
-                b = hd;
-                xl = static_cast<double>(right) - phase * colW;
-                xr = static_cast<double>(right);
-            }
-            if (b <= 0.0 || xr <= static_cast<double>(left))
-                continue;                                         // before the store began, or left of the plot
-            const auto e0 = static_cast<int64_t>(std::ceil(a));
-            const auto e1 = j >= 0 ? static_cast<int64_t>(std::ceil(b)) : static_cast<int64_t>(head);
-            if (e1 <= e0)
-                continue;                                         // an empty partial column
+            const HistoryStore::ColumnWindow& win = windows[static_cast<std::size_t>(i)];
             Column& c = cols[static_cast<std::size_t>(nCols++)];
             c = Column{};
-            c.xl = std::max(static_cast<float>(xl), left);
-            c.xr = std::min(static_cast<float>(xr), right);
-            aggregate(h, e0, e1, c, right);
+            c.xl = win.xl;
+            c.xr = win.xr;
+            aggregate(h, win.e0, win.e1, c, right);
         }
 
         // The strips: one run per maximal sequence of valid columns, through the centres, flat to the outer edges.
@@ -480,6 +457,17 @@ namespace fcmp::ui
     }
 
     HistoryPlot::~HistoryPlot() = default;
+
+    // S13 H1a (UF1a follow-up): while the other screen is shown the Panel does not tick this plot, and a timeline that
+    // is not ticked cannot see the feed go stale and come back: a stop that started and ended in between was lost, and
+    // the plot drew the audio on both sides of it as one run. Its composite calls this instead, every such frame.
+    void HistoryPlot::keepTime(float dt)
+    {
+        State& s = *st_;
+        s.timeline.tick(ctx_);
+        if (s.hasView)
+            s.vu->tick(dt);                                       // the needle stays with the audio, as under HISTORY
+    }
 
     // ---- tick -------------------------------------------------------------------------------------------------------------
 

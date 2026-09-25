@@ -5,6 +5,7 @@
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
+#include "editor/ProductTheme.h"
 #include "editor/Tags.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -18,6 +19,7 @@
 #include <funkgui/juce/MenuLook.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/text/TextFit.h>
+#include <funkgui/widgets/FocusRing.h>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -283,6 +285,98 @@ namespace fcmp::ui
         const int cur = entryOf(currentUuid_);
         select(cur >= 0 && shownOf(cur) >= 0 ? cur : -1, true);
         ++revision_;
+        // Opened from the keyboard: the focus comes in, onto the selection (S13 H1a).
+        if (ctx_.focusVisible)
+        {
+            const uint32_t row = shownOf(selected_) >= 0 ? rowLocal(selected_) : 0;
+            takeFocus(row != 0 ? row : kFiltersLocal);
+        }
+        else
+        {
+            focusSeen_ = ctx_.focus;
+        }
+    }
+
+    // ---- keyboard focus (S13 H1a; PresetBrowser.h "Keyboard focus") -------------------------------------------------
+
+    uint32_t PresetBrowser::localOf(Action a) noexcept
+    {
+        switch (a)
+        {
+            case Action::save:        return kSaveLocal;
+            case Action::saveAs:      return kSaveAsLocal;
+            case Action::rename:      return kRenameLocal;
+            case Action::remove:      return kDeleteLocal;
+            case Action::importFiles: return kImportLocal;
+            case Action::exportFile:  return kExportLocal;
+            case Action::commit:      return kCommitLocal;
+            case Action::cancel:      return kCancelLocal;
+        }
+        return kSaveAsLocal;
+    }
+
+    uint32_t PresetBrowser::focusLocal() const noexcept
+    {
+        if (!ctx_.focusVisible || !isOpen() || viewIndexOf(ctx_.focus) != static_cast<int>(ViewIndex::presetBrowser))
+            return 0;
+        return local(ctx_.focus);
+    }
+
+    void PresetBrowser::takeFocus(uint32_t loc)
+    {
+        if (loc != 0)
+        {
+            ctx_.focus = a11yId(ViewIndex::presetBrowser, loc);
+            ctx_.focusVisible = true;
+        }
+        focusSeen_ = ctx_.focus;
+    }
+
+    uint32_t PresetBrowser::rowLocal(int entry) const noexcept
+    {
+        if (entry < 0 || entry >= static_cast<int>(entries_.size()))
+            return 0;
+        const int index = entries_[static_cast<std::size_t>(entry)].index;
+        if (index < 0 || static_cast<uint32_t>(index) > 0xFFFFu - kRowLocal0)
+            return 0;
+        return kRowLocal0 + static_cast<uint32_t>(index);
+    }
+
+    void PresetBrowser::followFocus()
+    {
+        if (ctx_.focus == focusSeen_)
+            return;
+        focusSeen_ = ctx_.focus;
+        const uint32_t loc = focusLocal();
+        if (loc < kRowLocal0 || edit_ != Edit::none)
+            return;
+        for (std::size_t i = 0; i < entries_.size(); ++i)
+            if (rowLocal(static_cast<int>(i)) == loc)
+            {
+                if (static_cast<int>(i) != selected_)
+                    select(static_cast<int>(i), true);          // as an a11y focus: selected, not loaded
+                return;
+            }
+    }
+
+    void PresetBrowser::rehomeFocus()
+    {
+        if (focusLocal() == 0)
+            return;
+        std::array<uint32_t, 64> order{};
+        const int n = focusOrder(order);
+        const auto listed = [&](uint32_t loc) {
+            for (int i = 0; i < n; ++i)
+                if (loc != 0 && order[static_cast<std::size_t>(i)] == a11yId(ViewIndex::presetBrowser, loc))
+                    return true;
+            return false;
+        };
+        if (listed(local(ctx_.focus)))
+            return;
+        uint32_t to = edit_ != Edit::none ? kCommitLocal : rowLocal(selected_);
+        if (!listed(to))
+            to = n > 0 ? local(order[0]) : 0;
+        takeFocus(to);
     }
 
     void PresetBrowser::refresh(bool force)
@@ -501,6 +595,8 @@ namespace fcmp::ui
         if (gap)
             needsReset_ = true;
         sync();
+        followFocus();                                           // Tab, or an a11y focus, may have moved it
+        rehomeFocus();                                           // ... or the stop it was on went away
         tickedOpen_ = true;
         if (typedLen_ > 0 && ctx_.seconds - typedAt_ > kTypeAheadS)
             typedLen_ = 0;
@@ -654,6 +750,8 @@ namespace fcmp::ui
         const int entry = shown_[static_cast<std::size_t>(to)];
         select(entry, true);
         load(entry, false);                                      // HR: arrowing auditions
+        if (focusLocal() != 0)
+            takeFocus(rowLocal(selected_));                      // a focused row: the focus moves with the selection
     }
 
     void PresetBrowser::beginSaveAs()
@@ -1085,8 +1183,8 @@ namespace fcmp::ui
         if (owner == nullptr)
             return;
         if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
-        menuLook_->setTheme(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
+            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
+        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
 
         std::array<MenuItem, 8> items{};
         const int index = entry >= 0 ? entries_[static_cast<std::size_t>(entry)].index : -1;
@@ -1124,8 +1222,8 @@ namespace fcmp::ui
         if (owner == nullptr || edit_ != Edit::saveAs)
             return;
         if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
-        menuLook_->setTheme(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
+            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
+        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
 
         std::vector<std::string> names;                          // the list's own spellings, in filter order
         for (const Filter& f : filters_)
@@ -1236,6 +1334,8 @@ namespace fcmp::ui
             if (name.size() >= prefix.size() && sameNoCase(std::string_view(name).substr(0, prefix.size()), prefix))
             {
                 select(shown_[static_cast<std::size_t>(s)], true);
+                if (focusLocal() != 0)
+                    takeFocus(rowLocal(selected_));              // the focus in here: it follows the selection
                 return;
             }
         }
@@ -1609,6 +1709,30 @@ namespace fcmp::ui
                 c.text(label, cell.rect.centreX(), kBarTextY, T::kCaption, ink, funkgui::Align::centre);
             }
         }
+
+        // The focus ring (S13 H1a) on the focused stop: the chosen filter, a row, the category word or an action cell.
+        if (const uint32_t fl = focusLocal(); fl != 0)
+        {
+            Rect ring{};
+            if (fl == kFiltersLocal)
+                ring = filterRect(filter_).isEmpty() ? kColumn : filterRect(filter_);
+            else if (fl == kCategoryLocal && edit_ == Edit::saveAs)
+                ring = { kEntryCategoryX, kTopY - 6.0f, kEntryCategoryMaxW, 20.0f };
+            else if (fl >= kRowLocal0)
+            {
+                for (std::size_t i = 0; i < entries_.size(); ++i)
+                    if (rowLocal(static_cast<int>(i)) == fl)
+                        ring = rowRect(shownOf(static_cast<int>(i)));
+            }
+            else
+            {
+                for (const Cell& cell : cells())
+                    if (localOf(cell.action) == fl)
+                        ring = cell.rect;
+            }
+            if (!ring.isEmpty())
+                funkgui::drawFocusRing(c, ring, th.accent);
+        }
     }
 
     // ---- input ----------------------------------------------------------------------------------------------------------
@@ -1811,11 +1935,20 @@ namespace fcmp::ui
         if (!isOpen())
             return false;
         sync();
+        followFocus();
+        const uint32_t focused = focusLocal();
         if (edit_ != Edit::none)
         {
             switch (e.key)
             {
-                case funkgui::Key::enter:  commitEdit(); return true;
+                case funkgui::Key::enter:                        // the focused CANCEL or category, else the commit
+                    if (focused == kCancelLocal)
+                        cancelEdit();
+                    else if (focused == kCategoryLocal && edit_ == Edit::saveAs)
+                        showCategoryMenu();
+                    else
+                        commitEdit();
+                    return true;
                 case funkgui::Key::escape: cancelEdit(); return true;
                 case funkgui::Key::tab:    return false;
                 case funkgui::Key::character:
@@ -1840,6 +1973,38 @@ namespace fcmp::ui
             // An edit owns the keyboard (HR), except the host's Cmd and Ctrl chords.
             return !(e.mods.cmd || e.mods.ctrl);
         }
+
+        // The focused stop first (S13 H1a): an action cell presses on Return or Space; the filters take the arrows.
+        if (focused >= kSaveAsLocal && focused <= kSaveLocal
+            && (e.key == funkgui::Key::enter || e.key == funkgui::Key::space))
+        {
+            for (const Cell& cell : cells())
+                if (localOf(cell.action) == focused)
+                {
+                    runAction(cell.action);                      // refused while not available
+                    break;
+                }
+            return true;
+        }
+        if (focused == kFiltersLocal)
+            switch (e.key)
+            {
+                case funkgui::Key::up:
+                case funkgui::Key::left:     setFilter(filter_ - 1); return true;
+                case funkgui::Key::down:
+                case funkgui::Key::right:    setFilter(filter_ + 1); return true;
+                case funkgui::Key::home:     setFilter(0); return true;
+                case funkgui::Key::end:      setFilter(static_cast<int>(filters_.size()) - 1); return true;
+                case funkgui::Key::enter:
+                case funkgui::Key::space:    return true;       // the chosen filter is already shown
+                case funkgui::Key::character:
+                case funkgui::Key::tab:
+                case funkgui::Key::pageUp:
+                case funkgui::Key::pageDown:
+                case funkgui::Key::escape:
+                case funkgui::Key::backspace:
+                case funkgui::Key::del:      break;              // the list's own keys, below
+            }
 
         const int at = shownOf(selected_);
         const int last = static_cast<int>(shown_.size()) - 1;
@@ -2060,15 +2225,31 @@ namespace fcmp::ui
 
     int PresetBrowser::focusOrder(std::span<uint32_t> out) const
     {
+        // S13 H1a: the whole Tab order while the browser is open (PresetBrowser.h "Keyboard focus"), in reading order:
+        // the filters, the rows shown, the available action cells; while a name is typed, its category and cells.
         std::size_t n = 0;
-        for (int v = 0; v < kRows && n < out.size(); ++v)
+        const auto put = [&](uint32_t loc) {
+            if (loc != 0 && n < out.size())
+                out[n++] = a11yId(ViewIndex::presetBrowser, loc);
+        };
+        if (edit_ == Edit::none)
         {
-            const int s = scroll_ + v;
-            if (s >= static_cast<int>(shown_.size()))
-                break;
-            const Entry& e = entries_[static_cast<std::size_t>(shown_[static_cast<std::size_t>(s)])];
-            out[n++] = a11yId(ViewIndex::presetBrowser, kRowLocal0 + static_cast<uint32_t>(e.index));
+            put(kFiltersLocal);
+            for (int v = 0; v < kRows; ++v)
+            {
+                const int s = scroll_ + v;
+                if (s >= static_cast<int>(shown_.size()))
+                    break;
+                put(rowLocal(shown_[static_cast<std::size_t>(s)]));
+            }
         }
+        else if (edit_ == Edit::saveAs)
+        {
+            put(kCategoryLocal);
+        }
+        for (const Cell& cell : cells())
+            if (actionEnabled(cell.action))
+                put(localOf(cell.action));
         return static_cast<int>(n);
     }
 

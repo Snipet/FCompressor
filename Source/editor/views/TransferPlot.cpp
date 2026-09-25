@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <span>
 #include <utility>
@@ -72,6 +73,7 @@ namespace fcmp::ui
         constexpr float kKneeHandleMinPx = 4.0f;                   // knee handles closer to T_in than this are hidden
         constexpr float kCrossHalf = 2.5f;
         constexpr float kLabelGap = 12.0f;                         // the knee label's top above the bracket
+        constexpr float kZeroLabelGap = 4.0f;                      // "0 DB PK" ends at least this far before the meters
         constexpr float kRatioInf = 1000.0f;                       // a11y display units: ∞:1 (SlotGrid's rule)
         constexpr uint32_t kImageId = 1, kGroupId = 2;             // scale radio buttons: kGroupId + 1 + i
         constexpr funkgui::Col kClear { 0, 0, 0, 0 };
@@ -88,6 +90,17 @@ namespace fcmp::ui
             c.hairlineH(r.x, r.bottom() - 1.0f, r.w, col);
             c.hairlineV(r.x, r.y, r.h, col);
             c.hairlineV(r.right() - 1.0f, r.y, r.h, col);
+        }
+
+        // The left edge of the meters to the right of this plot: the band's meter column after the band's TRANSFER, the
+        // Characteristics screen's METERS panel after its own (the nearest meter area starting at or after the plot).
+        float metersLeft(const layout::TransferGeom& g) noexcept
+        {
+            float left = std::numeric_limits<float>::max();
+            for (const layout::MeterGeom* m : { &layout::kBandMeters, &layout::kCharsMeters })
+                if (m->area.x >= g.plot.right())
+                    left = std::min(left, m->area.x);
+            return left;
         }
 
         funkgui::Rect area(const layout::TransferGeom& g) noexcept
@@ -1038,7 +1051,11 @@ namespace fcmp::ui
                 }
             char zero[40];
             std::snprintf(zero, sizeof zero, "0 DB%s%s", law[0] != '\0' && law[0] != ' ' ? " " : "", law);
-            const float x0 = xOf(0.0f) - 0.5f * c.textWidth("0", T::kMicro);
+            // The 0 sits on its tick unless the label would then reach the meters to the right of the plot (S13 H1a: at
+            // the 72 dB scale "0 DB PK" ran into the band's meter column, and into the Characteristics screen's METERS
+            // panel); then the label ends kZeroLabelGap before them, as close to its tick as it can be.
+            const float x0 = std::min(xOf(0.0f) - 0.5f * c.textWidth("0", T::kMicro),
+                                      metersLeft(geom_) - kZeroLabelGap - c.textWidth(zero, T::kMicro));
             c.text(zero, x0, geom_.labelY, T::kMicro, th.ink32);
         }
         const funkgui::AxisMap x { p.x, p.right(), floorDb, layout::kLevelTopDb, false };

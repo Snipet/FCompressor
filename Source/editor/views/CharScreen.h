@@ -63,6 +63,9 @@ namespace fcmp::ui
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
 
+        // ---- S13 H1a addition (additive): the Panel calls it each frame the screen is not shown (PANEL) -------------
+        void keepTime(float dt);                                 // HISTORY's and CONTROL PATH's keepTime
+
     private:
         static constexpr int kPlots = 9;
         static constexpr uint32_t kTabGroupId = 1;               // local ids of the tab group and its two cells

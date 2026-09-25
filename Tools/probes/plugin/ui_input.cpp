@@ -5,7 +5,9 @@
 // panel for every scenario so no scenario sees another's writes.
 //
 // Golden rows (candidates only until FZ5): lines taborder — the Tab order of the panel view, one stop per line
-// ("<n> <sub-view>:<local> <role> <title>"), sidecar modes/<key>/ui.input.taborder.lines.
+// ("<n> <sub-view>:<local> <role> <title>"), sidecar modes/<key>/ui.input.taborder.lines; and (S13 H1a) the same for
+// every other view of fcmp::ui::views(), lines taborder.<view> (the Characteristics screen's two tabs, and each open
+// browser's own Tab order), sidecars modes/<key>/ui.input.taborder.<view>.lines.
 // Spec rows:
 //   input.taborder.{wraps,unique,slots}   Tab cycles; no stop twice; the slot grid's stops are P0…P6, B0…B6, C0…C6,
 //                                          each followed by its visible word (02 §8.9 item 6), locked / n/a included
@@ -31,6 +33,12 @@
 //                            landing that follows writes nothing (K2 #4); a host's Mode change writes nothing either
 //   input.batch.defaults     "switch + load Mode defaults" (02 §8.4.4) is one tapMany: every write inside one facade
 //                            batch and one host batch (K2 #23), each inside its own gesture
+//   input.keys.handled       (S13 H1a) on every view of fcmp::ui::views(), every Tab stop (focused, its ring shown) takes
+//                            the keys 02 §8.9 gives its kind — Panel::key returns true for each, so a host (Logic, Live)
+//                            never also acts on them: slots and handles (locked, derived and n/a included) every value
+//                            key, groups the arrows, Home / End, Return / Space, latches, words and buttons Return /
+//                            Space, the Mode latch its arrows, Home / End, Return / Space, browser rows their arrows,
+//                            Home / End, Return; every stop Tab, Shift-Tab and Esc. NOTE lines name any miss.
 //   input.writes.outside_gesture  no write of the whole probe happened outside a begin/end gesture (K2 #7)
 #include "ProbeRegistry.h"
 
@@ -53,6 +61,7 @@
 #include <funkgui/panel/Input.h>
 #include <funkgui/params/GestureController.h>
 #include <funkgui/params/ParamPort.h>
+#include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
 #include <funkgui/widgets/AttachedWord.h>
 #include <funkgui/widgets/RuleSlider.h>
@@ -66,6 +75,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <set>
 #include <span>
@@ -653,6 +664,183 @@ namespace
         t.take(r);
     }
 
+    // ---- handled keys return true (02 §8.9: "Handled keys return true, so Logic and Live do not swallow them"; S13 H1a) --
+
+    funkgui::KeyEvent keyOf(funkgui::Key k, bool shift = false)
+    {
+        funkgui::KeyEvent e;
+        e.key = k;
+        e.mods.shift = shift;
+        return e;
+    }
+
+    const char* keyName(const funkgui::KeyEvent& e)
+    {
+        switch (e.key)
+        {
+            case funkgui::Key::character: return "character";
+            case funkgui::Key::tab:       return e.mods.shift ? "shift+tab" : "tab";
+            case funkgui::Key::up:        return "up";
+            case funkgui::Key::down:      return "down";
+            case funkgui::Key::left:      return "left";
+            case funkgui::Key::right:     return "right";
+            case funkgui::Key::pageUp:    return "pageup";
+            case funkgui::Key::pageDown:  return "pagedown";
+            case funkgui::Key::home:      return "home";
+            case funkgui::Key::end:       return "end";
+            case funkgui::Key::escape:    return "escape";
+            case funkgui::Key::enter:     return "return";
+            case funkgui::Key::backspace: return "backspace";
+            case funkgui::Key::del:       return "delete";
+            case funkgui::Key::space:     return "space";
+        }
+        return "?";
+    }
+
+    // The keys a Tab stop takes (02 §8.9's key table), the ones that change what is shown last: a slot or a handle (a
+    // slider, or the static text of an n/a slot), whatever its state, every value key; a radio group the arrows and
+    // Home / End, then Return / Space; a latch, a word or a button Return / Space; the Mode latch the arrows, Home / End,
+    // Return / Space; the preset strip's name the arrows and Return / Space; a browser row the arrows, Home / End, then
+    // Return. Every stop also takes Tab and Shift-Tab (the Panel moves the focus) and, the ring shown, Esc.
+    std::vector<funkgui::KeyEvent> keysFor(int view, funkgui::A11yRole role)
+    {
+        using K = funkgui::Key;
+        std::vector<funkgui::KeyEvent> ks { keyOf(K::tab), keyOf(K::tab, true) };
+        const auto add = [&](std::initializer_list<K> list) {
+            for (const K k : list)
+                ks.push_back(keyOf(k));
+        };
+        switch (role)
+        {
+            case funkgui::A11yRole::slider:
+            case funkgui::A11yRole::staticText:
+                add({ K::up, K::down, K::left, K::right, K::pageUp, K::pageDown, K::home, K::end, K::del });
+                break;
+            case funkgui::A11yRole::radioGroup:
+            case funkgui::A11yRole::radioButton:
+                add({ K::up, K::down, K::left, K::right, K::home, K::end, K::enter, K::space });
+                break;
+            case funkgui::A11yRole::comboBox:
+                if (view == static_cast<int>(ui::ViewIndex::header))
+                    add({ K::up, K::down, K::left, K::right, K::home, K::end, K::enter, K::space });
+                else
+                    add({ K::up, K::down, K::left, K::right, K::enter, K::space });
+                break;
+            case funkgui::A11yRole::listItem:
+                add({ K::up, K::down, K::left, K::right, K::home, K::end, K::enter });
+                break;
+            case funkgui::A11yRole::toggleButton:
+            case funkgui::A11yRole::button:
+                add({ K::enter, K::space });
+                break;
+            case funkgui::A11yRole::image:
+            case funkgui::A11yRole::progressBar:
+                break;
+        }
+        ks.push_back(keyOf(K::escape));
+        return ks;
+    }
+
+    // The machine-wide preferences a stop's keys change (the HISTORY span and GR view, the meter scale, the theme; 02
+    // §5.9): taken once, and put back before every stop, so each stop starts from the panel its Tab order was read on.
+    struct Prefs
+    {
+        static constexpr int kLo = std::numeric_limits<int>::min(), kHi = std::numeric_limits<int>::max();
+        int theme = 0, span = 0, view = 0, scale = 0;
+
+        Prefs()
+        {
+            const funkgui::UiPreferences& p = funkgui::UiPreferences::get();
+            theme = p.theme();
+            span = p.getInt("historySpanTenths", layout::kDefaultSpanTenths, kLo, kHi);
+            view = p.getInt("grView", layout::vu::kDefaultView, kLo, kHi);
+            scale = p.getInt("meterScaleDb", layout::kDefaultScaleDb, kLo, kHi);
+        }
+
+        void restore() const
+        {
+            funkgui::UiPreferences& p = funkgui::UiPreferences::get();
+            p.setTheme(theme);
+            p.setInt("historySpanTenths", span);
+            p.setInt("grView", view);
+            p.setInt("meterScaleDb", scale);
+        }
+    };
+
+    void handledKeys(Probe& P, std::string_view key, Tally& t)
+    {
+        const Prefs prefs;
+        int stops = 0, keys = 0, misses = 0;
+        for (const ui::ViewSpec& v : ui::views())
+        {
+            // The view's Tab order and each stop's role.
+            std::vector<std::pair<uint32_t, funkgui::A11yRole>> order;
+            {
+                prefs.restore();
+                Rig r(key);
+                r.panel.setView(v, true);
+                r.host.tick(1, kDt);                               // the new screen's plots tick at least once
+                r.host.settle(kMaxSettle, kDt);
+                const std::vector<funkgui::A11yItem> items = r.host.accessibility();
+                std::vector<std::string> lines;
+                for (int k = 0; k < 1024; ++k)
+                {
+                    r.host.keys("tab");
+                    const uint32_t id = r.panel.context().focus;
+                    if (id == 0 || (!order.empty() && id == order.front().first))
+                        break;
+                    funkgui::A11yRole role = funkgui::A11yRole::image;
+                    std::string title;
+                    for (const funkgui::A11yItem& it : items)
+                        if (it.id == id)
+                        {
+                            role = it.role;
+                            title = it.title;
+                        }
+                    order.emplace_back(id, role);
+                    const int vi = ui::viewIndexOf(id);
+                    const char* viewName = vi >= 0 && vi < ui::kSubViewCount
+                                               ? kViewNames[static_cast<std::size_t>(vi)] : "?";
+                    lines.push_back(std::to_string(order.size()) + " " + viewName + ":" + std::to_string(id & 0xFFFFu)
+                                    + " " + roleName(role) + " " + title);
+                }
+                // The other views' Tab orders as golden lines too (the panel's is `taborder`, above): the
+                // Characteristics screen's (02 §7.5) and each open browser's (S13 H1a), frozen at FZ5 with it.
+                if (std::string_view(v.id) != "panel")
+                    P.lines(std::string("taborder.") + v.id, lines);
+            }
+            for (const auto& [id, role] : order)
+            {
+                ++stops;
+                prefs.restore();
+                Rig r(key);
+                r.panel.setView(v, true);
+                r.host.tick(1, kDt);                               // the new screen's plots tick at least once
+                r.host.settle(kMaxSettle, kDt);
+                for (const funkgui::KeyEvent& e : keysFor(ui::viewIndexOf(id), role))
+                {
+                    r.focus(id);                                   // the stop, its ring shown, before every key
+                    const bool used = r.panel.key(e);
+                    r.host.tick(1, kDt);
+                    ++keys;
+                    if (!used)
+                    {
+                        ++misses;
+                        std::printf("NOTE     %s: %s:%u %s returned false for %s\n", v.id,
+                                    kViewNames[static_cast<std::size_t>(ui::viewIndexOf(id))], id & 0xFFFFu,
+                                    roleName(role), keyName(e));
+                    }
+                }
+                r.host.tick(60, kDt);                                // a wheel-style burst closes
+                t.take(r);
+            }
+        }
+        prefs.restore();
+        P.ge("input.keys.stops", stops, 1);
+        P.ge("input.keys.pressed", keys, 1);
+        P.eq("input.keys.handled", misses, 0);
+    }
+
     void popup(Probe& P, std::string_view key, Tally& t)
     {
         Rig r(key);
@@ -707,6 +895,7 @@ FCMP_PROBE(ui, input)
     word(P, C.key, fcdsp::Pid::schpf, tally);
     modeSwitch(P, *entry, tally);
     defaultsBatch(P, *entry, tally);
+    handledKeys(P, C.key, tally);
     P.ge("input.writes.checked", tally.writes, 1);
     P.eq("input.writes.outside_gesture", tally.outside, 0);
     return P.finish();

@@ -35,6 +35,13 @@
 //   per page, a burst closes after 0.5 s).
 // - Keys the browser does not use (Tab, Esc) are the Panel's; Backspace and Delete edit the type-ahead buffer and never
 //   reach a slot under the overlay; characters with Cmd or Ctrl go to the host.
+// - Keyboard focus (S13 H1a): while the browser is open it is the Panel's whole Tab order (its rows on the shown
+//   page, then the enabled pager buttons; Panel::composeFocusOrder), and the keyboard highlight IS the Panel focus:
+//   opened from the keyboard, the browser takes the focus onto the current Mode's row (so the Mode latch underneath no
+//   longer draws a second ring), every key that moves the highlight moves the focus with it, and Tab moving the focus
+//   onto a row moves the highlight there. The ring is drawn on the focused row (not while the pointer drives the
+//   highlight) or on the focused pager button, where Return and Space page. Closing gives the focus back to its opener
+//   (Panel).
 // - A11y: rows are listItems (title = the Mode name, description = its group, help = its spec line, checkable, checked
 //   = current; press = the click's commit; focus moves the highlight), headings staticText, and with more than one
 //   page the pager's two buttons and a "Page 1 of 2" text; items off the shown page are not visible. Ids:
@@ -203,5 +210,11 @@ namespace fcmp::ui
         uint32_t revision_ = 0;                                  // bumps when the shown page changes
         int  specItem_ = -1;                                     // the item spec_ was built for
         char spec_[256]{};
+
+        // ---- S13 H1a additions: the browser in the Panel's Tab order (see "Keyboard focus" above) -------------------
+        void takeFocus();                                        // the Panel focus onto the highlighted row, ring shown
+        void followFocus();                                      // Tab moved the Panel focus: the highlight follows it
+        int  focusedPager() const noexcept;                      // -1 ‹ or +1 › holds the shown focus; 0 otherwise
+        uint32_t focusSeen_ = 0;                                 // the Panel focus as this browser last saw it
     };
 }
