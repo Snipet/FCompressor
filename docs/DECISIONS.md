@@ -548,6 +548,10 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     the span. Nothing else on the panel moves, and the history keeps recording while it is hidden. The Characteristics
     screen's HISTORY is unchanged. When audio stops, the needle falls back to rest with the same ballistics (ADR-69).
     Card UF2.
+  - **As built (UF2):** the preference key is `grView`, and the switch has its own Tab stop before the span group (a
+    radio group "GR view"). Deflection is 10^((dB − 3)/20), with 0 dB at 70.8 % of full scale. The needle is a
+    mass-spring with ζ 0.8127 and ω0 13.51 rad/s: 99 % in 300 ms, 1.25 % overshoot. It is drawn on a display clock
+    40 ms behind the newest audio, so host blocks never make it step.
 
 ## HardwareReverb migration
 

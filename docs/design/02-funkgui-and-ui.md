@@ -2028,6 +2028,9 @@ Band: IN L/R, GR, OUT L/R. Full screen: IN, SC, GR, OUT. **Both use their screen
 
 ### 8.9 Keyboard, Tab order, accessibility
 
+> **S12 revision (UF2, ADR-72).** The band's HISTORY caption is a HISTORY · VU switch (preference `grView`) with its
+> own Tab stop before the span group; under VU the span cells, "S" and the time labels are hidden.
+>
 > **S12 revision.** The footer's last two Tab stops are ZOOM, then THEME (UF1b): a radio group "Zoom" of buttons
 > "ZOOM 125 %" with checked and enabled states. The preset strip has four stops: ‹, name, › and SAVE (U6). The
 > browsers are not in the Panel's Tab order yet; H1a adds them.
