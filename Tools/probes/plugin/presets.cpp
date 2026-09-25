@@ -60,6 +60,34 @@
 //                                      current() and unmodified; a user preset session likewise; a modified session
 //                                      stays modified; no <PRESET> -> untitled (-1), unmodified, and a Mode switch
 //                                      then reads modified; a factory uuid the bank lacks -> untitled
+// PresetAccess management (P3b, S12.4; S12 lead revision 8), on a fresh instance with two user presets of its own, A and
+// B (current). Every call goes through one checker: a success must bump revision(), a refusal must return false with
+// the list, current(), modified() and revision() unchanged.
+//   presets.rename.user                A (not current) renamed, trimmed, in the list and the store, the selection kept;
+//                                      B (current) renamed: current() follows, unmodified, the session's <PRESET> names
+//                                      it; B to its own name in another case; no parameter moves (all 29 bitwise)
+//   presets.rename.refused             factory rows; a user or factory name in any case; empty or blank; rows -1,
+//                                      count(), INT_MAX
+//   presets.export.rows                a factory row: the file holds the bank's uuid, name, category, notes, values
+//                                      bitwise and attributes; a user row (tagged and used in the store): the store's
+//                                      copy, without tags or timestamps; both files hold nothing but identity,
+//                                      metadata, ATTR and PARAM
+//   presets.export.refused             rows -1, count(); an empty or relative path; a directory (empty or not); a parent
+//                                      that is a file: no file appears, no directory is replaced
+//   presets.remove.user                A (not current): gone from the list and the store, the selection kept; B
+//                                      (current, modified): current() -1, no parameter moves, still modified (the same
+//                                      baseline), the session's <PRESET> names no preset
+//   presets.remove.refused             factory rows (first, FET 76, last); rows -1, count(), INT_MIN
+//   presets.import.roundtrip           A's exported file after A's removal: A is back (its uuid, name, fet-76), the
+//                                      store's copy bitwise equal to A's before the export incl. modeId/modeRev, no
+//                                      tags; applied: its Mode and values
+//   presets.import.duplicate           the same file again and the FET 76 factory file: successes that write nothing
+//   presets.import.fresh               A's file with one value changed: a fresh uuid, "Probe Manage A1 2", the values
+//   presets.import.no_modeid           a file without modeId is imported and lists as clean
+//   presets.import.refused             an unknown modeId; missing, not XML, empty, a directory; another product's root or
+//                                      plugin; a newer format; no name; a value that is not a number; empty or
+//                                      relative paths
+//   presets.manage.success_no_bump / .refusal_changed   the checker's two counts (0)
 // Golden rows (candidates until the lead blesses them): presets.bank.size, presets.bank.hash (every uuid, name,
 // category, attribute and parameter bit of the bank: a moved preset shows as drift).
 #include "ProbeRegistry.h"
@@ -91,6 +119,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -267,6 +296,39 @@ namespace
             if (pa.row(i).uuid == u)
                 return i;
         return -1;
+    }
+
+    // The same parameters (ids, float bits) and attributes (keys, values), each id and key once, order aside.
+    bool sameContent(const Preset& a, const Preset& b)
+    {
+        if (a.params.size() != b.params.size() || a.attributes.size() != b.attributes.size())
+            return false;
+        for (const fp::ParamValue& v : a.params)
+            if (const fp::ParamValue* w = b.find(v.id); w == nullptr || bitsOf(w->value) != bitsOf(v.value))
+                return false;
+        for (const fp::Attribute& x : a.attributes)
+            if (const fp::Attribute* y = b.attr(x.key); y == nullptr || y->value != x.value)
+                return false;
+        return true;
+    }
+
+    // An exported file carries identity, metadata, ATTR and PARAM only: never tags or timestamps (PresetFile).
+    bool fileIsImpersonal(const juce::File& f)
+    {
+        const std::unique_ptr<juce::XmlElement> xml = juce::XmlDocument::parse(f);
+        if (xml == nullptr)
+            return false;
+        constexpr std::array<const char*, 7> kAllowed{ "format", "plugin", "uuid", "name", "category", "author", "notes" };
+        for (int i = 0; i < xml->getNumAttributes(); ++i)
+        {
+            const juce::String name = xml->getAttributeName(i);
+            if (std::none_of(kAllowed.begin(), kAllowed.end(), [&name](const char* k) { return name == k; }))
+                return false;
+        }
+        for (const juce::XmlElement* e : xml->getChildIterator())
+            if (!e->hasTagName("ATTR") && !e->hasTagName("PARAM"))
+                return false;
+        return true;
     }
 
     // ---- the batch recorder -------------------------------------------------------------------------------------------
@@ -1058,6 +1120,315 @@ FCMP_PROBE(proc, presets)
             }
             P.eq("presets.state.stale_factory", bad, 0);
         }
+    }
+
+    // ---- user-preset management: rename, remove, import, export (P3b, S12 lead revision 8) ------------------------------
+    {
+        auto m = running();
+        fcmp::PresetAccess& pm = m->presets();
+        const juce::String ext = cfg.fileExtension;
+        const juce::File dir = workDir.getChildFile("p3b");      // inside the sandbox (or the hand run's scratch dir)
+        const auto pathOf = [](const juce::File& f) { return f.getFullPathName().toStdString(); };
+        const auto listing = [&pm] {
+            std::vector<std::string> rows;
+            for (int i = 0; i < pm.count(); ++i)
+            {
+                const fcmp::PresetAccess::Row r = pm.row(i);
+                rows.push_back(r.uuid + '\n' + r.name + '\n' + r.category + '\n' + r.modeKey);
+            }
+            return rows;
+        };
+        const auto rawBits = [&m] {
+            std::array<std::uint32_t, fcdsp::kNumParams> b{};
+            for (std::size_t i = 0; i < fcdsp::kNumParams; ++i)
+                b[i] = bitsOf(m->rawValue(static_cast<Pid>(i)));
+            return b;
+        };
+        // One management call: a success bumps revision(); a refusal returns false with the list, the selection,
+        // modified() and revision() exactly as they were.
+        std::int64_t successStill = 0, refusalMoved = 0, successes = 0, refusals = 0;
+        const auto call = [&](auto&& fn) -> bool {
+            const std::uint32_t rev = pm.revision();
+            const std::vector<std::string> rows = listing();
+            const int cur = pm.current();
+            const bool mod = pm.modified();
+            const bool ok = fn();
+            const std::uint32_t after = pm.revision();
+            if (ok)
+            {
+                ++successes;
+                successStill += after != rev ? 0 : 1;
+            }
+            else
+            {
+                ++refusals;
+                refusalMoved += after == rev && listing() == rows && pm.current() == cur && pm.modified() == mod ? 0 : 1;
+            }
+            return ok;
+        };
+        const fcdsp::ModeEntry* fet = fcdsp::byKey("fet-76");
+        const int fetSlot = fet != nullptr ? fcdsp::slotOf(*fet) : -1;
+
+        // two user presets of our own: A (FET 76 at odd values) and B, which stays current
+        pm.apply(fetRow);
+        setPlain(*m, Pid::thr, -27.25f);
+        setPlain(*m, Pid::rel, 250.0f);
+        bool setup = pm.saveAs("Probe Manage A", "Bus");
+        const juce::String uuidA = pm.current() >= 0 ? juce::String(pm.row(pm.current()).uuid) : juce::String();
+        setPlain(*m, Pid::thr, -18.0f);
+        setup = setup && pm.saveAs("Probe Manage B", "Bus");
+        const juce::String uuidB = pm.current() >= 0 ? juce::String(pm.row(pm.current()).uuid) : juce::String();
+        if (!setup || uuidA.isEmpty() || uuidB.isEmpty() || uuidA == uuidB || fetSlot < 0)
+        {
+            P.harnessError("proc.presets: could not save the two user presets the management rows start from");
+            return P.finish();
+        }
+
+        // rename: A (not current), then B (current: the session's identity follows), then B in another case
+        {
+            std::int64_t bad = 0;
+            const auto before = rawBits();
+            bad += call([&] { return pm.rename(indexOfUuid(pm, uuidA), "  Probe Manage A1 "); }) ? 0 : 1;
+            const int rowA = indexOfUuid(pm, uuidA);
+            const std::optional<Preset> sa = store->get(uuidA);
+            bad += rowA >= 0 && pm.row(rowA).name == "Probe Manage A1" && sa.has_value() && sa->name == "Probe Manage A1"
+                       ? 0 : 1;
+            bad += pm.current() == indexOfUuid(pm, uuidB) ? 0 : 1;              // the selection stays on B
+
+            bad += call([&] { return pm.rename(indexOfUuid(pm, uuidB), "Probe Manage B1"); }) ? 0 : 1;
+            const int cur = pm.current();
+            bad += cur >= 0 && cur == indexOfUuid(pm, uuidB) && pm.row(cur).name == "Probe Manage B1" && !pm.modified()
+                       ? 0 : 1;
+            const std::unique_ptr<juce::XmlElement> xml = xmlOf(save(*m));
+            const juce::XmlElement* preset = xml != nullptr ? xml->getChildByName("PRESET") : nullptr;
+            bad += preset != nullptr && preset->getStringAttribute("uuid") == uuidB
+                           && preset->getStringAttribute("name") == "Probe Manage B1"
+                       ? 0 : 1;
+
+            bad += call([&] { return pm.rename(indexOfUuid(pm, uuidB), "probe manage b1"); }) ? 0 : 1;   // its own
+            bad += pm.row(indexOfUuid(pm, uuidB)).name == "probe manage b1" ? 0 : 1;
+            bad += rawBits() == before ? 0 : 1;                                 // no parameter moved
+            P.eq("presets.rename.user", bad, 0);
+        }
+        {
+            std::int64_t bad = 0;
+            const int rowA = indexOfUuid(pm, uuidA);
+            const auto refused = [&](int index, const juce::String& name) {
+                bad += call([&] { return pm.rename(index, name.toStdString()); }) ? 1 : 0;
+            };
+            refused(0, "Probe Init");                                           // factory rows
+            refused(fetRow, "Probe FET");
+            refused(rowA, "Probe Manage B1");                                   // a user preset's name, any case
+            refused(rowA, "PROBE MANAGE B1");
+            refused(rowA, bank[1].name);                                        // a factory preset's name
+            refused(rowA, "init");
+            refused(rowA, "");                                                  // no name
+            refused(rowA, "   ");
+            refused(-1, "Probe X");                                             // no row
+            refused(pm.count(), "Probe X");
+            refused(std::numeric_limits<int>::max(), "Probe X");
+            bad += pm.row(indexOfUuid(pm, uuidA)).name == "Probe Manage A1" ? 0 : 1;
+            bad += store->get(bank[1].uuid).has_value() && store->get(bank[1].uuid)->name == bank[1].name ? 0 : 1;
+            P.eq("presets.rename.refused", bad, 0);
+        }
+
+        // export: a factory row (the compiled bank's preset) and a user row (the store's copy, tagged and used, so a
+        // file that carried either would show it)
+        store->setTags(uuidA, fp::tagBit(fp::Tag::red));
+        store->markUsed(uuidA);
+        pm.revision();
+        const juce::File factoryFile = dir.getChildFile("factory" + ext);
+        const juce::File userFile = dir.getChildFile("user" + ext);
+        {
+            std::int64_t bad = 0;
+            bad += call([&] { return pm.exportFile(fetRow, pathOf(factoryFile)); }) ? 0 : 1;
+            const Preset& f = bank[static_cast<std::size_t>(fetRow)];
+            const std::optional<Preset> fb = fp::PresetFile::read(cfg, factoryFile);
+            bad += fb.has_value() && fb->uuid == f.uuid && fb->name == f.name && fb->category == f.category
+                           && fb->notes == f.notes && sameContent(*fb, f)
+                       ? 0 : 1;
+            bad += fileIsImpersonal(factoryFile) ? 0 : 1;
+
+            bad += call([&] { return pm.exportFile(indexOfUuid(pm, uuidA), pathOf(userFile)); }) ? 0 : 1;
+            const std::optional<Preset> ub = fp::PresetFile::read(cfg, userFile);
+            const std::optional<Preset> us = store->get(uuidA);
+            bad += ub.has_value() && us.has_value() && us->tags != 0 && us->lastUsedMs != 0 && ub->uuid == us->uuid
+                           && ub->name == us->name && ub->category == us->category && sameContent(*ub, *us)
+                           && ub->tags == 0 && ub->createdMs == 0 && ub->lastUsedMs == 0
+                       ? 0 : 1;
+            bad += fileIsImpersonal(userFile) ? 0 : 1;
+            P.eq("presets.export.rows", bad, 0);
+        }
+        {
+            std::int64_t bad = 0;
+            const juce::File never = dir.getChildFile("refused" + ext);
+            const juce::File plain = dir.getChildFile("plain.txt");
+            plain.replaceWithText("not a directory");
+            const auto refused = [&](int index, const std::string& path) {
+                bad += call([&] { return pm.exportFile(index, path); }) ? 1 : 0;
+            };
+            refused(-1, pathOf(never));                                         // no row
+            refused(pm.count(), pathOf(never));
+            refused(0, "");                                                     // no path, a relative one
+            refused(0, ("probe-relative" + ext).toStdString());
+            const juce::File emptyDir = dir.getChildFile("empty-dir" + ext);
+            emptyDir.createDirectory();
+            refused(0, pathOf(dir));                                            // a directory, an empty one
+            refused(0, pathOf(emptyDir));
+            refused(0, pathOf(plain.getChildFile("under-a-file" + ext)));       // a parent that is a file
+            bad += never.exists() ? 1 : 0;
+            bad += juce::File::getCurrentWorkingDirectory().getChildFile("probe-relative" + ext).exists() ? 1 : 0;
+            bad += dir.isDirectory() && emptyDir.isDirectory() && plain.existsAsFile() ? 0 : 1;
+            P.eq("presets.export.refused", bad, 0);
+        }
+
+        // remove: A (not current), then B (current, and modified: it stays modified against the same baseline)
+        const std::optional<Preset> storedA = store->get(uuidA);
+        {
+            std::int64_t bad = 0;
+            const int n = pm.count();
+            bad += call([&] { return pm.remove(indexOfUuid(pm, uuidA)); }) ? 0 : 1;
+            bad += pm.count() == n - 1 && indexOfUuid(pm, uuidA) < 0 && !store->get(uuidA).has_value() ? 0 : 1;
+            bad += pm.current() >= 0 && pm.current() == indexOfUuid(pm, uuidB) ? 0 : 1;
+
+            setPlain(*m, Pid::thr, -17.0f);                                     // B, modified
+            const auto before = rawBits();
+            bad += pm.modified() ? 0 : 1;
+            bad += call([&] { return pm.remove(pm.current()); }) ? 0 : 1;
+            bad += pm.current() == -1 && pm.count() == n - 2 && indexOfUuid(pm, uuidB) < 0 ? 0 : 1;
+            bad += rawBits() == before ? 0 : 1;                                 // no parameter moved
+            bad += pm.modified() ? 0 : 1;                                       // the same baseline
+            const std::unique_ptr<juce::XmlElement> xml = xmlOf(save(*m));
+            const juce::XmlElement* preset = xml != nullptr ? xml->getChildByName("PRESET") : nullptr;
+            bad += preset != nullptr && preset->getStringAttribute("uuid").isEmpty()
+                           && preset->getStringAttribute("name").isEmpty()
+                       ? 0 : 1;                                                 // the session names no deleted preset
+            P.eq("presets.remove.user", bad, 0);
+        }
+        {
+            std::int64_t bad = 0;
+            const auto refused = [&](int index) { bad += call([&] { return pm.remove(index); }) ? 1 : 0; };
+            refused(0);                                                         // factory rows
+            refused(fetRow);
+            refused(static_cast<int>(nBank) - 1);
+            refused(-1);                                                        // no row
+            refused(pm.count());
+            refused(std::numeric_limits<int>::min());
+            bad += store->count(fp::Source::factory) == static_cast<int>(nBank) ? 0 : 1;
+            P.eq("presets.remove.refused", bad, 0);
+        }
+
+        // import: A's file brings A back (the store keeps a uuid it lacks) with every value bit for bit and
+        // modeId/modeRev as saved; the same file again, and the factory file, are duplicates (a success, nothing
+        // written); a changed copy gets a fresh uuid and a unique name; a file without modeId is imported and loads clean
+        {
+            std::int64_t bad = 0;
+            const int n = pm.count();
+            bad += call([&] { return pm.importFile(pathOf(userFile)); }) ? 0 : 1;
+            const int rowA = indexOfUuid(pm, uuidA);
+            const std::optional<Preset> back = store->get(uuidA);
+            bad += pm.count() == n + 1 && rowA >= 0 && !pm.row(rowA).factory && pm.row(rowA).name == "Probe Manage A1"
+                           && pm.row(rowA).modeKey == "fet-76"
+                       ? 0 : 1;
+            bad += storedA.has_value() && back.has_value() && sameContent(*back, *storedA) && back->tags == 0
+                           && back->attr(fcmp::factory::kModeRevAttr) != nullptr
+                       ? 0 : 1;
+            if (rowA >= 0 && back.has_value())
+            {
+                pm.apply(rowA);
+                bad += m->currentRaw().modeSlot == fetSlot && valueError(*m, *back) <= 1e-6 && pm.current() == rowA
+                               && !pm.modified()
+                           ? 0 : 1;
+            }
+            P.eq("presets.import.roundtrip", bad, 0);
+
+            bad = 0;
+            bad += call([&] { return pm.importFile(pathOf(userFile)); }) ? 0 : 1;
+            bad += call([&] { return pm.importFile(pathOf(factoryFile)); }) ? 0 : 1;
+            bad += pm.count() == n + 1 && store->count(fp::Source::factory) == static_cast<int>(nBank) ? 0 : 1;
+            P.eq("presets.import.duplicate", bad, 0);
+
+            bad = 0;
+            std::optional<Preset> changed = fp::PresetFile::read(cfg, userFile);
+            const juce::File changedFile = dir.getChildFile("changed" + ext);
+            if (changed.has_value() && changed->find("thr") != nullptr)
+            {
+                for (fp::ParamValue& v : changed->params)
+                    if (v.id == "thr")
+                        v.value = -11.5f;
+                bad += fp::PresetFile::write(cfg, *changed, changedFile) ? 0 : 1;
+                bad += call([&] { return pm.importFile(pathOf(changedFile)); }) ? 0 : 1;
+                bad += pm.count() == n + 2 && indexOfUuid(pm, uuidA) >= 0 ? 0 : 1;   // A itself untouched
+                int c = -1;
+                for (int i = static_cast<int>(nBank); i < pm.count() && c < 0; ++i)
+                    c = pm.row(i).name == "Probe Manage A1 2" ? i : -1;
+                const std::optional<Preset> got = c >= 0 ? store->get(juce::String(pm.row(c).uuid)) : std::nullopt;
+                bad += got.has_value() && got->uuid != uuidA && !got->isFactory && sameContent(*got, *changed) ? 0 : 1;
+            }
+            else
+                ++bad;
+            P.eq("presets.import.fresh", bad, 0);
+
+            bad = 0;
+            const juce::File noMode = dir.getChildFile("no-mode" + ext);
+            noMode.replaceWithText("<FCompressorPreset format=\"1\" plugin=\"FCompressor\" name=\"Probe File No Mode\">"
+                                   "<PARAM id=\"thr\" value=\"-20\"/></FCompressorPreset>");
+            bad += call([&] { return pm.importFile(pathOf(noMode)); }) ? 0 : 1;
+            int nm = -1;
+            for (int i = static_cast<int>(nBank); i < pm.count() && nm < 0; ++i)
+                nm = pm.row(i).name == "Probe File No Mode" ? i : -1;
+            bad += nm >= 0 && pm.row(nm).modeKey == "clean" ? 0 : 1;
+            P.eq("presets.import.no_modeid", bad, 0);
+        }
+        {
+            std::int64_t bad = 0;
+            const auto refused = [&](const std::string& path) {
+                bad += call([&] { return pm.importFile(path); }) ? 1 : 0;
+            };
+            const auto file = [&dir, &ext](const char* stem, const juce::String& text) {
+                const juce::File f = dir.getChildFile(stem + ext);
+                if (text.isEmpty())
+                    f.create();                                                 // an empty file (replaceWithText
+                else                                                            // needs text to write)
+                    f.replaceWithText(text);
+                return f;
+            };
+            std::optional<Preset> unknown = fp::PresetFile::read(cfg, userFile);
+            if (unknown.has_value())
+            {
+                unknown->uuid = juce::Uuid().toDashedString();
+                unknown->name = "Probe File Unknown Mode";
+                unknown->setAttr(fcmp::factory::kModeIdAttr, "no-such-mode");
+                const juce::File f = dir.getChildFile("unknown-mode" + ext);
+                bad += fp::PresetFile::write(cfg, *unknown, f) ? 0 : 1;
+                refused(pathOf(f));                                             // a Mode this build lacks
+            }
+            else
+                ++bad;
+            refused(pathOf(dir.getChildFile("missing" + ext)));                 // unreadable
+            refused(pathOf(file("garbage", "this is not a preset")));
+            refused(pathOf(file("empty", "")));
+            refused(pathOf(dir));                                               // directories
+            refused(pathOf(dir.getChildFile("empty-dir" + ext)));
+            refused(pathOf(file("foreign-root", "<HardwareReverbPreset format=\"1\" plugin=\"HardwareReverb\" "
+                                                "name=\"Hall\"><PARAM id=\"thr\" value=\"-10\"/></HardwareReverbPreset>")));
+            refused(pathOf(file("foreign-plugin", "<FCompressorPreset format=\"1\" plugin=\"HardwareReverb\" "
+                                                  "name=\"Hall\"><PARAM id=\"thr\" value=\"-10\"/></FCompressorPreset>")));
+            refused(pathOf(file("newer-format", "<FCompressorPreset format=\"2\" plugin=\"FCompressor\" "
+                                                "name=\"Probe Newer\"><PARAM id=\"thr\" value=\"-10\"/></FCompressorPreset>")));
+            refused(pathOf(file("no-name", "<FCompressorPreset format=\"1\" plugin=\"FCompressor\" name=\" \">"
+                                           "<PARAM id=\"thr\" value=\"-10\"/></FCompressorPreset>")));
+            refused(pathOf(file("bad-value", "<FCompressorPreset format=\"1\" plugin=\"FCompressor\" name=\"Probe Bad\">"
+                                             "<PARAM id=\"thr\" value=\"loud\"/></FCompressorPreset>")));
+            refused("");                                                        // no path, a relative one
+            refused(("user" + ext).toStdString());
+            P.eq("presets.import.refused", bad, 0);
+        }
+
+        P.eq("presets.manage.success_no_bump", successStill, 0);
+        P.eq("presets.manage.refusal_changed", refusalMoved, 0);
+        std::printf("NOTE     presets.manage: %lld successful calls, %lld refusals\n", static_cast<long long>(successes),
+                    static_cast<long long>(refusals));
     }
 
     if (scratchDir.exists())

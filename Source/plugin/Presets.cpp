@@ -29,6 +29,25 @@
 // process's commits, and bumps on any list, selection or modified change. Message thread only (02 §9.5), except the
 // state hooks, which run on whatever thread the host saves or loads state from and touch only the PresetManager
 // (thread-safe for them: its current() is locked, the parameters are the processor's atomics).
+//
+// User-preset management (S12 lead revision 8; P3b, S12.4). Each call returns false and changes nothing when refused,
+// and each success bumps revision() exactly once (announce()), whether or not the list itself changed:
+//   rename(i, name)    user rows only; PresetStore::rename's rule (trimmed, not empty, not taken by any user or factory
+//                      preset ignoring case; the preset may keep its own name). Renaming the current preset renames
+//                      the identity the session saves (PresetManager::setCurrent: no parameter moves).
+//   remove(i)          user rows only. Removing the current preset makes this instance untitled (current() -1): the
+//                      identity goes, the baseline values and modeId stay, so no parameter moves and modified() reads
+//                      as before. Another instance that had it loaded reads -1 by lookup (current()).
+//   importFile(path)   PresetFile::read, then PresetStore::importPreset as shipped: a uuid the store lacks is kept (a
+//                      shared session still names the preset), a known uuid with other content or a changed factory
+//                      preset gets a fresh one, the name is made unique, tags and timestamps are the store's. A file
+//                      identical to a preset already stored writes nothing and still succeeds (the preset is there).
+//                      Refused: a relative path, an unreadable or foreign file (PresetFile), a newer format, and a
+//                      modeId this build cannot resolve (a newer build's Mode; a file without one loads clean).
+//   exportFile(i, p)   PresetFile::write of any row, factory rows included (the compiled bank's values; a user row:
+//                      the store's current copy), to exactly `p` (the caller's save dialog owns the extension). A file
+//                      never carries tags or timestamps. Refused: a relative path, a directory or unwritable location.
+// Paths are absolute (a host's working directory means nothing to a plugin); "~" is expanded (juce::File).
 #include "plugin/Processor.h"
 #include "plugin/factory/FactoryBank.h"
 
@@ -37,6 +56,7 @@
 #include "fcdsp/params/HostParams.h"
 #include "fcdsp/params/Pid.h"
 
+#include <funkgui/presets/PresetFile.h>
 #include <funkgui/presets/PresetManager.h>
 #include <funkgui/presets/PresetStore.h>
 #include <funkgui/presets/PresetTypes.h>
@@ -83,6 +103,15 @@ namespace fcmp
         juce::String fromUtf8(std::string_view s)
         {
             return juce::String::fromUTF8(s.data(), static_cast<int>(s.size()));
+        }
+
+        // The file a PresetAccess path names: absolute only ("~" counts, juce::File expands it), else nullopt.
+        std::optional<juce::File> fileAt(std::string_view path)
+        {
+            const juce::String p = fromUtf8(path);
+            if (p.trim().isEmpty() || !juce::File::isAbsolutePath(p))
+                return std::nullopt;
+            return juce::File(p);
         }
 
         class Presets final : public PresetAccess
@@ -208,6 +237,79 @@ namespace fcmp
                 return true;
             }
 
+            bool rename(int index, std::string_view newName) override
+            {
+                const Preset* u = userAt(index);
+                if (u == nullptr)
+                    return false;                                 // a factory row, or no row
+                const juce::String uuid = u->uuid;                // a copy: the rename refreshes users_
+                const juce::String name = fromUtf8(newName).trim();
+                if (!store().rename(uuid, name))                  // empty, taken, or gone (another process)
+                    return false;
+                Preset c = manager_.current();
+                if (c.uuid == uuid)
+                {
+                    c.name = name;                                // the session saves the new name
+                    manager_.setCurrent(c);
+                }
+                announce();
+                return true;
+            }
+
+            bool remove(int index) override
+            {
+                const Preset* u = userAt(index);
+                if (u == nullptr)
+                    return false;
+                const juce::String uuid = u->uuid;
+                if (!store().remove(uuid))
+                    return false;
+                const Preset c = manager_.current();
+                if (c.uuid == uuid)
+                {
+                    Preset untitled;                              // no identity; the same baseline and modeId
+                    untitled.params = c.params;
+                    untitled.attributes = c.attributes;
+                    manager_.setCurrent(untitled);
+                }
+                announce();
+                return true;
+            }
+
+            bool importFile(std::string_view path) override
+            {
+                const std::optional<juce::File> f = fileAt(path);
+                if (!f.has_value())
+                    return false;
+                PresetStore& s = store();
+                std::optional<Preset> p = funkgui::presets::PresetFile::read(s.config(), *f);
+                if (!p.has_value())
+                    return false;                                 // missing, too large, not XML, another product's
+                if (const funkgui::presets::Attribute* a = p->attr(factory::kModeIdAttr);
+                    a != nullptr && fcdsp::resolveKey(a->value.toStdString()) == nullptr)
+                    return false;                                 // a Mode this build does not have
+                if (!s.importPreset(std::move(*p)).ok)            // a newer format, a non-finite value, no database
+                    return false;
+                announce();
+                return true;
+            }
+
+            bool exportFile(int index, std::string_view path) override
+            {
+                const std::optional<juce::File> f = fileAt(path);
+                if (!f.has_value() || f->isDirectory())           // at once: juce::File's replace would retry a
+                    return false;                                 // directory for half a second, then fail
+                std::optional<Preset> p = presetAt(index);        // nullopt: no row, or deleted by another process
+                if (!p.has_value())
+                    return false;
+                p->tags = 0;                                      // personal: PresetFile never writes these, and
+                p->createdMs = p->modifiedMs = p->lastUsedMs = 0; // nothing personal leaves the copy either
+                if (!funkgui::presets::PresetFile::write(store().config(), *p, *f))
+                    return false;
+                announce();
+                return true;
+            }
+
         private:
             PresetHooks makeHooks()
             {
@@ -313,6 +415,28 @@ namespace fcmp
                 if (i < bank.size())
                     return bank[i];
                 return store().get(users_[i - bank.size()].uuid);    // nullopt: deleted by another process
+            }
+
+            // The listed user preset behind a row (valid until the list next refreshes), or nullptr: a factory row, or
+            // out of range.
+            const Preset* userAt(int index) const
+            {
+                if (index < 0 || index >= count())                // count() refreshes the user rows
+                    return nullptr;
+                const std::size_t i = static_cast<std::size_t>(index);
+                const std::size_t nBank = factory::factoryBank().size();
+                return i < nBank ? nullptr : &users_[i - nBank];
+            }
+
+            // A successful management call: exactly one bump of revision(), which takes the store's and the manager's
+            // revisions and modified() as seen, so the next poll does not bump a second time for the same call. A call
+            // that changed no list (an export, a duplicate import) still bumps: the browser redraws on every success.
+            void announce()
+            {
+                seenStore_ = store().revision();
+                seenManager_ = manager_.revision();
+                seenModified_ = modified();
+                ++revision_;
             }
 
             ProcessorFacade& facade_;
