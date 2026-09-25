@@ -306,6 +306,26 @@ namespace fcmp::probe
         return calls_[callIndex(Call::exportFile)].back().ok;
     }
 
+    // P3c: save over a user row (FakeFacade.h).
+    bool FakePresets::overwrite(int index)
+    {
+        CallLog log{ index, {}, false };
+        const bool userRow = index >= 0 && index < static_cast<int>(rows_.size())
+                          && !rows_[static_cast<std::size_t>(index)].factory;
+        if (!refuse(Call::overwrite) && userRow)
+        {
+            Row& r = rows_[static_cast<std::size_t>(index)];
+            if (const fcdsp::ModeSlot& s = fcdsp::resolveSlot(owner_.currentRaw().modeSlot); s.entry != nullptr)
+                r.modeKey = std::string(s.key);
+            current_ = index;
+            modified_ = false;
+            ++revision_;
+            log.ok = true;
+        }
+        calls_[callIndex(Call::overwrite)].push_back(std::move(log));
+        return calls_[callIndex(Call::overwrite)].back().ok;
+    }
+
     void FakePresets::script(Call c, std::optional<bool> result) noexcept { scripted_[callIndex(c)] = result; }
 
     void FakePresets::setImportRow(std::optional<Row> r) { importRow_ = std::move(r); }

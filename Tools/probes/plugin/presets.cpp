@@ -87,6 +87,21 @@
 //   presets.import.refused             an unknown modeId; missing, not XML, empty, a directory; another product's root or
 //                                      plugin; a newer format; no name; a value that is not a number; empty or
 //                                      relative paths
+// Save over a user preset (P3c, S12.5; S12 lead revision 11), through the same checker:
+//   presets.overwrite.user             A current, switched to bus-g with new values (modified), then overwrite(A):
+//                                      revision() bumps exactly once; A is current and unmodified, listed with its
+//                                      name and category and Mode bus-g; the store's A keeps uuid, name, category,
+//                                      author, notes, tags, created and last-used times, and holds the 22 live values
+//                                      bitwise with modeId bus-g and its modeRev; no parameter moved; the session
+//                                      names A
+//   presets.overwrite.reapply_bitwise  after another preset, applying A again restores all 29 values bitwise (the Mode
+//                                      among them), unmodified
+//   presets.overwrite.not_current      a user row that is not current is saved over and becomes current; A untouched
+//   presets.overwrite.refused          factory rows (first, FET 76, last) and rows -1, count(), INT_MAX, INT_MIN:
+//                                      false, nothing changes (the store's factory rows included), the live sound
+//                                      stays modified
+//   presets.overwrite.store_failure    a row another connection deleted after the list was read: false; the list, the
+//                                      selection and modified() stay and nothing is re-created; the next poll drops it
 //   presets.manage.success_no_bump / .refusal_changed   the checker's two counts (0)
 // Golden rows (candidates until the lead blesses them): presets.bank.size, presets.bank.hash (every uuid, name,
 // category, attribute and parameter bit of the bank: a moved preset shows as drift).
@@ -1423,6 +1438,149 @@ FCMP_PROBE(proc, presets)
             refused("");                                                        // no path, a relative one
             refused(("user" + ext).toStdString());
             P.eq("presets.import.refused", bad, 0);
+        }
+
+        // overwrite (P3c, S12.5; S12 lead revision 11): A is current (applied by the round trip above); a new Mode and
+        // new values, then a save over A. Then a user row that is not current. Every call through the checker.
+        const juce::String uuidC = [&pm, nBank] {
+            for (int i = static_cast<int>(nBank); i < pm.count(); ++i)
+                if (pm.row(i).name == "Probe Manage A1 2")
+                    return juce::String(pm.row(i).uuid);
+            return juce::String();
+        }();
+        const fcdsp::ModeEntry* busG = fcdsp::byKey("bus-g");
+        const int busGSlot = busG != nullptr ? fcdsp::slotOf(*busG) : -1;
+        if (uuidC.isEmpty() || busGSlot < 0 || pm.current() != indexOfUuid(pm, uuidA))
+        {
+            P.harnessError("proc.presets: the overwrite rows need A current, 'Probe Manage A1 2' and bus-g");
+            return P.finish();
+        }
+        std::array<std::uint32_t, fcdsp::kNumParams> savedBits{};
+        {
+            std::int64_t bad = 0;
+            store->setTags(uuidA, fp::tagBit(fp::Tag::green));                 // personal: kept by the overwrite
+            pm.revision();
+            const std::optional<Preset> before = store->get(uuidA);
+            setPlain(*m, Pid::mode, static_cast<float>(busGSlot));             // the edit: another Mode, new values
+            setPlain(*m, Pid::thr, -21.75f);
+            setPlain(*m, Pid::rel, 180.0f);
+            bad += pm.modified() ? 0 : 1;
+            savedBits = rawBits();
+            const std::uint32_t rev = pm.revision();
+            bad += call([&] { return pm.overwrite(indexOfUuid(pm, uuidA)); }) ? 0 : 1;
+            bad += pm.revision() == rev + 1 ? 0 : 1;                            // exactly one bump
+            const int cur = pm.current();
+            bad += cur >= 0 && cur == indexOfUuid(pm, uuidA) && !pm.modified() ? 0 : 1;
+            const fcmp::PresetAccess::Row r = pm.row(cur);
+            bad += r.name == "Probe Manage A1" && r.category == "Bus" && r.modeKey == "bus-g" && !r.factory ? 0 : 1;
+            const std::optional<Preset> after = store->get(uuidA);
+            if (before.has_value() && after.has_value())
+            {
+                bad += after->uuid == uuidA && after->name == before->name && after->category == before->category
+                               && after->author == before->author && after->notes == before->notes && !after->isFactory
+                               && after->tags == fp::tagBit(fp::Tag::green) && after->createdMs == before->createdMs
+                               && after->lastUsedMs == before->lastUsedMs && after->modifiedMs >= before->modifiedMs
+                           ? 0 : 1;
+                const fp::Attribute* id = after->attr(fcmp::factory::kModeIdAttr);
+                const fp::Attribute* rv = after->attr(fcmp::factory::kModeRevAttr);
+                bad += id != nullptr && id->value == "bus-g" && rv != nullptr
+                               && rv->value == juce::String(static_cast<int>(busG->desc->revision))
+                           ? 0 : 1;
+                bad += after->params.size() == fcdsp::kNumModeParams ? 0 : 1;
+                for (const fp::ParamValue& v : after->params)
+                    if (const Pid pid = pidOf(v.id);
+                        pid == fcdsp::kNoPid || bitsOf(v.value) != bitsOf(m->rawValue(pid)))
+                        ++bad;
+            }
+            else
+                ++bad;
+            bad += rawBits() == savedBits ? 0 : 1;                              // no parameter moved
+            const std::unique_ptr<juce::XmlElement> xml = xmlOf(save(*m));
+            const juce::XmlElement* preset = xml != nullptr ? xml->getChildByName("PRESET") : nullptr;
+            bad += preset != nullptr && preset->getStringAttribute("uuid") == uuidA
+                           && preset->getStringAttribute("name") == "Probe Manage A1"
+                       ? 0 : 1;                                                 // the session names A
+            P.eq("presets.overwrite.user", bad, 0);
+        }
+        {
+            // Re-applied after another preset, A brings back exactly what was saved: all 29 values bit for bit (the
+            // Mode among them), unmodified.
+            std::int64_t bad = 0;
+            pm.apply(fetRow);
+            bad += rawBits() != savedBits ? 0 : 1;                              // the other preset moved something
+            pm.apply(indexOfUuid(pm, uuidA));
+            bad += rawBits() == savedBits && m->currentRaw().modeSlot == busGSlot ? 0 : 1;
+            bad += pm.current() == indexOfUuid(pm, uuidA) && !pm.modified() ? 0 : 1;
+            P.eq("presets.overwrite.reapply_bitwise", bad, 0);
+        }
+        {
+            // A user row that is not current: saved over, and it becomes current; A is untouched.
+            std::int64_t bad = 0;
+            const std::optional<Preset> aBefore = store->get(uuidA);
+            setPlain(*m, Pid::thr, -9.5f);
+            bad += call([&] { return pm.overwrite(indexOfUuid(pm, uuidC)); }) ? 0 : 1;
+            const int cur = pm.current();
+            bad += cur >= 0 && cur == indexOfUuid(pm, uuidC) && !pm.modified()
+                           && pm.row(cur).name == "Probe Manage A1 2"
+                       ? 0 : 1;
+            const std::optional<Preset> c = store->get(uuidC);
+            const fp::ParamValue* thr = c.has_value() ? c->find("thr") : nullptr;
+            bad += thr != nullptr && bitsOf(thr->value) == bitsOf(m->rawValue(Pid::thr)) ? 0 : 1;
+            const std::optional<Preset> aAfter = store->get(uuidA);
+            bad += aBefore.has_value() && aAfter.has_value() && sameContent(*aBefore, *aAfter) ? 0 : 1;
+            P.eq("presets.overwrite.not_current", bad, 0);
+        }
+        {
+            // Refused: factory rows and rows out of range; the bank's stored rows and the modified live sound stay.
+            std::int64_t bad = 0;
+            setPlain(*m, Pid::thr, -30.0f);
+            bad += pm.modified() ? 0 : 1;
+            const std::array<int, 3> factoryRows{ 0, fetRow, static_cast<int>(nBank) - 1 };
+            std::array<std::optional<Preset>, 3> stored{};
+            for (std::size_t k = 0; k < factoryRows.size(); ++k)
+                stored[k] = store->get(bank[static_cast<std::size_t>(factoryRows[k])].uuid);
+            const auto refused = [&](int index) { bad += call([&] { return pm.overwrite(index); }) ? 1 : 0; };
+            for (const int k : factoryRows)
+                refused(k);
+            refused(-1);
+            refused(pm.count());
+            refused(std::numeric_limits<int>::max());
+            refused(std::numeric_limits<int>::min());
+            for (std::size_t k = 0; k < factoryRows.size(); ++k)
+            {
+                const std::optional<Preset> f = store->get(bank[static_cast<std::size_t>(factoryRows[k])].uuid);
+                bad += f.has_value() && stored[k].has_value() && f->isFactory && sameContent(*f, *stored[k])
+                               && f->modifiedMs == stored[k]->modifiedMs
+                           ? 0 : 1;
+            }
+            bad += pm.modified() ? 0 : 1;
+            P.eq("presets.overwrite.refused", bad, 0);
+        }
+        {
+            // A store failure: another process deleted the row after this list was read (not yet polled). Refused:
+            // the list, the selection and modified() stay, and nothing is re-created.
+            std::int64_t bad = 0;
+            const int rowN = [&pm, nBank] {
+                for (int i = static_cast<int>(nBank); i < pm.count(); ++i)
+                    if (pm.row(i).name == "Probe File No Mode")
+                        return i;
+                return -1;
+            }();
+            const juce::String uuidN = rowN >= 0 ? juce::String(pm.row(rowN).uuid) : juce::String();
+            pm.revision();
+            const std::vector<std::string> rows = listing();
+            const int cur = pm.current();
+            const bool mod = pm.modified();
+            {
+                fp::PresetStore other(cfg);                                     // another process's connection
+                bad += rowN >= 0 && other.remove(uuidN) ? 0 : 1;
+            }
+            bad += rowN >= 0 && pm.overwrite(rowN) ? 1 : 0;
+            bad += listing() == rows && pm.current() == cur && pm.modified() == mod ? 0 : 1;
+            bad += store->get(uuidN).has_value() ? 1 : 0;
+            pm.revision();                                                      // now the delete is seen
+            bad += indexOfUuid(pm, uuidN) < 0 && pm.current() == indexOfUuid(pm, uuidC) ? 0 : 1;
+            P.eq("presets.overwrite.store_failure", bad, 0);
         }
 
         P.eq("presets.manage.success_no_bump", successStill, 0);

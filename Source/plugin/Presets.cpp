@@ -48,6 +48,18 @@
 //                      the store's current copy), to exactly `p` (the caller's save dialog owns the extension). A file
 //                      never carries tags or timestamps. Refused: a relative path, a directory or unwritable location.
 // Paths are absolute (a host's working directory means nothing to a plugin); "~" is expanded (juce::File).
+//
+// Save over a user preset (S12 lead revision 11; P3c, S12.5), under the same rules (false changes nothing; a success
+// bumps revision() once):
+//   overwrite(i)       user rows only (any user row, current or not). PresetStore::overwrite of the store's current
+//                      copy of the row with the live values of the 22 preset parameters (PresetManager::capture:
+//                      plain, exactly what the parameters hold) and modeId/modeRev of the effective Mode; the row keeps
+//                      its uuid, name, category, author, notes, its other attributes, its tags and its created and
+//                      last-used times (the store stamps modified). It then becomes the session's identity and baseline
+//                      (PresetManager::setCurrent: no parameter moves), so current() is that row and modified() false.
+//                      Refused: a factory row, an index out of range, a row another process deleted, and any store
+//                      failure (no database, a write that fails): the store's transaction leaves the row as it was, and
+//                      the identity is set only after the store has committed.
 #include "plugin/Processor.h"
 #include "plugin/factory/FactoryBank.h"
 
@@ -306,6 +318,26 @@ namespace fcmp
                 p->createdMs = p->modifiedMs = p->lastUsedMs = 0; // nothing personal leaves the copy either
                 if (!funkgui::presets::PresetFile::write(store().config(), *p, *f))
                     return false;
+                announce();
+                return true;
+            }
+
+            bool overwrite(int index) override
+            {
+                const Preset* u = userAt(index);
+                if (u == nullptr)
+                    return false;                                 // a factory row, or no row
+                const juce::String uuid = u->uuid;                // a copy: the store calls below may refresh users_
+                PresetStore& s = store();
+                std::optional<Preset> saved = s.get(uuid);        // the row as stored now: its identity and metadata
+                if (!saved.has_value() || saved->isFactory)
+                    return false;                                 // deleted by another process since the list was read
+                const Preset live = manager_.capture();           // the 22 live values; modeId/modeRev (captureExtra)
+                saved->params = live.params;
+                setModeAttributes(*saved);                        // the effective Mode's; any other attribute is kept
+                if (!s.overwrite(*saved))                         // one transaction: nothing changes when it fails
+                    return false;
+                manager_.setCurrent(*saved);                      // the saved row, unmodified: no parameter moves
                 announce();
                 return true;
             }

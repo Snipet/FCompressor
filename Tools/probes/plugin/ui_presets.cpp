@@ -1,7 +1,7 @@
 // FCMP_PROBE layer=ui name=presets scope=global timeout=300
 //
-// ui.presets (02 §6.2–§6.3, §8.9; S12 lead revisions 5 and 8; U6): the preset strip and the preset browser over a
-// FakeFacade's PresetAccess (15 rows: 12 factory, 3 user; current = row 1), driven through the Panel API and
+// ui.presets (02 §6.2–§6.3, §8.9; S12 lead revisions 5, 8 and 11; U6, P3c): the preset strip and the preset browser
+// over a FakeFacade's PresetAccess (15 rows: 12 factory, 3 user; current = row 1), driven through the Panel API and
 // HeadlessHost input (Panel{skipHint, syncPreview}, dpi 2, settled at 1/60 s; a fresh panel per scenario). Global and
 // spec-only: the views read no Mode-specific data beyond the Mode names of the rows.
 //
@@ -19,6 +19,14 @@
 //               closes (opened for the save), the strip showing the new preset; Esc cancels and keeps the browser open;
 //               SAVE AS inside the browser keeps it open on the new row; an empty name is refused before the call; the
 //               category follows a chosen category filter; Init starts empty; a click elsewhere cancels.
+//   save.*      (P3c, S12.5) SAVE with a modified user preset current ("My Bus", applied, then edited): the strip's
+//               SAVE is one overwrite(current), no dialog, and clears MODIFIED; SAVED shows in the sub-line for 2 s,
+//               then goes; with a factory preset or none it is the save as, never an overwrite; a refused overwrite falls
+//               back to the save as; Return on the focused SAVE saves over, Shift-Return saves as; a11y help and the
+//               footer line name the preset saved over; headless, SAVE's popup click and showMenu open nothing; the
+//               strip's menu is Save, Save As... and runs each; the browser's SAVE saves over the current preset
+//               whatever row is selected and stays open ("SAVED 'MY BUS'"), is SAVE AS with a factory preset, and a
+//               refused overwrite says so and starts a save as.
 //   rename.*    RENAME on a user row edits its name in place; Return is one rename(index, name); factory rows cannot;
 //               a taken name (case-insensitive) is refused before the call; a refused call keeps the edit; a click
 //               elsewhere confirms.
@@ -607,6 +615,185 @@ namespace
         }
     }
 
+    // ---- save over a user preset (P3c) ------------------------------------------------------------------------------
+
+    // "My Bus" (a user row, Mode bus-g) applied, then edited: current and modified, as after turning a knob. The counts
+    // start at zero.
+    void userModified(Rig& r)
+    {
+        r.presets().apply(kUserFirst + 1);
+        r.presets().setModified(true);
+        r.host->tick(1, kDt);                                    // settle() ticks nothing while the panel is idle
+        r.settle();                                              // the header's Mode crossfade
+        r.presets().resetCounts();
+        r.facade.resetCounts();
+    }
+
+    void saveOver(Probe& P)
+    {
+        constexpr int kMyBus = kUserFirst + 1;
+        {
+            // The strip's SAVE on a modified user preset: one overwrite of the current row, no dialog, MODIFIED gone.
+            Rig r;
+            userModified(r);
+            const bool before = stripValue(r) == "My Bus, modified";
+            r.click(bounds(r, stripId(PS::kSaveLocal)));
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::overwrite);
+            P.eq("save.strip_user_one_call",
+                 b(before && calls.size() == 1 && calls[0].index == kMyBus && calls[0].ok), 1);
+            P.eq("save.strip_user_clears_modified", b(stripValue(r) == "My Bus" && !r.presets().modified()
+                                                      && r.presets().current() == kMyBus), 1);
+            P.eq("save.strip_user_no_dialog", b(!r.open() && !editing(r) && r.presets().saves() == 0
+                                                && r.presets().applies() == 0 && r.facade.writes().empty()), 1);
+
+            // SAVED shows in the sub-line, then goes (2 s of panel time; the strip asks for full rate meanwhile).
+            const int early = stripPrims(r.host->draw());
+            const bool busy = r.panel->wantsFullRate();
+            r.host->tick(150, kDt);
+            const int late = stripPrims(r.host->draw());
+            P.eq("save.strip_saved_shows_then_goes", b(busy && early >= late + 5 && !r.panel->wantsFullRate()), 1);
+        }
+        {
+            // A factory preset, or none: SAVE is a save as, as before, and never an overwrite.
+            Rig r;
+            r.click(bounds(r, stripId(PS::kSaveLocal)));
+            const bool factory = r.open() && editing(r) && value(r, browserId(PB::kEditLocal)) == "Gentle Glue"
+                              && r.presets().overwrites() == 0;
+            Rig n(-1);
+            n.click(bounds(n, stripId(PS::kSaveLocal)));
+            const bool none = n.open() && editing(n) && n.presets().overwrites() == 0;
+            P.eq("save.strip_factory_is_saveas", b(factory && none), 1);
+        }
+        {
+            // A refused overwrite falls back to the save as, so the sound is not lost; nothing is saved without a name.
+            Rig r;
+            userModified(r);
+            r.presets().script(Call::overwrite, false);
+            r.click(bounds(r, stripId(PS::kSaveLocal)));
+            r.settle();
+            P.eq("save.strip_refused_falls_back", b(r.presets().overwrites() == 1 && r.open() && editing(r)
+                                                    && value(r, browserId(PB::kEditLocal)) == "My Bus"
+                                                    && status(r) == "TAKEN: IT WILL BE SAVED AS 'MY BUS 2'"
+                                                    && r.presets().saves() == 0
+                                                    && stripValue(r) == "My Bus, modified"), 1);
+        }
+        {
+            // Keys on the focused SAVE: Return saves over; Shift-Return is the save as.
+            Rig r;
+            userModified(r);
+            r.keys("tab,tab,tab,tab,tab");
+            const bool focused = r.ctx().focus == stripId(PS::kSaveLocal);
+            r.keys("return");
+            const bool over = r.presets().overwrites() == 1 && !r.open() && stripValue(r) == "My Bus";
+            r.keys("shift+return");
+            r.settle();
+            P.eq("save.strip_keys", b(focused && over && r.open() && editing(r) && r.presets().overwrites() == 1), 1);
+        }
+        {
+            // A11y: SAVE's help names the preset it saves over; press saves over; headless, a popup click or showMenu
+            // opens no menu and calls nothing.
+            Rig r;
+            userModified(r);
+            const std::vector<funkgui::A11yItem> v = r.items();
+            const funkgui::A11yItem* save = byId(v, stripId(PS::kSaveLocal));
+            const bool help = save != nullptr && save->title == "Save preset"
+                           && save->help == "Saves over My Bus. Its menu has Save as";
+            funkgui::Mods ctrl;
+            ctrl.ctrl = true;
+            r.click(bounds(r, stripId(PS::kSaveLocal)), ctrl);
+            r.a11y(stripId(PS::kSaveLocal), funkgui::A11yAction::showMenu);
+            const bool noMenu = r.presets().overwrites() == 0 && !r.open() && stripValue(r) == "My Bus, modified";
+            r.a11y(stripId(PS::kSaveLocal), funkgui::A11yAction::press);
+            P.eq("save.strip_a11y", b(help && noMenu && r.presets().overwrites() == 1 && !r.open()), 1);
+
+            Rig f;
+            const std::vector<funkgui::A11yItem> w = f.items();
+            const funkgui::A11yItem* fs = byId(w, stripId(PS::kSaveLocal));
+            P.eq("save.strip_a11y_factory",
+                 b(fs != nullptr && fs->help == "Saves the current sound as a new preset"), 1);
+        }
+        {
+            // The footer line under the hand says which save a click is.
+            Rig r;
+            userModified(r);
+            const funkgui::Rect s = bounds(r, stripId(PS::kSaveLocal));
+            r.host->move(s.centreX(), s.centreY());
+            r.host->tick(1, kDt);
+            const std::string user = r.ctx().hand.spec;
+            Rig f;
+            f.host->move(s.centreX(), s.centreY());
+            f.host->tick(1, kDt);
+            const std::string factory = f.ctx().hand.spec;
+            P.eq("save.strip_hand", b(user == "SAVE OVER 'MY BUS'   RIGHT-CLICK OR SHIFT-RETURN: SAVE AS"
+                                      && factory == "SAVE THE CURRENT SOUND AS A NEW PRESET"), 1);
+        }
+        {
+            // SAVE's context menu (a strip of the probe's own, over the same panel): Save, Save As...; Save is the
+            // click's overwrite, Save As... the browser's save as.
+            Rig r;
+            userModified(r);
+            const ui::PanelOptions options = kProbeOptions;
+            ui::HistoryStore history;
+            ui::PreviewWorker worker(true);
+            ui::PanelContext ctx(*r.panel, r.facade, options, funkgui::FontService::get().atlas(), history, worker);
+            ctx.host = r.host.get();
+            ctx.frame = r.panel->context().frame;
+            PS ps(ctx);
+            std::array<PS::MenuItem, 4> items{};
+            const int n = ps.menu(items);
+            std::string text;
+            for (int i = 0; i < n; ++i)
+            {
+                const PS::MenuItem& it = items[static_cast<std::size_t>(i)];
+                text += std::string(it.label) + (it.enabled ? "" : "(off)") + ";";
+            }
+            P.eq("save.strip_menu_items", b(text == "Save;Save As...;"), 1);
+            ps.run(PS::Command::save);
+            const bool save = r.presets().overwrites() == 1 && !r.presets().modified();
+            ps.run(PS::Command::saveAs);
+            r.host->tick(1, kDt);
+            P.eq("save.strip_menu_run", b(save && r.presets().overwrites() == 1 && r.open() && editing(r)
+                                          && value(r, browserId(PB::kEditLocal)) == "My Bus"), 1);
+        }
+        {
+            // The browser's SAVE: over the current user preset whatever row is selected; the browser stays open.
+            Rig r;
+            userModified(r);
+            openBrowser(r);
+            selectRow(r, 3);
+            const std::vector<funkgui::A11yItem> v = r.items();
+            const funkgui::A11yItem* save = byId(v, browserId(PB::kSaveLocal));
+            const bool item = save != nullptr && save->title == "Save" && save->enabled
+                           && save->help == "Saves over My Bus";
+            r.click(bounds(r, browserId(PB::kSaveLocal)));
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::overwrite);
+            const std::vector<funkgui::A11yItem> shown = rows(r);
+            const funkgui::A11yItem* row = rowNamed(shown, "My Bus");
+            P.eq("save.browser_user", b(item && calls.size() == 1 && calls[0].index == kMyBus && calls[0].ok && r.open()
+                                        && !editing(r) && status(r) == "SAVED 'MY BUS'" && row != nullptr
+                                        && row->checked && stripValue(r) == "My Bus" && r.presets().saves() == 0
+                                        && r.presets().applies() == 0), 1);
+            r.a11y(browserId(PB::kSaveLocal), funkgui::A11yAction::press);
+            P.eq("save.browser_a11y_press", r.presets().overwrites(), 2);
+        }
+        {
+            // The browser's SAVE with a factory preset current is SAVE AS; a refused overwrite says so and starts one.
+            Rig r;
+            openBrowser(r);
+            r.click(bounds(r, browserId(PB::kSaveLocal)));
+            P.eq("save.browser_factory_is_saveas", b(editing(r) && value(r, browserId(PB::kEditLocal)) == "Gentle Glue"
+                                                     && r.presets().overwrites() == 0 && r.open()), 1);
+            Rig f;
+            userModified(f);
+            f.presets().script(Call::overwrite, false);
+            openBrowser(f);
+            f.click(bounds(f, browserId(PB::kSaveLocal)));
+            P.eq("save.browser_refused", b(f.presets().overwrites() == 1 && editing(f)
+                                           && status(f) == "COULD NOT SAVE OVER 'MY BUS'" && f.presets().saves() == 0),
+                 1);
+        }
+    }
+
     // ---- rename ---------------------------------------------------------------------------------------------------------
 
     void rename(Probe& P)
@@ -945,6 +1132,45 @@ namespace
             shoot(r, "import");
             P.eq("writes.none", b(r.facade.writes().empty()), 1);
         }
+        {
+            // P3c: a modified user preset before and after SAVE, in the strip and in the browser. The frames after a
+            // save are drawn inside SAVED's 2 s (no settle), with the pointer still on the SAVE it pressed.
+            const auto now = [&](Rig& r) {
+                const funkgui::PrimList& pl = r.host->draw();
+                missing += static_cast<int>(pl.missingGlyphs);
+                inside = inside && insideRegions(pl);
+            };
+            Rig r;
+            userModified(r);
+            r.host->tick(240, kDt);                              // past the footer's 3 s Mode summary: the spec shows
+            frame(r);
+            shoot(r, "save-strip-before");
+            const funkgui::Rect s = bounds(r, stripId(PS::kSaveLocal));
+            r.host->move(s.centreX(), s.centreY());
+            r.host->tick(20, kDt);
+            now(r);
+            shoot(r, "save-strip-hover");
+            r.click(s);
+            r.host->tick(20, kDt);
+            now(r);
+            shoot(r, "save-strip-after");
+
+            Rig w;
+            userModified(w);
+            w.host->tick(240, kDt);
+            openBrowser(w);
+            const funkgui::Rect c = bounds(w, browserId(PB::kSaveLocal));
+            w.host->move(c.centreX(), c.centreY());
+            w.host->tick(20, kDt);
+            now(w);
+            shoot(w, "save-browser-before");
+            w.click(c);
+            w.host->tick(20, kDt);
+            now(w);
+            shoot(w, "save-browser-after");
+            P.eq("save.writes_none", b(r.facade.writes().empty() && w.facade.writes().empty()
+                                       && r.presets().overwrites() == 1 && w.presets().overwrites() == 1), 1);
+        }
         P.eq("draw.glyphs_missing", missing, 0);
         P.eq("draw.inside", b(inside), 1);
     }
@@ -974,6 +1200,7 @@ FCMP_PROBE(ui, presets)
     strip(P);
     browser(P);
     saveAs(P);
+    saveOver(P);
     rename(P);
     remove(P);
     import(P);

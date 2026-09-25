@@ -17,8 +17,8 @@
 //   ink100, a pressed one accent.
 // - Bottom, y 324–340 (a hairline at y 316 above): the status line at x 40 (the count, "33 PRESETS · 9 SHOWN", ink32; a
 //   message for 3 s of panel time after an action, ink70; the delete confirmation, ink100) and the actions, text cells
-//   right-aligned to x 920 (kCaption; ink52, hover ink100, accent while pressed, ink16 when not available): SAVE AS,
-//   RENAME, DELETE, IMPORT, EXPORT. While a name is typed they are SAVE (or RENAME) and CANCEL.
+//   right-aligned to x 920 (kCaption; ink52, hover ink100, accent while pressed, ink16 when not available): SAVE (P3c),
+//   SAVE AS, RENAME, DELETE, IMPORT, EXPORT. While a name is typed they are SAVE (or RENAME) and CANCEL.
 // - Recall: a click loads the row (one PresetAccess::apply on a release inside it; dragging off cancels) and keeps the
 //   browser open, so the sound and the slots are heard and seen landing (HR); a double-click loads once and closes;
 //   ↑ ↓ PageUp PageDown Home End move the selection and load it (HR: "the list is for listening"); Return loads the
@@ -31,7 +31,12 @@
 //   menu of the categories. The status line says what the store will do: "TAKEN: IT WILL BE SAVED AS 'X 2'" when the
 //   name is taken (PresetStore's unique-name rule, factory names included). Return (or SAVE) calls PresetAccess::saveAs
 //   once; an empty name is refused before the call. A save started from the strip closes the browser after it succeeds;
-//   one started here keeps it open on the new row. (There is no "save over": PresetAccess has no overwrite; U6 handoff.)
+//   one started here keeps it open on the new row.
+// - Save (SAVE, a11y; P3c, S12.5, S12 lead revision 11): the strip's SAVE, here. With a user preset current it saves
+//   over it (one PresetAccess::overwrite of the current row, no dialog), whichever row is selected, and says "SAVED
+//   'MY BUS'"; the browser stays open and the selection stays. With a factory preset current, or none, it is SAVE AS.
+//   An overwrite the processor refuses says "COULD NOT SAVE OVER 'MY BUS'" and starts a save as, so the sound is never
+//   lost. SAVE AS stays beside it for a user preset (a copy under a new name).
 // - Rename (RENAME, the row menu, a11y; user rows only): the row's name becomes the LineEdit in place. Return (or the
 //   RENAME cell) calls PresetAccess::rename once; a name another preset has is refused before the call ("'X' IS TAKEN").
 // - An edit owns the keyboard (LineEdit's keys; Cmd and Ctrl chords stay the host's); Esc cancels it and keeps the
@@ -62,7 +67,8 @@
 //   the host.
 //
 // The members below the FZ4 declarations are additions (SubView overrides with defaults, the actions shared by pointer,
-// keyboard, menus, drops and a11y, and private state); no FZ4 declaration changed.
+// keyboard, menus, drops and a11y, and private state; P3c: kSaveLocal and SAVE's private state); no FZ4 declaration
+// changed.
 #pragma once
 
 #include "editor/SubView.h"
@@ -155,6 +161,7 @@ namespace fcmp::ui
         static constexpr uint32_t kDeleteLocal   = 0x12;
         static constexpr uint32_t kImportLocal   = 0x13;
         static constexpr uint32_t kExportLocal   = 0x14;
+        static constexpr uint32_t kSaveLocal     = 0x15;        // P3c: SAVE (over the current user preset)
         static constexpr uint32_t kCommitLocal   = 0x18;        // while typing: SAVE / RENAME
         static constexpr uint32_t kCancelLocal   = 0x19;        //               CANCEL
         static constexpr uint32_t kFiltersLocal  = 0x20;        // the radioGroup "Show"
@@ -162,7 +169,7 @@ namespace fcmp::ui
         static constexpr uint32_t kRowLocal0     = 0x1000;      // rows: 0x1000 + PresetAccess index
 
     private:
-        enum class Action : uint8_t { saveAs, rename, remove, importFiles, exportFile, commit, cancel };
+        enum class Action : uint8_t { saveAs, rename, remove, importFiles, exportFile, commit, cancel, save };
         enum class Edit : uint8_t { none, saveAs, rename };
         enum class Zone : uint8_t { none, row, filter, action, field, category, list, column, body };
         struct Hit
@@ -213,6 +220,7 @@ namespace fcmp::ui
         void load(int entry, bool closeAfter);                   // one apply, unless current and unmodified
         void moveSelection(int to);                              // keys: select and load
         void beginSaveAs();
+        void saveCurrent();                                      // SAVE (P3c): over the current user preset
         void beginRename(int entry);
         void commitEdit();
         void cancelEdit();
@@ -292,7 +300,7 @@ namespace fcmp::ui
         uint32_t revision_ = 1;                                  // a11y
 
         // the action cells (fixed; widths from the atlas at construction)
-        std::array<Cell, 5> browseCells_{};
+        std::array<Cell, 6> browseCells_{};                      // P3c: SAVE first
         std::array<Cell, 2> editCells_{};
 
         // the footer line under the hand (rebuilt every tick while the pointer is on an item: it names the selection)
