@@ -32,6 +32,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstring>
+#include <span>
 
 namespace fcmp::ui
 {
@@ -119,7 +120,9 @@ namespace fcmp::ui
 
     // Everything else is the host's: FunkGui v0.7.1's themeIndex() (the Theme the next draw receives, valid at once after
     // a THEME click) and ownerComponent() (the juce::Component a PopupMenu or FileChooser anchors to; nullptr headless)
-    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults.
+    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults. So is v0.8.0's UI
+    // zoom (UF1b; ADR-68, ADR-68a), for the Footer's ZOOM cells: zoomPercent(), setZoomPercent(), zoomSteps() and
+    // zoomFits(). Without them the Panel would always see 100 %, no steps and every step fitting.
     class Panel::HostProxy final : public funkgui::HostServices
     {
     public:
@@ -131,6 +134,10 @@ namespace fcmp::ui
         double nowSeconds() const override { return host_.nowSeconds(); }
         int    themeIndex() const override { return host_.themeIndex(); }
         juce::Component* ownerComponent() override { return host_.ownerComponent(); }
+        int    zoomPercent() const override { return host_.zoomPercent(); }
+        void   setZoomPercent(int percent) override { host_.setZoomPercent(percent); }
+        std::span<const int> zoomSteps() const override { return host_.zoomSteps(); }
+        bool   zoomFits(int percent) const override { return host_.zoomFits(percent); }
         void   beginBatch() override
         {
             facade_.beginBatch();

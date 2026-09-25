@@ -17,7 +17,7 @@
 //                     each radio button; the hidden pane draws nothing and its a11y items are invisible; nothing written
 //   taborder.<tab>.*  02 §7.5: Mode latch, preset strip, QUALITY, LOOKAHEAD, DELTA, BYPASS, CHARACTERISTICS, the span,
 //                     scale and SC|COLOUR groups, meter reset, the handles THRESHOLD KNEE RATIO RANGE ATTACK RELEASE (n/a
-//                     skipped) and SC HPF (SIDECHAIN only), THEME; Tab wraps and never visits a stop twice
+//                     skipped) and SC HPF (SIDECHAIN only), ZOOM (UF1b), THEME; Tab wraps and never visits a stop twice
 //   handle.<pid>.*    the handles proxy their slots (02 §7.4, §7.5): the a11y item equals the slot's on PANEL (role, title,
 //                     description, help, value, state, value interface); → then Home on the focused handle write exactly
 //                     what they write on the focused slot; a drag writes only that parameter's port, inside one gesture
@@ -672,9 +672,12 @@ namespace
         P.eq(k + ".handles", b(hOk), 1);
         if (!hOk)
             std::printf("NOTE     ui.charscreen: %s handle stops: %s\n", k.c_str(), got.c_str());
-        const funkgui::A11yItem* theme = footer.size() == 1 ? byId(items, footer[0]) : nullptr;
-        P.eq(k + ".theme_last", b(theme != nullptr && theme->role == funkgui::A11yRole::radioGroup
-                                  && !order.empty() && order.back() == footer[0]), 1);
+        // UF1b (S12): the footer's stops are ZOOM, then THEME, the last stop.
+        const funkgui::A11yItem* zoom = footer.size() == 2 ? byId(items, footer[0]) : nullptr;
+        const funkgui::A11yItem* theme = footer.size() == 2 ? byId(items, footer[1]) : nullptr;
+        P.eq(k + ".theme_last", b(zoom != nullptr && zoom->role == funkgui::A11yRole::radioGroup && zoom->title == "Zoom"
+                                  && theme != nullptr && theme->role == funkgui::A11yRole::radioGroup
+                                  && !order.empty() && order.back() == footer[1]), 1);
     }
 
     // ---- handles proxy their slots (02 §7.4, §7.5) ---------------------------------------------------------------------------
