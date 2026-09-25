@@ -19,11 +19,15 @@
 //                shows the hovered slot.
 //   theme.*      a THEME cell writes the preference (never a parameter), and the panel's geometry is the same in
 //                the other theme (the swap is geometry-invariant).
+//   host.*       (UF1a) the Panel's HostServices proxy forwards themeIndex() and ownerComponent() to the host.
 //   notice.*     StateNotice texts (newer session, unknown/retired Mode, revision K2 #10), a load while the editor
 //                is open, kUiPoisonReset (3 s), and their expiry.
 //   lookahead.*  wantsLookahead && budget OFF: the hint over the band and on LOOKAHEAD; gone with a budget; never
 //                for a Mode that does not want lookahead.
-//   display.*    GAIN REDUCTION: "–" when not live, the live GR (live-tagged) and 0.0, stale after 0.5 s.
+//   display.*    GAIN REDUCTION (UF1a, ADR-69/70): "–" before the first frame only; the first frame's GR at once
+//                (live-tagged), then the text refreshes every 0.25 s; the max GR of the last 1 s holds (history columns
+//                and the newest frame) and then falls to 0.0; stale (no frame for 0.5 s) it rests at 0.0 with IN · OUT at
+//                −∞, never "–" again; the live GR bar beside it, empty at rest.
 //   tab.*        the chrome's Tab stops: the Mode latch first, then QUALITY, LOOKAHEAD, DELTA, BYPASS,
 //                CHARACTERISTICS in that order, THEME last.
 //
@@ -56,6 +60,7 @@
 #include <funkgui/canvas/Prim.h>
 #include <funkgui/canvas/PrimList.h>
 #include <funkgui/panel/HeadlessHost.h>
+#include <funkgui/panel/HostServices.h>
 #include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
 
@@ -495,6 +500,12 @@ namespace
         {
             Rig r(key, 1);                                       // the panel drawn in the theme the cell selected
             P.eq("theme.geometry_invariant", b(sameGeometry(before, funkgui::fingerprint(r.host.draw()))), 1);
+            // UF1a: the Panel's HostServices proxy forwards FunkGui v0.7.1's themeIndex() and ownerComponent() (headless:
+            // the host's theme, no owner), so a sub-view asking PanelContext::host gets the host's answers.
+            const funkgui::HostServices* host = r.ctx().host;
+            P.eq("host.theme_index", b(host != nullptr && host->themeIndex() == r.host.themeIndex()
+                                       && r.host.themeIndex() == 1), 1);
+            P.eq("host.owner_component", b(host != nullptr && r.ctx().host->ownerComponent() == nullptr), 1);
             const funkgui::Point graphite = centre(L::footer::kThemeCells[0]);
             r.host.click(graphite.x, graphite.y);
             r.settle();
@@ -607,27 +618,88 @@ namespace
         return n;
     }
 
+    std::string displaySub(const Rig& r)
+    {
+        for (const funkgui::A11yItem& it : r.host.accessibility())
+            if (ui::viewIndexOf(it.id) == static_cast<int>(ui::ViewIndex::displayRow) && it.title == "Display")
+                return it.description;
+        return "<no item>";
+    }
+
+    // The GR bar's length in px: the live DISPLAY_VALUE rrect of the bar's height (the track is static, the hold tick
+    // 6 px tall); 0 without one.
+    float grBarPx(const funkgui::PrimList& pl)
+    {
+        float w = 0.0f;
+        for (const funkgui::Prim& p : pl.prims)
+            if (p.tag == ui::tag::displayValue
+                && static_cast<funkgui::PrimKind>(static_cast<int>(p.d2[2] + 0.5f)) == funkgui::PrimKind::rrect
+                && (static_cast<uint32_t>(p.d2[3] + 0.5f) & funkgui::pflag::live) != 0
+                && std::fabs(2.0f * p.d0[3] - L::display::kGrBar.h) < 0.01f)
+                w = std::max(w, 2.0f * p.d0[2]);
+        return w;
+    }
+
     void display(Probe& P, std::string_view key)
     {
+        constexpr const char* kMinus = "\xE2\x88\x92";
+        constexpr const char* kInf = "\xE2\x88\x9E";
+        const auto ticks = [](float s) { return static_cast<int>(std::lround(s / kDt)); };
         Rig r(key);
         P.eq("display.not_live", b(displayValue(r) == "Gain reduction, no signal"), 1);
         P.eq("display.not_live_static", liveValuePrims(r.host.draw()), 0);
-        fcdsp::UiFrame f = FakeFacade::quietFrame(r.ctx().frame.res.view.slot, r.ctx().frame.res.eng);
+        const uint8_t slot = r.ctx().frame.res.view.slot;
+        fcdsp::UiFrame f = FakeFacade::quietFrame(slot, r.ctx().frame.res.eng);
         f.flags |= fcdsp::kUiLive;
         f.appliedGrDb[0] = 4.2f;
         f.appliedGrDb[1] = 3.0f;
         f.inPeakDb[0] = f.inPeakDb[1] = -8.1f;
         f.outPeakDb[0] = f.outPeakDb[1] = -11.9f;
         r.facade.publish(f);
-        r.host.tick(1, kDt);
-        P.eq("display.gr_live", b(displayValue(r) == "Gain reduction, \xE2\x88\x92" "4.2 dB"), 1);
+        r.host.tick(1, kDt);                                     // the first frame refreshes the readout at once
+        P.eq("display.gr_live", b(displayValue(r) == std::string("Gain reduction, ") + kMinus + "4.2 dB"), 1);
         P.ge("display.gr_live_tagged", liveValuePrims(r.host.draw()), 1);
+        const float ppd = L::kBandTransfer.level.pxPerDb(static_cast<float>(r.ctx().meterScaleDb));
+        P.near("display.gr_bar_px", grBarPx(r.host.draw()), 4.2f * ppd, 0.01);
+
+        // Without history columns the newest frame is the whole window: GR 0 reads 0.0 at the next refresh (<= 0.25 s).
         f.appliedGrDb[0] = f.appliedGrDb[1] = 0.0f;
-        r.facade.publish(f);
-        r.host.tick(1, kDt);
+        for (int k = 0; k < ticks(0.3f); ++k)
+        {
+            r.facade.publish(f);
+            r.host.tick(1, kDt);
+        }
         P.eq("display.gr_zero", b(displayValue(r) == "Gain reduction, 0.0 dB"), 1);
-        r.host.tick(static_cast<int>(0.6f / kDt), kDt);          // no publish for 0.6 s: stale
-        P.eq("display.gr_stale", b(displayValue(r) == "Gain reduction, no signal"), 1);
+
+        // The 1 s hold over the history: 6 dB for 17 ms, then 0 dB — held until the peak leaves the last second.
+        const auto frameWithColumns = [&](float gr) {
+            for (int i = 0; i < 17; ++i)
+            {
+                fcdsp::HistoryColumn c{};
+                c.inPeakDb = c.outPeakDb = c.detMaxDb = -20.0f;
+                c.grMaxDb = c.grMinDb = c.tgtMaxDb = gr;
+                c.bits = static_cast<uint32_t>(slot) << 8;
+                r.facade.pushColumn(c);
+            }
+            fcdsp::UiFrame g = f;
+            g.appliedGrDb[0] = g.appliedGrDb[1] = g.blockMaxGrDb[0] = g.blockMaxGrDb[1] = gr;
+            r.facade.publish(g);
+            r.host.tick(1, kDt);
+        };
+        frameWithColumns(6.0f);
+        for (int k = 0; k < ticks(0.75f); ++k)
+            frameWithColumns(0.0f);
+        P.eq("display.hold.held", b(displayValue(r) == std::string("Gain reduction, ") + kMinus + "6.0 dB"), 1);
+        for (int k = 0; k < ticks(0.6f); ++k)
+            frameWithColumns(0.0f);
+        P.eq("display.hold.released", b(displayValue(r) == "Gain reduction, 0.0 dB"), 1);
+
+        // Stale (ADR-69): no frame for 0.6 s — the readout rests at 0.0 (never "–" again), IN · OUT at −∞, no bar.
+        frameWithColumns(3.0f);
+        r.host.tick(ticks(1.6f), kDt);
+        P.eq("display.gr_stale", b(displayValue(r) == "Gain reduction, 0.0 dB"), 1);
+        P.eq("display.sub_stale", b(displaySub(r) == std::string("IN ") + kMinus + kInf + " \xC2\xB7 OUT " + kMinus + kInf), 1);
+        P.eq("display.gr_bar_stale", b(grBarPx(r.host.draw()) == 0.0f), 1);
     }
 
     // ---- Tab order ------------------------------------------------------------------------------------------------------

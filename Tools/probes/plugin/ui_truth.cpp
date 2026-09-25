@@ -32,6 +32,14 @@
 //   truth.curve.overlay_px      TRANSFER_CURVE lies on staticGain over resolve(raw) + overlaySmoothed(frame) <= 0.5 px
 //                               (K1 #7, K2 #24: never from UiFrame alone)
 //   truth.threshold.px          THRESHOLD_MARK at y(T_in) of that EngineParams <= 0.5 px
+//   truth.slot.det              (UF1a) the THRESHOLD slot's "DET" readout prints the operating dot's x (the 10 ms peak
+//                               envelope), 1 decimal, when the slot shows one
+// GAIN REDUCTION rows (UF1a, ADR-70), checked on every frame of the run:
+//   truth.display.hold_db       at each refresh (every 0.25 s of panel time, and the first frame), the readout equals
+//                               the tap's max GR (lane max) over the last 1 s of audio: the samples of the store's newest
+//                               1000 columns and the newest block, <= 0.1 dB (worst over the run)
+//   truth.display.refreshes     the readout refreshed >= 4 times per second of the run (>= 15 in the 4.3 s program)
+//   truth.display.quantised     its text never changed between two refreshes (quantised in time, not per frame)
 // Characteristics rows (U3, S9; 03 §3.6 "the CONTROL PATH internal0 lane's newest point, and READOUTS rows 11–18, equal
 // UiFrame.internals[i] through their declared ranges"): at the end of the same run the Panel switches to chars.sidechain
 // (instant) and draws one more frame; no audio is rendered in between, so the feed is still fresh and the frame the same.
@@ -51,14 +59,18 @@
 //   history.lap.*               a lap (5000 columns between two drains) leaves exactly one gap marker, drawn as GAP, and
 //                               every trace breaks there (never interpolated)
 //   history.mode_tick.*         a change of the columns' Mode slot draws one MODE_TICK where it happened (±1 px)
-//   history.stale_holds         with the feed stale, arriving columns do not scroll the strip
+//   history.stale_scrolls_px    (UF1a, ADR-69) with the feed stale the strip keeps scrolling at wall-clock rate: the
+//                               newest data column moves left by one frame's time × px/ms, ±0.15 px
+//   history.stale_gap           the time since the audio stopped is a GAP run reaching the plot's right edge
+//   history.resume.lands_now    the audio's return lands at "now" (the right edge) after the gap
 //   history.freeze.*            press and hold sets PanelContext::freeze at the column under the pointer; release ends it
 //   history.state_lane          the state lane draws 1..40 merged runs
 //   history.span.click          a click on the 10 S cell sets the preference and the span (UiPreferences, sandboxed)
 //
 // Visual inspection (not a test): probe-own flags after "--":  -- --png <end.png> [--png-mid <mid.png>] [--dump <x>]
-// [--png-chars <chars.png>] write the last frame (and the frame 2.0 s in, mid-bursts; and the Characteristics screen at
-// the end) at dpi 2.
+// [--png-chars <chars.png>] [--png-seq <dir>] write the last frame (and the frame 2.0 s in, mid-bursts; the
+// Characteristics screen at the end; and, with --png-seq, the panel at every GAIN REDUCTION refresh as
+// <dir>/gr-<ms>.png: the readout at 0.25 s intervals under the moving GR) at dpi 2.
 //
 // The probe writes UiPreferences (the span click): it refuses to run without FCMP_PREFS_DIR (CTest sets a sandbox).
 #include "ProbeRegistry.h"
@@ -70,6 +82,7 @@
 #include "editor/HistoryStore.h"
 #include "editor/Layout.h"
 #include "editor/Panel.h"
+#include "editor/SlotModel.h"
 #include "editor/Tags.h"
 
 #include "fcdsp/analysis/Analysis.h"
@@ -167,7 +180,7 @@ namespace
 
     struct Flags
     {
-        std::string png, pngMid, dump, pngChars;
+        std::string png, pngMid, dump, pngChars, pngSeq;
     };
 
     Flags flags()
@@ -194,6 +207,8 @@ namespace
                 f.dump = argv[++i];
             else if (a == "--png-chars")
                 f.pngChars = argv[++i];
+            else if (a == "--png-seq")
+                f.pngSeq = argv[++i];
         }
         return f;
     }
@@ -216,6 +231,36 @@ namespace
             P.harnessError("ui.truth: cannot write " + path);
         else
             std::printf("NOTE     ui.truth: %s\n", path.c_str());
+    }
+
+    // ---- the GAIN REDUCTION readout (ADR-70) ------------------------------------------------------------------------------
+
+    // The display row's spoken value: "Gain reduction, −4.2 dB" -> 4.2, "Gain reduction, 0.0 dB" -> 0; NaN otherwise
+    // (no signal, or a slot shown).
+    float displayGr(funkgui::HeadlessHost& host)
+    {
+        for (const funkgui::A11yItem& it : host.accessibility())
+            if (ui::viewIndexOf(it.id) == static_cast<int>(ui::ViewIndex::displayRow) && it.title == "Display")
+            {
+                const std::string_view v = it.value;
+                constexpr std::string_view head = "Gain reduction, ";
+                if (v.substr(0, head.size()) != head)
+                    return std::nanf("");
+                std::string num(v.substr(head.size()));
+                const std::string minus = "\xE2\x88\x92";
+                bool negative = false;
+                if (num.compare(0, minus.size(), minus) == 0)
+                {
+                    negative = true;
+                    num.erase(0, minus.size());
+                }
+                char* end = nullptr;
+                const float x = std::strtof(num.c_str(), &end);
+                if (end == num.c_str() || std::string_view(end) != " dB")
+                    return std::nanf("");
+                return negative ? x : -x;
+            }
+        return std::nanf("");
     }
 
     // ---- band rows over the real engine ---------------------------------------------------------------------------------
@@ -258,6 +303,16 @@ namespace
 
         const uint64_t mid = static_cast<uint64_t>(2.0 * probe::EngineFacade::kFs);
         bool midShot = false;
+        // ADR-70: the GAIN REDUCTION readout at every refresh against the tap, and never changing between two.
+        const ui::PanelContext& pc = panel.context();
+        const auto refreshSlot = [&]() {
+            return static_cast<int64_t>(std::floor(pc.seconds / static_cast<double>(layout::display::kGrRefreshS)));
+        };
+        int64_t lastSlot = refreshSlot();
+        std::string lastText;
+        bool seen = false;
+        double worstHold = 0.0;
+        int refreshes = 0, between = 0;
         for (uint64_t frame = 1; facade.processed() + probe::EngineFacade::kBlock <= total; ++frame)
         {
             const uint64_t target = std::min<uint64_t>(frame * kSamplesPerFrame, total);
@@ -272,7 +327,44 @@ namespace
                 midShot = true;
                 writePng(P, host, fl.pngMid);
             }
+
+            const float shown = displayGr(host);
+            const int64_t slot = refreshSlot();
+            char text[32];
+            std::snprintf(text, sizeof text, "%.1f", static_cast<double>(shown));
+            if (!std::isnan(shown) && (slot != lastSlot || !seen))
+            {
+                // The reference: the tap's max GR over the store's newest 1000 columns (48 samples each) and the newest
+                // block (up to the last sample), the frame being fresh on every tick of this run.
+                const uint64_t lastS = facade.processed() - 1;
+                const uint64_t cols = pc.history.count();
+                const uint64_t w = std::min<uint64_t>(cols, 1000);
+                float ref = 0.0f;
+                for (uint64_t n = (cols - w) * 48; n <= lastS; ++n)
+                    ref = std::max(ref, maxLane(facade.tapGr(n, 0), facade.tapGr(n, 1)));
+                const float want = ref > layout::display::kGrShownDb ? ref : 0.0f;
+                worstHold = std::max(worstHold, static_cast<double>(std::fabs(shown - want)));
+                ++refreshes;
+                if (!fl.pngSeq.empty())
+                    writePng(P, host, fl.pngSeq + "/gr-" + std::to_string(std::lround(pc.seconds * 1000.0)) + ".png");
+            }
+            else if (seen && text != lastText)
+            {
+                ++between;
+            }
+            if (!std::isnan(shown))
+            {
+                seen = true;
+                lastText = text;
+            }
+            lastSlot = slot;
         }
+        const double runS = static_cast<double>(total) / probe::EngineFacade::kFs;
+        std::printf("NOTE     ui.truth: GAIN REDUCTION: %d refreshes over %.2f s, worst %.3f dB from the tap's 1 s max, "
+                    "%d changes between refreshes\n", refreshes, runS, worstHold, between);
+        P.le("truth.display.hold_db", refreshes > 0 ? worstHold : 99.0, 0.1);
+        P.ge("truth.display.refreshes", refreshes, std::floor(runS * 4.0) - 2.0);
+        P.eq("truth.display.quantised", between, 0);
         const uint64_t last = facade.processed() - 1;             // the sample the last UiFrame ended on
 
         const ui::PanelContext& ctx = panel.context();
@@ -430,6 +522,25 @@ namespace
                     inDrawn = hg.level.db(c.top1, scale);
             P.le("truth.history.drawn_gr_db", grDrawn < 0.0f ? 99.0 : std::fabs(grDrawn - tapMaxGr(c0, c1)), 0.1);
             P.le("truth.history.drawn_in_db", inDrawn < -900.0f ? 99.0 : std::fabs(inDrawn - inputPeak(c0, c1)), 0.1);
+        }
+
+        // THRESHOLD's DET readout (UF1a; the U1s follow-up): the operating dot's x, the 10 ms peak envelope, so it does not
+        // jitter with the waveform's phase — never the raw curveXDb.
+        {
+            funkgui::ValueView v;
+            ctx.slot(fcdsp::Pid::thr).view(v);
+            const long long t = std::llround(static_cast<double>(cx) * 10.0);
+            const long long a = t < 0 ? -t : t;
+            char want[40];
+            std::snprintf(want, sizeof want, "DET %s%lld.%lld", t < 0 ? "\xE2\x88\x92" : "", a / 10, a % 10);
+            const std::string got = v.text.sub;
+            if (got.rfind("DET ", 0) == 0)
+                P.eq("truth.slot.det", got == want ? 1 : 0, 1);
+            else
+                std::printf("NOTE     ui.truth: THRESHOLD shows no DET readout ('%s')\n", got.c_str());
+            if (got.rfind("DET ", 0) == 0 && got != want)
+                std::printf("NOTE     ui.truth: THRESHOLD sub '%s', want '%s' (raw curveXDb %.2f)\n", got.c_str(), want,
+                            static_cast<double>(f.ui.curveXDb[ul]));
         }
 
         // The curve and the threshold line from resolve(raw) + overlaySmoothed(frame) (K1 #7, K2 #24).
@@ -683,16 +794,37 @@ namespace
             P.le("history.mode_tick.x_px", best, 1.0);
         }
 
-        // Stale: no publish for > 0.5 s; arriving columns do not scroll the strip.
+        // Stale (UF1a, ADR-69): no publish for > 0.5 s; the strip keeps scrolling at wall-clock rate over a gap.
+        const auto dataEnd = [&](const funkgui::PrimList& pl) {
+            float x = -1.0f;
+            for (const funkgui::Prim* p : tagged(pl, ui::tag::histIn))
+                x = std::max(x, colOf(*p).x1);
+            return x;
+        };
+        const auto gapTo = [&](const funkgui::PrimList& pl) {
+            float x = -1.0f;
+            for (const funkgui::Prim* p : tagged(pl, ui::tag::gap))
+                x = std::max(x, p->x1);
+            return x;
+        };
         host.tick(40, kDt);
-        std::vector<float> before, after;
-        for (const funkgui::Prim* p : tagged(host.draw(), ui::tag::histIn))
-            before.push_back(p->x0);
-        s.columns(300, slot, -20.0f, 2.0f, 1u);
+        const float end0 = dataEnd(host.draw());
         host.tick(1, kDt);
-        for (const funkgui::Prim* p : tagged(host.draw(), ui::tag::histIn))
-            after.push_back(p->x0);
-        P.eq("history.stale_holds", !before.empty() && before == after && !ctx.frame.live ? 1 : 0, 1);
+        const funkgui::PrimList& sl = host.draw();
+        const float end1 = dataEnd(sl);
+        const double pxPerMsNow = static_cast<double>(hg.colWidth) * static_cast<double>(hg.columns)
+                                / (static_cast<double>(ctx.historySpanTenths) * 100.0);
+        P.near("history.stale_scrolls_px", end0 - end1, static_cast<double>(kDt) * 1000.0 * pxPerMsNow, 0.15);
+        P.eq("history.stale_gap", !ctx.frame.fresh && gapTo(sl) >= hg.plot.right() - 2.0f ? 1 : 0, 1);
+        // The audio returns: its columns land at "now", after the gap.
+        s.columns(40, slot, -20.0f, 2.0f, 1u);
+        s.publish();
+        host.tick(1, kDt);
+        {
+            const funkgui::PrimList& rl = host.draw();
+            P.eq("history.resume.lands_now", ctx.frame.fresh && std::fabs(dataEnd(rl) - hg.plot.right()) < 0.01f
+                                                 && breaks(tagged(rl, ui::tag::histIn)) >= 1 ? 1 : 0, 1);
+        }
 
         // Press and hold: the column under the pointer (the display row reads PanelContext::freeze).
         s.publish();

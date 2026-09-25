@@ -13,9 +13,11 @@
 //   ink70 bar inside it. GR hangs from the top in `signal`. SC (Characteristics) = scPeakDb while kUiExtKeyActive.
 // - Holds: the IN/OUT peak-hold tick and the GR max-hold tick (from blockMaxGrDb, so a spike between frames survives)
 //   hold 1.5 s, then fall at 20 dB/s of panel time; 1 px ink100.
-// - Not live: bars and holds fall at 20 dB/s to the floor and the readouts show "–".
-// - Readouts (band): the max IN peak, GR and OUT peak since the last reset; kUiOutOver latches an ink100 frame round
-//   the OUT readout. One click on the readout row (the Characteristics METERS caption cell) or Return on its Tab stop
+// - UF1a (ADR-69): a fresh frame, live or silent, is drawn as it is; with none (the audio stopped) bars and holds fall
+//   at 20 dB/s to the floor. Nothing dims.
+// - Readouts (band): the max IN peak, GR and OUT peak since the last reset (updated by fresh frames); kUiOutOver
+//   latches an ink100 frame round the OUT readout. ADR-69: "–" (ink16) only before the first frame; afterwards they
+//   hold in ink100, a silent maximum printing "−∞" and no GR "0.0" (a reset too). One click on the readout row (the Characteristics METERS caption cell) or Return on its Tab stop
 //   resets the maxima, the latch and every hold.
 // - A11y: a progressBar per bar ("−4.2 dB") and the reset button.
 #pragma once

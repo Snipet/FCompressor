@@ -3,6 +3,7 @@
 #include "editor/views/MeterColumn.h"
 
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/telemetry/UiFrame.h"
@@ -18,6 +19,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -36,6 +38,14 @@ namespace fcmp::ui
         constexpr int kMaxBars = 5;
 
         constexpr const char* kResetSpec = "METERS   MAX IN · GR · OUT SINCE RESET   CLICK OR RETURN RESETS THE HOLDS";
+        constexpr const char* kDash = "\xE2\x80\x93";                // U+2013: before the first frame only (ADR-69)
+
+        // A level readout: "−12.3", or "−∞" at the telemetry floor (after the first frame a level is never "–").
+        void levelText(float db, char* out, std::size_t n) noexcept
+        {
+            if (funkgui::fmt::db(db > kSilentDb + 1.0f ? db : -INFINITY, 1, out, n) < 0)
+                std::snprintf(out, n, "%s", kDash);
+        }
 
         void outline(funkgui::Canvas& c, const funkgui::Rect& r, funkgui::Col col)
         {
@@ -128,15 +138,15 @@ namespace fcmp::ui
         };
         std::array<Bar, kMaxBars> bars{};
         float inMax = kSilentDb, grMax = 0.0f, outMax = kSilentDb;   // since the last reset
-        bool  anyMax = false, over = false;
-        bool  live = false;
+        bool  over = false;
+        bool  seen = false;                                       // a frame arrived (ADR-69: "–" only before that)
         bool  pointerOver = false, resetHover = false;
 
         void reset() noexcept
         {
-            inMax = outMax = kSilentDb;
+            inMax = outMax = kSilentDb;                           // "−∞", "0.0", "−∞" until the next frame
             grMax = 0.0f;
-            anyMax = over = false;
+            over = false;
             for (Bar& b : bars)
             {
                 b.hold = b.peak;
@@ -163,7 +173,9 @@ namespace fcmp::ui
         const FrameState& f = ctx_.frame;
         const float t = std::max(dt, 0.0f);
         const float fall = M::kFallDbPerS * t;
-        s.live = f.live;
+        // ADR-69: a fresh frame (live or silent) is drawn as it is; with no fresh frame (stale, or none yet) the bars
+        // and holds fall at 20 dB/s to the floor (02 §8.8). The engine's own meter envelopes bring a silent feed down.
+        const bool fresh = telemetry::feed(ctx_) == telemetry::Feed::fresh;
         for (int i = 0; i < geom_.nBars && i < kMaxBars; ++i)
         {
             const MeterBar w = geom_.bars[static_cast<std::size_t>(i)].what;
@@ -171,17 +183,17 @@ namespace fcmp::ui
             const Reading r = read(w, f.ui);
             const float rest = isGr(w) ? 0.0f : kSilentDb;
             b.present = r.present;
-            if (f.live && r.present)
+            if (fresh && r.present)
             {
                 b.peak = r.peak;
                 b.rms = r.rms;
             }
             else
             {
-                b.peak = std::max(rest, b.peak - fall);           // not live: fall at 20 dB/s (02 §8.8)
+                b.peak = std::max(rest, b.peak - fall);           // no fresh frame: fall at 20 dB/s (02 §8.8)
                 b.rms = std::max(rest, b.rms - fall);
             }
-            const float src = f.live && r.present ? r.hold : b.peak;
+            const float src = fresh && r.present ? r.hold : b.peak;
             if (src >= b.hold)
             {
                 b.hold = src;
@@ -190,17 +202,17 @@ namespace fcmp::ui
             else
             {
                 b.holdAge += t;
-                if (b.holdAge > M::kHoldS || !f.live)
+                if (b.holdAge > M::kHoldS || !fresh)
                     b.hold = std::max(src, b.hold - fall);        // hold 1.5 s, then fall at 20 dB/s
             }
         }
-        if (f.live)
+        if (fresh)
         {
             const fcdsp::UiFrame& u = f.ui;
             s.inMax = std::max(s.inMax, std::max(u.inPeakDb[0], u.inPeakDb[1]));
             s.outMax = std::max(s.outMax, std::max(u.outPeakDb[0], u.outPeakDb[1]));
             s.grMax = std::max(s.grMax, std::max(std::max(u.blockMaxGrDb[0], u.blockMaxGrDb[1]), 0.0f));
-            s.anyMax = true;
+            s.seen = true;
             s.over = s.over || (u.flags & fcdsp::kUiOutOver) != 0;
         }
         if (s.pointerOver && s.resetHover)
@@ -264,7 +276,8 @@ namespace fcmp::ui
             }
         }
 
-        // Readouts (band): max IN peak, max GR, max OUT peak since reset; "–" when not live.
+        // Readouts (band): max IN peak, max GR, max OUT peak since reset — the maxima hold whatever the feed does
+        // (ADR-69: "–" in ink16 only before the first frame; a silent maximum prints "−∞", no GR "0.0").
         if (geom_.nReadouts > 0)
         {
             const funkgui::Canvas::Scope scope(c, tag::meterReadout, true);
@@ -272,12 +285,14 @@ namespace fcmp::ui
             for (int i = 0; i < geom_.nReadouts && i < 3; ++i)
             {
                 const funkgui::Rect& r = geom_.readouts[static_cast<std::size_t>(i)];
-                char t[24] = "\xE2\x80\x93";                        // U+2013
+                char t[24];
+                std::snprintf(t, sizeof t, "%s", kDash);
                 const float x = v[static_cast<std::size_t>(i)];
-                const bool shown = s.live && s.anyMax && (i == 1 || x > kSilentDb + 1.0f);
-                if (shown && funkgui::fmt::db(x, 1, t, sizeof t) < 0)
-                    std::strcpy(t, "\xE2\x80\x93");
-                c.text(t, r.centreX(), c.capCentreTop(r.centreY(), T::kMicro), T::kMicro, shown ? th.ink100 : th.ink16,
+                if (s.seen && i == 1 && funkgui::fmt::db(x, 1, t, sizeof t) < 0)
+                    std::snprintf(t, sizeof t, "%s", kDash);
+                else if (s.seen && i != 1)
+                    levelText(x, t, sizeof t);
+                c.text(t, r.centreX(), c.capCentreTop(r.centreY(), T::kMicro), T::kMicro, s.seen ? th.ink100 : th.ink16,
                        funkgui::Align::centre);
             }
             if (s.over && geom_.nReadouts >= 3)
@@ -339,7 +354,7 @@ namespace fcmp::ui
 
     bool MeterColumn::wantsFullRate() const
     {
-        // Falling bars and holds (not live) move every frame; while live the Panel runs at full rate anyway.
+        // Falling bars and holds (no fresh frame) move every frame; while live the Panel runs at full rate anyway.
         const State& s = *st_;
         const float floorDb = layout::kLevelTopDb - static_cast<float>(ctx_.meterScaleDb);
         for (int i = 0; i < geom_.nBars && i < kMaxBars; ++i)
@@ -368,10 +383,21 @@ namespace fcmp::ui
             it.bounds = g.r;
             it.title = barTitle(g.what);
             it.readOnly = true;
-            const float db = isGr(g.what) ? -b.peak : b.peak;     // spoken as the display row speaks GR: "−4.2 dB"
+            const float db = isGr(g.what) ? (b.peak > 0.0f ? -b.peak : 0.0f) : b.peak;   // GR spoken as "−4.2 dB"
             char t[24];
-            const bool shown = isGr(g.what) ? s.live : (b.present && b.peak > floorDb);
-            it.value = shown && funkgui::fmt::db(db, 1, t, sizeof t) >= 0 ? std::string(t) + " dB" : "\xE2\x80\x93";
+            // ADR-69: after the first frame a bar always has a value (GR "0.0 dB", a level at the floor "−∞ dB"); "–"
+            // before it, and for a bar without a signal (SC without an external key).
+            bool shown = s.seen && (isGr(g.what) || b.present);
+            it.value = kDash;
+            if (shown)
+            {
+                if (isGr(g.what))
+                    shown = funkgui::fmt::db(db, 1, t, sizeof t) >= 0;
+                else
+                    levelText(b.peak > floorDb ? b.peak : kSilentDb, t, sizeof t);
+                if (shown)
+                    it.value = std::string(t) + " dB";
+            }
             it.lo = isGr(g.what) ? -static_cast<double>(ctx_.meterScaleDb) : static_cast<double>(floorDb);
             it.hi = isGr(g.what) ? 0.0 : static_cast<double>(layout::kLevelTopDb);
             it.v = std::clamp(static_cast<double>(db), it.lo, it.hi);

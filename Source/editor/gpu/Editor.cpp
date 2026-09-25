@@ -22,29 +22,6 @@ namespace fcmp::ui
         }
     }
 
-    // moved() whenever the editor's position in its top-level window changes, including through an ancestor (Editor.h,
-    // "Placement"). EditorHost::moved() re-places the render view from ComponentPeer::getAreaCoveredBy and follows the
-    // backing scale; it does nothing while no surface is attached.
-    class Editor::AncestorWatcher final : public juce::ComponentMovementWatcher
-    {
-    public:
-        explicit AncestorWatcher(Editor& editor) : juce::ComponentMovementWatcher(&editor), editor_(editor) {}
-
-        using juce::ComponentMovementWatcher::componentMovedOrResized;
-        using juce::ComponentMovementWatcher::componentVisibilityChanged;
-
-        void componentMovedOrResized(bool wasMoved, bool /*wasResized*/) override
-        {
-            if (wasMoved)
-                editor_.moved();
-        }
-        void componentPeerChanged() override {}      // EditorHost::parentHierarchyChanged re-attaches to a new peer
-        void componentVisibilityChanged() override {}   // EditorHost gates every frame on isShowing()
-
-    private:
-        Editor& editor_;
-    };
-
     EditorOptions EditorOptions::fromEnv()
     {
         EditorOptions o;
@@ -82,8 +59,7 @@ namespace fcmp::ui
 
     Editor::Editor(juce::AudioProcessor& owner, ProcessorFacade& facade, const EditorOptions& options)
         : funkgui::EditorHost(owner, makeConfig(facade), makePanel(facade, options)),
-          ui_(static_cast<Panel&>(funkgui::EditorHost::panel())),   // makePanel made it: the cast is exact
-          watcher_(std::make_unique<AncestorWatcher>(*this))
+          ui_(static_cast<Panel&>(funkgui::EditorHost::panel()))    // makePanel made it: the cast is exact
     {
         if (!options.unknownView.empty())
         {
