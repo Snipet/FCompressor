@@ -141,6 +141,7 @@
       "output": { "outputOnFailure": true } },
     { "name": "lead",       "configurePreset": "lead",       "inherits": [ "test-base" ] },
     { "name": "lead-x86",   "configurePreset": "lead-x86",   "inherits": [ "test-base" ] },
+    { "name": "release",    "configurePreset": "release",    "inherits": [ "test-base" ] },
     { "name": "agent",      "configurePreset": "agent",      "inherits": [ "test-base" ] },
     { "name": "agent-gui",  "configurePreset": "agent-gui",  "inherits": [ "test-base" ] },
     { "name": "dsp",        "configurePreset": "dsp",        "inherits": [ "test-base" ] },

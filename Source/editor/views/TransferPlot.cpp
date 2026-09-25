@@ -7,6 +7,7 @@
 #include "editor/Panel.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -323,6 +324,18 @@ namespace fcmp::ui
 
         uint32_t revision = 0;                                    // bumps when a handle's a11y item comes or goes
         uint32_t naMask = 0;
+
+        // The live marks (02 §6.5; ADR-69): the operating point of the last live frame, in dB (tick() takes it; draw()
+        // maps it with the scale of the moment). liveAmt is their alpha: 1 at once while live, then falling to 0 over
+        // layout::live::kFadeS where they were, so the dot, needle, trail and target ring fade out when the audio stops.
+        struct LiveMarks
+        {
+            float x = 0.0f, gr = 0.0f, tgt = 0.0f;                // curve x, applied GR, target GR (dB, GR >= 0)
+            bool  hollow = false;                                 // kUiFading: the dot is a ring
+            bool  valid = false;                                  // a live frame has been seen
+        };
+        LiveMarks marks;
+        float     liveAmt = 0.0f;
 
         // a11y title
         char     title[200] = "Transfer curve";
@@ -650,6 +663,27 @@ namespace fcmp::ui
             s.sliders[k].tick(dt, false, geom_.handleStops && ctx_.focusVisible && ctx_.focus == id, false);
         }
 
+        // The live marks (02 §6.5): while live, the operating point of this frame — its x is the plugin-input level on
+        // the Mode's detector axis (01 §7: peak law = the sine's PEAK), the peak envelope of Telemetry.h (the max of
+        // the store's detMaxDb over the last 10 ms, the trail's step, and curveXDb; the target likewise), so it does
+        // not swing with the waveform's phase; the GR is the frame's appliedGrDb of the lane with the larger GR, what
+        // multiplies the audio. Not live (ADR-69): they stay where they were and fade out over layout::live::kFadeS.
+        if (f.live && f.entry != nullptr)
+        {
+            const telemetry::OperatingPoint op = telemetry::operatingPoint(f.ui, ctx_.history);
+            const auto ul = static_cast<std::size_t>(op.lane);
+            s.marks.x = op.x;
+            s.marks.gr = std::max(f.ui.appliedGrDb[ul], 0.0f);
+            s.marks.tgt = std::max(op.target, 0.0f);
+            s.marks.hollow = (f.ui.flags & fcdsp::kUiFading) != 0;
+            s.marks.valid = true;
+            s.liveAmt = 1.0f;
+        }
+        else
+        {
+            s.liveAmt = std::max(0.0f, s.liveAmt - std::max(dt, 0.0f) / layout::live::kFadeS);
+        }
+
         // A Mode switch (02 §8.7): the drawn curve becomes the previous one, eased from over 160 ms, ghosted 0.9 s.
         const bool modeChanged = f.modeSerial != s.builtMode;
         if (modeChanged)
@@ -864,21 +898,17 @@ namespace fcmp::ui
             }
         }
 
-        // Live: target ring, trail, needle, operating dot (02 §6.5). Their x is the plugin-input level on the Mode's
-        // detector axis (01 §7: peak law = the sine's PEAK). UiFrame::curveXDb is the detector's value at the block's
-        // last sample, which for a peak law swings with the waveform's phase, so the dot takes the peak envelope: the max
-        // of the store's detMaxDb over the last 10 ms (the trail's step) and curveXDb; the target likewise (tgtMaxDb and
-        // targetGrDb). The GR is the frame's appliedGrDb of the lane with the larger GR: what multiplies the audio.
-        if (f.live && f.entry != nullptr)
+        // Live: target ring, trail, needle, operating dot (02 §6.5) at the operating point tick() took; after the audio
+        // stops they fade out where they were (ADR-69). At full alpha every colour is exactly the live one.
+        if (s.marks.valid && s.liveAmt > 0.0f && f.entry != nullptr)
         {
+            const float a = s.liveAmt;
+            const auto ink = [a](funkgui::Col col) { return a < 1.0f ? funkgui::fade(col, a) : col; };
             const HistoryStore& h = ctx_.history;
             const auto step = static_cast<uint64_t>(std::lround(B::kTrailStepS * 1000.0f));
-            const int lane = f.ui.appliedGrDb[1] > f.ui.appliedGrDb[0] ? 1 : 0;
-            const auto ul = static_cast<std::size_t>(lane);
-            const Envelope now = envelope(h, h.count() >= step ? h.count() - step : 0, h.count());
-            const float cx = now.valid ? std::max(now.x, f.ui.curveXDb[ul]) : f.ui.curveXDb[ul];
-            const float gr = std::max(f.ui.appliedGrDb[ul], 0.0f);
-            const float tgt = std::max(now.valid ? std::max(now.tgt, f.ui.targetGrDb[ul]) : f.ui.targetGrDb[ul], 0.0f);
+            const float cx = s.marks.x;
+            const float gr = s.marks.gr;
+            const float tgt = s.marks.tgt;
             const float x = xOf(cx);
             // OP_TRAIL: the last 320 ms of the store in 10 ms windows (max detMaxDb, max grMaxDb), ink70 → ink16.
             {
@@ -905,7 +935,7 @@ namespace fcmp::ui
                     {
                         const float age = static_cast<float>(k) / static_cast<float>(kTrailPoints - 1);
                         c.segment(px0, py0, px1, py1, 1.0f,
-                                  funkgui::premix(th.ground, funkgui::mix(th.ink70, th.ink16, age), 1.0f));
+                                  ink(funkgui::premix(th.ground, funkgui::mix(th.ink70, th.ink16, age), 1.0f)));
                     }
                     px0 = px1;
                     py0 = py1;
@@ -918,19 +948,19 @@ namespace fcmp::ui
                 const float yd = std::min(lm.y(cx - gr, scale), p.bottom());
                 {
                     const funkgui::Canvas::Scope scope(c, tag::targetDot, true);
-                    c.disc(x, std::min(lm.y(cx - tgt, scale), p.bottom()), B::kTargetDotR, kClear, 1.0f, th.ink52);
+                    c.disc(x, std::min(lm.y(cx - tgt, scale), p.bottom()), B::kTargetDotR, kClear, 1.0f, ink(th.ink52));
                 }
                 if (yd - yu > 0.0f)
                 {
                     const funkgui::Canvas::Scope scope(c, tag::grNeedle, true);
-                    c.rrect(x - 0.5f * B::kNeedleW, yu, B::kNeedleW, yd - yu, 0.0f, th.signal);
+                    c.rrect(x - 0.5f * B::kNeedleW, yu, B::kNeedleW, yd - yu, 0.0f, ink(th.signal));
                 }
                 {
                     const funkgui::Canvas::Scope scope(c, tag::opDot, true);
-                    if ((f.ui.flags & fcdsp::kUiFading) != 0)
-                        c.disc(x, yd, B::kOpDotR, kClear, 1.0f, th.ink100);   // hollow while the kernel crossfades
+                    if (s.marks.hollow)
+                        c.disc(x, yd, B::kOpDotR, kClear, 1.0f, ink(th.ink100));   // hollow while the kernel crossfades
                     else
-                        c.disc(x, yd, B::kOpDotR, th.ink100);
+                        c.disc(x, yd, B::kOpDotR, ink(th.ink100));
                 }
             }
         }
@@ -1293,7 +1323,7 @@ namespace fcmp::ui
     {
         const State& s = *st_;
         return !s.scale.settled() || !funkgui::ease::sameBits(s.handleAmt, s.handlesOn(ctx_, geom_) ? 1.0f : 0.0f)
-            || s.landing;
+            || s.landing || (s.liveAmt > 0.0f && s.liveAmt < 1.0f);   // the live marks fading out (ADR-69)
     }
 
     // ---- accessibility ------------------------------------------------------------------------------------------------------

@@ -1,0 +1,16 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/brickwall
+# key	value	tolerance
+switch.brickwall-clean.settle_ms	125	rel:0.1
+switch.clean-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-bus-g.settle_ms	180	rel:0.1
+switch.bus-g-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-fet-76.settle_ms	25	rel:0.1
+switch.fet-76-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-opto-2a.settle_ms	994.916667	rel:0.1
+switch.opto-2a-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-mu-67.settle_ms	30	rel:0.1
+switch.mu-67-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-diode-609.settle_ms	120	rel:0.1
+switch.diode-609-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-bus-25.settle_ms	150	rel:0.1
+switch.bus-25-brickwall.settle_ms	15	rel:0.1

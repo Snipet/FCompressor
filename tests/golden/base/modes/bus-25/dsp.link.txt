@@ -1,0 +1,30 @@
+# funkgui-golden 2  probe=dsp.link  scope=modes/bus-25
+# key	value	tolerance
+link.ff.k0.gr_l_db	9	abs:0.01
+link.ff.k0.gr_r_db	0	abs:0.01
+link.ff.k50.gr_l_db	5.99999952	abs:0.01
+link.ff.k50.gr_r_db	3	abs:0.01
+link.ff.k60.gr_l_db	5.625	abs:0.01
+link.ff.k60.gr_r_db	3.375	abs:0.01
+link.ff.k70.gr_l_db	5.29411793	abs:0.01
+link.ff.k70.gr_r_db	3.70588207	abs:0.01
+link.ff.k80.gr_l_db	4.99999952	abs:0.01
+link.ff.k80.gr_r_db	4.00000048	abs:0.01
+link.ff.k90.gr_l_db	4.73684216	abs:0.01
+link.ff.k90.gr_r_db	4.26315784	abs:0.01
+link.ff.k100.gr_l_db	4.5	abs:0.01
+link.ff.k100.gr_r_db	4.5	abs:0.01
+link.fb.voice1.k0.gr_l_db	9	abs:0.01
+link.fb.voice1.k0.gr_r_db	0	abs:0.01
+link.fb.voice1.k50.gr_l_db	7.99997711	abs:0.01
+link.fb.voice1.k50.gr_r_db	3.99998903	abs:0.01
+link.fb.voice1.k60.gr_l_db	7.8260746	abs:0.01
+link.fb.voice1.k60.gr_r_db	4.69564438	abs:0.01
+link.fb.voice1.k70.gr_l_db	7.65955877	abs:0.01
+link.fb.voice1.k70.gr_r_db	5.361691	abs:0.01
+link.fb.voice1.k80.gr_l_db	7.49994469	abs:0.01
+link.fb.voice1.k80.gr_r_db	5.99995613	abs:0.01
+link.fb.voice1.k90.gr_l_db	7.34693241	abs:0.01
+link.fb.voice1.k90.gr_r_db	6.61223888	abs:0.01
+link.fb.voice1.k100.gr_l_db	7.19998169	abs:0.01
+link.fb.voice1.k100.gr_r_db	7.19998169	abs:0.01

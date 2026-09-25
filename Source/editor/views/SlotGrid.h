@@ -15,7 +15,8 @@
 //   with the reason NO SIDECHAIN BUS CONNECTED on the footer and as a11y help, while fresh telemetry shows the key on
 //   and no active key bus (kUiExtKeyActive clear): the only "no bus" signal the facade carries.
 // - Live marks (tags DET_TICK, RANGE_BAR; live): THRESHOLD's 1×4 ink52 detector tick under its track at the
-//   operating point, RANGE's 1 px signal bar from 0 to the applied GR.
+//   operating point (the TRANSFER dot's 10 ms peak envelope, views/Telemetry.h; UF1a), RANGE's 1 px signal bar from 0
+//   to the applied GR.
 // - Landing (02 §8.7): when FrameState::modeSerial moves, every slider's caret eases (τ 90 ms) and a slider whose
 //   state, label or tag changed flashes its label 0.6 s. The landing writes nothing (K2 #4).
 // - Hand (02 §6.6): a pressed slot or word offers `drag`, the one under the pointer `hover`, the focused one `focus`,

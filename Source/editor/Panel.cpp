@@ -117,6 +117,9 @@ namespace fcmp::ui
 
     // ---- HostServices proxy: batches reach the facade (K2 #23) ----------------------------------------------------------
 
+    // Everything else is the host's: FunkGui v0.7.1's themeIndex() (the Theme the next draw receives, valid at once after
+    // a THEME click) and ownerComponent() (the juce::Component a PopupMenu or FileChooser anchors to; nullptr headless)
+    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults.
     class Panel::HostProxy final : public funkgui::HostServices
     {
     public:
@@ -126,6 +129,8 @@ namespace fcmp::ui
         void   showParamMenu(funkgui::ParamPort& p, float x, float y) override { host_.showParamMenu(p, x, y); }
         void   nudgeFullRate() override { host_.nudgeFullRate(); }
         double nowSeconds() const override { return host_.nowSeconds(); }
+        int    themeIndex() const override { return host_.themeIndex(); }
+        juce::Component* ownerComponent() override { return host_.ownerComponent(); }
         void   beginBatch() override
         {
             facade_.beginBatch();
@@ -434,7 +439,10 @@ namespace fcmp::ui
 
     bool Panel::wantsFullRate() const
     {
-        // 02 §9.6: full rate while kUiLive (until the stream goes stale), an ease, a fade or a pending preview.
+        // 02 §9.6: full rate while kUiLive (until the stream goes stale), an ease, a fade or a pending preview; and
+        // (ADR-69) while a sub-view has something moving — HISTORY scrolling data in view at wall-clock rate after the
+        // audio stops, falling meters and bars, the operating dot's fade — or for layout::live::kActiveS after any input
+        // (DisplayRow's activity clock: hover, drag, click, wheel, keys). Idle rate only when nothing moves.
         if (!ticked_ || fade_ < 1.0f || preview_->pending() || ctx_.frame.live)
             return true;
         if (!funkgui::ease::sameBits(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f))

@@ -1,12 +1,13 @@
 // Source/editor/views/ControlPathPlot.cpp — CONTROL PATH (see ControlPathPlot.h; 02 §7.3, §9.2, §9.6): the columns
-// rebuilt in tick() from the HistoryStore over HISTORY's column windows (draw() only emits), the GR lane (target, applied
-// area and its min line), the phase lane, the Mode's history internal, the event stripes, gaps, the stale dim and the
+// rebuilt in tick() from the HistoryStore over HISTORY's column windows and timeline (draw() only emits), the GR lane
+// (target, applied area and its min line), the phase lane, the Mode's history internal, the event stripes, gaps and the
 // freeze cursor.
 #include "editor/views/ControlPathPlot.h"
 
 #include "editor/HistoryStore.h"
 #include "editor/Tags.h"
 #include "editor/views/Readouts.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/engine/IEngine.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -46,7 +47,7 @@ namespace fcmp::ui
         constexpr float kGapDotStep = 3.0f;
         constexpr float kGapDotDy = 3.0f;                          // the GAP dots, above the GR lane's bottom edge
         constexpr float kTitleS = 0.25f;                           // a11y title <= 4 Hz (02 §7.5, §9.6)
-        constexpr float kDimRate = (1.0f - B::kStaleDim) / B::kStaleDimS;   // per second
+        constexpr float kInkGrDb = 0.01f;                          // a column with less GR draws no GR ink
         constexpr float kLabelDx = 4.0f;                           // the internal's label inside the lane's top-left
         constexpr float kLabelDy = 2.0f;
         constexpr float kLabelGap = 6.0f;                          // between the internal's name and its value
@@ -126,6 +127,7 @@ namespace fcmp::ui
         using Spans = std::array<Span, kMaxRuns>;
 
         void rebuild(const PanelContext&, const layout::ControlPathGeom&) noexcept;
+        static void take(const fcdsp::HistoryColumn&, Column&) noexcept;
 
         std::array<HistoryStore::ColumnWindow, kMaxColumns> windows{};
         std::array<Column, kMaxColumns> cols{};
@@ -146,11 +148,12 @@ namespace fcmp::ui
         Spans gaps{};
         int nGaps = 0;
 
-        uint64_t head = 0;                                        // the store count "now" stands for
+        telemetry::HistoryTimeline timeline;                      // HISTORY's: the same ticks, so the same columns
+        uint64_t head = 0;                                        // the timeline ms "now" stands for (held by a freeze)
         uint64_t builtHead = ~uint64_t{ 0 }, builtCount = 0;
         int      builtSpan = 0, builtScale = 0;
         double   pxPerMs = 0.0;
-        float    dim = 1.0f;                                      // 1 live … kStaleDim stale
+        bool     moving = false;                                  // ink in view that the next head moves (full rate)
 
         // The current Mode's history internal: its name and live value, for the lane's label.
         bool hasInternal = false;
@@ -163,6 +166,38 @@ namespace fcmp::ui
         uint32_t titleSerial = ~0u;
     };
 
+    // One store entry into column c: max grMaxDb and tgtMaxDb, min grMinDb, the max-GR entry's phase, the OR of the
+    // event bits, the last internal0 and its Mode slot; a gap entry makes the column a gap.
+    void ControlPathPlot::State::take(const fcdsp::HistoryColumn& col, Column& c) noexcept
+    {
+        if (HistoryStore::isGap(col))
+        {
+            c.gap = true;
+            return;
+        }
+        if (!c.data)
+        {
+            c.gr = col.grMaxDb;
+            c.grMin = col.grMinDb;
+            c.tgt = col.tgtMaxDb;
+            c.phase = col.bits & kPhaseMask;
+            c.data = true;
+        }
+        else
+        {
+            c.grMin = std::min(c.grMin, col.grMinDb);
+            c.tgt = std::max(c.tgt, col.tgtMaxDb);
+            if (col.grMaxDb > c.gr)
+            {
+                c.gr = col.grMaxDb;
+                c.phase = col.bits & kPhaseMask;
+            }
+        }
+        c.events |= col.bits;
+        c.internal = col.internal0;                               // the last value (01 §6.3)
+        c.slot = static_cast<int>((col.bits & kSlotMask) >> kSlotShift);
+    }
+
     void ControlPathPlot::State::rebuild(const PanelContext& ctx, const layout::ControlPathGeom& g) noexcept
     {
         const HistoryStore& h = ctx.history;
@@ -172,8 +207,9 @@ namespace fcmp::ui
         builtScale = ctx.meterScaleDb;
         nCols = nRuns = nIRuns = nPhases = nGaps = 0;
         nEvents.fill(0);
+        moving = false;
 
-        // The columns: HISTORY's windows, aggregated.
+        // The columns: HISTORY's windows over its timeline (audio time while fresh; a stale span is a gap), aggregated.
         const int nWin = HistoryStore::columnWindows(head, builtSpan, g.columns, g.colWidth, g.plot.x, g.plot.w,
                                                      std::span<HistoryStore::ColumnWindow>(windows), &pxPerMs);
         const auto oldest = static_cast<int64_t>(h.oldest());
@@ -184,36 +220,12 @@ namespace fcmp::ui
             c = Column{};
             c.xl = w.xl;
             c.xr = w.xr;
-            for (int64_t e = std::max(w.e0, oldest); e < w.e1; ++e)
-            {
-                const fcdsp::HistoryColumn& col = h.at(static_cast<uint64_t>(e));
-                if (HistoryStore::isGap(col))
-                {
-                    c.gap = true;
-                    continue;
-                }
-                if (!c.data)
-                {
-                    c.gr = col.grMaxDb;
-                    c.grMin = col.grMinDb;
-                    c.tgt = col.tgtMaxDb;
-                    c.phase = col.bits & kPhaseMask;
-                    c.data = true;
-                }
-                else
-                {
-                    c.grMin = std::min(c.grMin, col.grMinDb);
-                    c.tgt = std::max(c.tgt, col.tgtMaxDb);
-                    if (col.grMaxDb > c.gr)
-                    {
-                        c.gr = col.grMaxDb;
-                        c.phase = col.bits & kPhaseMask;
-                    }
-                }
-                c.events |= col.bits;
-                c.internal = col.internal0;                       // the last value (01 §6.3)
-                c.slot = static_cast<int>((col.bits & kSlotMask) >> kSlotShift);
-            }
+            c.gap = timeline.gapIn(w.e0, w.e1);
+            timeline.forEntries(w.e0, w.e1, [&](int64_t e0, int64_t e1, int64_t) {
+                for (int64_t e = std::max(e0, oldest); e < e1; ++e)
+                    take(h.at(static_cast<uint64_t>(e)), c);
+            });
+            moving = moving || (c.valid() && (c.gr > kInkGrDb || c.tgt > kInkGrDb));
         }
 
         // GR lane strips (hanging: 0 dB at the lane's top, S/2 at its bottom).
@@ -339,6 +351,14 @@ namespace fcmp::ui
             else if (nGaps < kMaxRuns)
                 gaps[static_cast<std::size_t>(nGaps++)] = { c.xl, c.xr, 0u };
         }
+
+        // Anything the next head would move (full rate, ADR-69): GR ink, the internal lane, a phase or event stripe, a
+        // gap's inner edge. At rest otherwise.
+        for (int i = 0; i < nGaps && !moving; ++i)
+            moving = gaps[static_cast<std::size_t>(i)].x0 > g.plot.x + 0.5f;
+        for (int r = 0; r < kEventRows && !moving; ++r)
+            moving = nEvents[static_cast<std::size_t>(r)] > 0;
+        moving = moving || nIRuns > 0 || nPhases > 0;
     }
 
     // ---- construction ----------------------------------------------------------------------------------------------------
@@ -347,7 +367,6 @@ namespace fcmp::ui
         : ctx_(ctx), geom_(geom), idBase_(idBase), st_(std::make_unique<State>())
     {
         st_->head = ctx_.history.count();
-        st_->dim = ctx_.frame.live ? 1.0f : B::kStaleDim;
     }
 
     ControlPathPlot::~ControlPathPlot() = default;
@@ -360,19 +379,19 @@ namespace fcmp::ui
         const FrameState& f = ctx_.frame;
         const HistoryStore& h = ctx_.history;
 
-        // Audio time, as HISTORY: the head follows the store only while the feed is live and HISTORY is not frozen.
-        if (f.live && !ctx_.freeze.active)
-            s.head = h.count();
-        s.head = std::min<uint64_t>(s.head, h.count());
-        const float step = kDimRate * std::max(dt, 0.0f);
-        const float dimTarget = f.live ? 1.0f : B::kStaleDim;
-        s.dim = s.dim < dimTarget ? std::min(dimTarget, s.dim + step) : std::max(dimTarget, s.dim - step);
+        // HISTORY's time (ADR-69): the timeline's now — audio time while fresh, the wall clock over a gap once the
+        // audio stops — unless HISTORY's press and hold keeps the view.
+        s.timeline.tick(ctx_);
+        if (!ctx_.freeze.active)
+            s.head = s.timeline.head();
 
         if (s.head != s.builtHead || h.count() != s.builtCount || ctx_.historySpanTenths != s.builtSpan
             || ctx_.meterScaleDb != s.builtScale)
             s.rebuild(ctx_, geom_);
 
-        // The internal lane's label: the current Mode's history internal and its live value (UiFrame::internals).
+        // The internal lane's label: the current Mode's history internal and its value (UiFrame::internals) — from a
+        // fresh frame, and held from the last one once the audio stops (as the engine holds it, ADR-69); "–" only
+        // before the first frame or while the audio runs another Mode.
         int index = -1;
         const fcdsp::InternalSpec* spec = historyInternal(f.entry != nullptr ? f.entry->desc : nullptr, &index);
         s.hasInternal = spec != nullptr;
@@ -382,7 +401,8 @@ namespace fcmp::ui
         if (spec != nullptr)
         {
             std::snprintf(s.name, sizeof s.name, "%s", spec->name != nullptr ? spec->name : "");
-            const bool live = f.live && static_cast<int>(f.ui.modeSlot) == static_cast<int>(f.res.view.slot);
+            const bool live = telemetry::feed(ctx_) != telemetry::Feed::none
+                           && static_cast<int>(f.ui.modeSlot) == static_cast<int>(f.res.view.slot);
             if (live && Readouts::internalText(*spec, f.ui.internals[index], s.value, sizeof s.value) > 0)
                 s.valueLive = true;
             else
@@ -422,7 +442,7 @@ namespace fcmp::ui
         const State& s = *st_;
         const funkgui::Rect& p = geom_.plot;
         const funkgui::Rect& gl = geom_.grLane;
-        const float d = s.dim;
+        constexpr float d = 1.0f;                                 // ADR-69: never dimmed
         const float half = 0.5f * static_cast<float>(ctx_.meterScaleDb);
         {
             const funkgui::Canvas::Scope scope(c, tag::plotFrame, false);
@@ -442,7 +462,7 @@ namespace fcmp::ui
             c.text("CONTROL PATH \xC2\xB7 GR", geom_.caption.x, geom_.caption.y, T::kCaption, th.ink52);
         }
 
-        // GR lane: the applied area and its min line, then the target (02 §7.3); pre-mixed over the ground, dimmed.
+        // GR lane: the applied area and its min line, then the target (02 §7.3); pre-mixed over the ground.
         for (int r = 0; r < s.nRuns; ++r)
         {
             const State::Run& run = s.runs[static_cast<std::size_t>(r)];
@@ -571,8 +591,8 @@ namespace fcmp::ui
 
     bool ControlPathPlot::wantsFullRate() const
     {
-        const float dimTarget = ctx_.frame.live ? 1.0f : B::kStaleDim;
-        return st_->dim != dimTarget;
+        // ADR-69: the strip scrolls at full rate while it holds ink the head moves.
+        return st_->moving && st_->timeline.started();
     }
 
     // ---- accessibility ------------------------------------------------------------------------------------------------------

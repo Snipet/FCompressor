@@ -421,8 +421,8 @@ namespace fcmp::ui::layout
     namespace band
     {
         inline constexpr float kStaleS          = 0.5f;          // LiveFeed staleness (or kUiLive clear)
-        inline constexpr float kStaleDim        = 0.5f;          // HISTORY dims to 50 % ...
-        inline constexpr float kStaleDimS       = 0.4f;          // ... over 0.4 s
+        inline constexpr float kStaleDim        = 0.5f;          // retired by ADR-69 (UF1a): nothing dims when stale
+        inline constexpr float kStaleDimS       = 0.4f;          // retired by ADR-69 (UF1a)
         inline constexpr float kGridDb          = 12.0f;         // grid hairlines every 12 dB (every 6 at S <= 24)
         inline constexpr float kGridDbFine      = 6.0f;
         inline constexpr float kZeroLabelDx     = 4.0f;          // "0 DBFS" at (plot.x + 4, y(0) − 12), kMicro ink32
@@ -506,5 +506,29 @@ namespace fcmp::ui::layout
         inline constexpr float kHoldS        = 1.5f;             // peak hold, then ...
         inline constexpr float kFallDbPerS   = 20.0f;            // ... falls at 20 dB/s (also when not live)
         inline constexpr float kReadoutPitch = 52.0f;
+    }
+
+    // ---- UF1a additions (S11; ADR-69, ADR-70): additive, no FZ4 declaration above changed ------------------------------
+    // ADR-69 retires band::kStaleDim and band::kStaleDimS: staleness never dims anything (views/Telemetry.h). They stay
+    // declared (FZ4 is additive only) and nothing reads them.
+    namespace live
+    {
+        inline constexpr float kFadeS   = 0.4f;                  // OP_DOT, GR_NEEDLE, OP_TRAIL, TARGET_DOT fade out
+                                                                 // where they were over 0.4 s when the feed stops
+        inline constexpr float kActiveS = 0.5f;                  // full frame rate for 0.5 s after any input (hover,
+                                                                 // drag, click, wheel, keys), then idle if nothing moves
+    }
+    namespace display
+    {
+        inline constexpr float kGrHoldS    = 1.0f;               // GAIN REDUCTION = the max GR over the last 1.0 s ...
+        inline constexpr float kGrRefreshS = 0.25f;              // ... its text (and IN · OUT) refreshed every 0.25 s
+                                                                 // of panel time (≈ 4 Hz), quantised in time
+        // The live GR bar (ADR-70): signal, 2 px, from x 224 (the sub-readout's x) along the value's baseline (y 112),
+        // at the band's px/dB (layout::kBandTransfer.level.pxPerDb(S): 4 px/dB at the default 48 dB scale), clipped to
+        // kSubMaxW; its track a 1 px ink16 hairline under it; the held value (the readout) a 1×6 ink100 tick.
+        inline constexpr Rect  kGrBar       { 224.0f, 110.0f, 148.0f, 2.0f };
+        inline constexpr float kGrTrackY    = 111.0f;
+        inline constexpr float kGrTickTop   = 107.0f;
+        inline constexpr float kGrTickH     = 6.0f;
     }
 }

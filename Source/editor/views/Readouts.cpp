@@ -4,6 +4,7 @@
 
 #include "editor/HistoryStore.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Units.h"
@@ -42,9 +43,10 @@ namespace fcmp::ui
         constexpr float kFloorDb = -199.0f;                        // telemetry floor (−200 dBFS) and below: "–"
         constexpr float kRatioInf = 1.0e4f;                        // |ratio| beyond this prints ∞:1 (SlotModel's EFF)
         constexpr float kNameGap = 6.0f;                           // the least room between a name and its value
-        constexpr uint64_t kEnvelopeMs = 10;                       // TransferPlot's operating-point envelope (10 ms)
         constexpr uint32_t kImageId = 1, kFirstRowId = 2;          // local ids: rows kFirstRowId + i (i < kRows)
-        constexpr const char* kDash = "\xE2\x80\x93";              // U+2013: not live / not applicable
+        constexpr const char* kDash = "\xE2\x80\x93";              // U+2013: no frame yet / not applicable
+        constexpr const char* kMinusInf = "\xE2\x88\x92\xE2\x88\x9E";   // "−∞": a level at the telemetry floor
+        constexpr const char* kUnity = "1.0:1";                    // EFF RATIO with no signal: below every threshold
         constexpr const char* kMiddot = " \xC2\xB7 ";              // " · "
 
         static_assert(kFixedRows == R::kFirstInternalRow && kMaxInternals == 8, "rows 1–10 fixed, 11–18 internals");
@@ -103,6 +105,16 @@ namespace fcmp::ui
             if (sign && std::isfinite(v) && std::round(static_cast<double>(v) * std::pow(10.0, dp)) > 0.0)
                 t.add("+");
             t.add(b);
+        }
+
+        // A level (DET, OVER): v like addNumber, but the telemetry floor prints "−∞" (no signal), never "–" (ADR-69).
+        template <std::size_t N>
+        void addLevel(Text<N>& t, float v, bool sign) noexcept
+        {
+            if (std::isfinite(v) && v <= kFloorDb)
+                t.add(kMinusInf);
+            else
+                addNumber(t, v, 1, sign);
         }
 
         // A ratio as the host prints it (01 §3.1): one decimal below 10, whole numbers from 10, ∞ beyond 1e4 ("3.2:1").
@@ -206,8 +218,13 @@ namespace fcmp::ui
         State& s = *st_;
         const FrameState& f = ctx_.frame;
         const fcdsp::ModeDescriptor* d = descOf(f);
-        const fcdsp::UiFrame& u = f.ui;
-        const bool live = f.live && d != nullptr && static_cast<int>(u.modeSlot) == static_cast<int>(f.res.view.slot);
+        // ADR-69: rows print from a fresh frame (live or silent) and, once the audio stops, from the last frame at rest
+        // (Telemetry.h: GR 0.0, levels −∞, crest 0, phase IDLE; times and internals hold) — "–" (ink16) only before the
+        // first frame, or while the audio runs another Mode than the resolved one.
+        const telemetry::Feed fd = telemetry::feed(ctx_);
+        const fcdsp::UiFrame u = fd == telemetry::Feed::stale ? telemetry::atRest(f.ui) : f.ui;
+        const bool live = fd != telemetry::Feed::none && d != nullptr
+                       && static_cast<int>(u.modeSlot) == static_cast<int>(f.res.view.slot);
         const int rows = std::min(geom_.rows, kRows);
 
         // Names and which rows exist.
@@ -250,20 +267,16 @@ namespace fcmp::ui
         }
         else
         {
-            // The lane with the larger applied GR (the operating dot's), and the dot's 10 ms peak envelope (TransferPlot).
-            const int lane = u.appliedGrDb[1] > u.appliedGrDb[0] ? 1 : 0;
+            // The lane with the larger applied GR (the operating dot's), and the dot's 10 ms peak envelope (Telemetry.h);
+            // at rest there is no operating point, so no envelope either.
+            const int lane = telemetry::grLane(u);
             const auto ul = static_cast<std::size_t>(lane);
             float cx = u.curveXDb[ul], tgt = u.targetGrDb[ul];
+            if (fd == telemetry::Feed::fresh)
             {
-                const HistoryStore& h = ctx_.history;
-                const uint64_t count = h.count();
-                const uint64_t e0 = std::max(count >= kEnvelopeMs ? count - kEnvelopeMs : 0, h.oldest());
-                for (uint64_t e = e0; e < count; ++e)
-                    if (const fcdsp::HistoryColumn& c = h.at(e); !HistoryStore::isGap(c))
-                    {
-                        cx = std::max(cx, c.detMaxDb);
-                        tgt = std::max(tgt, c.tgtMaxDb);
-                    }
+                const telemetry::OperatingPoint op = telemetry::operatingPoint(u, ctx_.history);
+                cx = op.x;
+                tgt = op.target;
             }
             const bool unlinked = f.eng.link < 1.0f;
             const bool detPair = unlinked && std::fabs(u.curveXDb[0] - u.curveXDb[1]) > R::kPairDb;
@@ -278,17 +291,17 @@ namespace fcmp::ui
             };
             if (detPair)
             {
-                addNumber(value(rDet), u.curveXDb[0], 1, false);
-                addNumber(value(rDet).add("/"), u.curveXDb[1], 1, false);
+                addLevel(value(rDet), u.curveXDb[0], false);
+                addLevel(value(rDet).add("/"), u.curveXDb[1], false);
             }
             else
             {
-                addNumber(value(rDet), cx, 1, false);
+                addLevel(value(rDet), cx, false);
             }
             if (cx > kFloorDb)
                 addNumber(value(rOver), cx - fcdsp::analysis::inputThresholdDb(f.eng), 1, true);
             else
-                value(rOver).add(kDash);
+                value(rOver).add(kMinusInf);
             addNumber(value(rTarget), std::max(tgt, 0.0f), 1, false);
             if (grPair)
             {
@@ -306,7 +319,7 @@ namespace fcmp::ui
             if (cx > kFloorDb)
                 addRatio(value(rRatio), fcdsp::analysis::localRatio(*f.entry, f.eng, cx));
             else
-                value(rRatio).add(kDash);
+                value(rRatio).add(kUnity);
             const auto lawOf = [&](fcdsp::Pid p) {
                 const fcdsp::ParamSpec* sp = f.res.view.spec[fcdsp::idx(p)];
                 return fcdsp::lawFactor(sp != nullptr ? sp->law : fcdsp::TimeLaw::expDb);

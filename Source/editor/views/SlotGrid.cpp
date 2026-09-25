@@ -4,6 +4,7 @@
 #include "editor/Layout.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/params/HostParams.h"
@@ -138,8 +139,6 @@ namespace fcmp::ui
                 return { s.lo, s.hi };
             return { hostParam(pid).lo, hostParam(pid).hi };
         }
-
-        int grLane(const fcdsp::UiFrame& f) noexcept { return f.appliedGrDb[1] > f.appliedGrDb[0] ? 1 : 0; }
     }
 
     // ---- the words (02 §6.4, K1 #23) ------------------------------------------------------------------------------------
@@ -458,12 +457,13 @@ namespace fcmp::ui
                 continue;
             const SlotModel& m = ctx_.slot(pid);
             const funkgui::SlotGeom& g = slider.geom();
-            const int lane = grLane(f.ui);
-            if (pid == fcdsp::Pid::thr && f.ui.curveXDb[lane] > kFloorDb)
+            const float cx = pid == fcdsp::Pid::thr ? telemetry::operatingPoint(f.ui, ctx_.history).x : kFloorDb;
+            if (pid == fcdsp::Pid::thr && cx > kFloorDb)
             {
-                // THRESHOLD's detector tick (02 §6.4): the operating point on the threshold's own scale. T_in is affine
-                // in thr with slope 1, so the level x sits where thr = thr_now + (x − T_in).
-                const float at = m.resolved().plain + (f.ui.curveXDb[lane] - fcdsp::analysis::inputThresholdDb(f.eng));
+                // THRESHOLD's detector tick (02 §6.4): the operating point on the threshold's own scale — the dot's, the
+                // 10 ms peak envelope (Telemetry.h), so it does not jitter with the waveform's phase (UF1a). T_in is
+                // affine in thr with slope 1, so the level x sits where thr = thr_now + (x − T_in).
+                const float at = m.resolved().plain + (cx - fcdsp::analysis::inputThresholdDb(f.eng));
                 const float t = m.trackPosition(at);
                 if (t >= 0.0f && t <= 1.0f)
                 {

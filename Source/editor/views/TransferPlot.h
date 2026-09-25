@@ -19,7 +19,10 @@
 //   the raw values (ink16; the detent label under the pointer in the slot grid previews its curve in ink32); after a
 //   Mode switch the old curve eases into the new one over 160 ms and stays in ink16 for 0.9 s (02 §8.7).
 // - Live only: TARGET_DOT, OP_DOT (hollow while kUiFading), GR_NEEDLE from unity to the dot, OP_TRAIL (the last 320 ms
-//   of the store every 10 ms, ink70 → ink16), all at cx = curveXDb of the lane with the larger applied GR.
+//   of the store every 10 ms, ink70 → ink16), all at the operating point of views/Telemetry.h: cx = curveXDb of the
+//   lane with the larger applied GR, peak-held over the store's last 10 ms. UF1a (ADR-69): when the feed stops being
+//   live they stay where they were and fade out over layout::live::kFadeS (full rate while they fade); the curves
+//   never dim.
 // - Handles (shown while the pointer is over the plot or dragging, 90/160 ms; always under always-chrome and on the
 //   Characteristics screen's focus): threshold (7×7 on unity at T_in; absolute: thr += ΔT_in), knee (two 5×5 at
 //   T_in ± W/2), ratio (5×5 at min(T_in + 12, +3)), range (5×5 at the break). Knee and range drag absolutely only when

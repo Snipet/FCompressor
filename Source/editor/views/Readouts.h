@@ -6,16 +6,18 @@
 // the a11y ids idBase + 1 … idBase + 255 (1..127 its cells and image, 128..255 its handles and markers; SubView.h).
 //
 // U3 (S9) — what each row prints and from what (Readouts.cpp; 02 §7.3, §9.1). Rows at rowPitch from the area's top,
-// kMicro: the name ink52 at nameX, the value ink100 right-aligned at valueRight; "–" (U+2013, ink16) when the feed is
-// not live (FrameState::live) or the audio runs another Mode than the resolved one (UiFrame::modeSlot). The values are
-// the frame's lane with the larger applied GR (the operating dot's lane):
+// kMicro: the name ink52 at nameX, the value ink100 right-aligned at valueRight; "–" (U+2013, ink16) before the first
+// frame (views/Telemetry.h: feed none) or while the audio runs another Mode than the resolved one (UiFrame::modeSlot).
+// UF1a (ADR-69): a fresh frame prints as it is, live or silent; once the audio stops the rows print the last frame at
+// rest (Telemetry.h atRest: GR 0.0, levels −∞, crest 0, phase IDLE; ATK/REL EFF and the internals hold), in ink100.
+// The values are the frame's lane with the larger applied GR (the operating dot's lane):
 //    1 DET        the operating point's x: the peak envelope TransferPlot's dot uses (max of curveXDb and the store's
-//                 detMaxDb over the last 10 ms), dB, 1 decimal
-//    2 OVER       DET − T_in (analysis::inputThresholdDb of FrameState::eng), signed ("+3.8")
+//                 detMaxDb over the last 10 ms; none at rest), dB, 1 decimal; "−∞" at the telemetry floor
+//    2 OVER       DET − T_in (analysis::inputThresholdDb of FrameState::eng), signed ("+3.8"); "−∞" at the floor
 //    3 TARGET     the target dot's GR: max of targetGrDb and the store's tgtMaxDb over the last 10 ms, >= 0
 //    4 APPLIED    appliedGrDb
 //    5 S2 GR      s2GrDb; "–" for a Mode without a second stage (Stage2Kind::none)
-//    6 EFF RATIO  analysis::localRatio at DET ("3.2:1", whole numbers from 10, "∞:1" beyond 1e4)
+//    6 EFF RATIO  analysis::localRatio at DET ("3.2:1", whole numbers from 10, "∞:1" beyond 1e4); "1.0:1" at the floor
 //    7 ATK EFF    attackNowMs through the ATTACK spec's law (the slot's units, as its EFF sub), fmt::seconds
 //    8 REL EFF    releaseNowMs likewise
 //    9 CREST      crestDb

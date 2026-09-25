@@ -1,0 +1,7 @@
+# funkgui-golden 2  probe=dsp.zipper  scope=modes/brickwall
+# key	value	tolerance
+zipper.ramp.thr.err_db	-39.4839021	abs:1
+zipper.ramp.knee.err_db	-400	abs:1
+zipper.ramp.rel.err_db	-400	abs:1
+zipper.ramp.link.err_db	-400	abs:1
+zipper.ramp.makeup.err_db	-50.8909002	abs:1
