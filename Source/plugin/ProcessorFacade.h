@@ -34,11 +34,17 @@ public:
     virtual int      count() const = 0;
     virtual Row      row(int index) const = 0;
     virtual int      current() const = 0;          // −1 = none
-    virtual bool     modified() const = 0;         // normalised tolerance 1e-4 (01 §9.2)
+    virtual bool     modified() const = 0;         // PresetManager::isModified, or a different Mode (S12 revisions 4, 8)
     virtual uint32_t revision() const = 0;         // bumps on any list or selection change
     virtual void     apply(int index) = 0;         // brackets itself with beginBatch/endBatch (01 §9.2 hooks)
     virtual void     step(int delta) = 0;          // ‹ ›
     virtual bool     saveAs(std::string_view name, std::string_view category) = 0;
+    // S12 lead revision 8 (P3's interface request), additive: user-preset management for the browser. Every call
+    // returns false and changes nothing when refused; a success bumps revision(). The defaults refuse everything.
+    virtual bool     rename(int /*index*/, std::string_view /*newName*/) { return false; }   // user rows; name taken: false
+    virtual bool     remove(int /*index*/) { return false; }                                 // user rows only
+    virtual bool     importFile(std::string_view /*path*/) { return false; }  // a preset file; fresh uuid, unique name
+    virtual bool     exportFile(int /*index*/, std::string_view /*path*/) { return false; }  // any row, PresetFile
 };
 
 class ProcessorFacade {
