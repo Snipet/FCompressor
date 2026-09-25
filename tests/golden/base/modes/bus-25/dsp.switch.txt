@@ -1,0 +1,14 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/bus-25
+# key	value	tolerance
+switch.bus-25-clean.settle_ms	35	rel:0.1
+switch.clean-bus-25.settle_ms	295	rel:0.1
+switch.bus-25-bus-g.settle_ms	35	rel:0.1
+switch.bus-g-bus-25.settle_ms	315	rel:0.1
+switch.bus-25-fet-76.settle_ms	25	rel:0.1
+switch.fet-76-bus-25.settle_ms	999.916667	rel:0.1
+switch.bus-25-opto-2a.settle_ms	70	rel:0.1
+switch.opto-2a-bus-25.settle_ms	385	rel:0.1
+switch.bus-25-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-bus-25.settle_ms	999.916667	rel:0.1
+switch.bus-25-diode-609.settle_ms	65	rel:0.1
+switch.diode-609-bus-25.settle_ms	999.916667	rel:0.1

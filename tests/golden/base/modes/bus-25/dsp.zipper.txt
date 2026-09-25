@@ -1,0 +1,8 @@
+# funkgui-golden 2  probe=dsp.zipper  scope=modes/bus-25
+# key	value	tolerance
+zipper.ramp.thr.err_db	-33.2592801	abs:1
+zipper.ramp.range.err_db	-68.5873799	abs:1
+zipper.ramp.schpf.err_db	-108.689768	abs:1
+zipper.ramp.drive.err_db	-400	abs:1
+zipper.ramp.makeup.err_db	-74.9304651	abs:1
+zipper.ramp.mix.err_db	-66.5777635	abs:1
