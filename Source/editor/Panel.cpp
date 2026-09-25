@@ -32,6 +32,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstring>
+#include <span>
 
 namespace fcmp::ui
 {
@@ -119,7 +120,9 @@ namespace fcmp::ui
 
     // Everything else is the host's: FunkGui v0.7.1's themeIndex() (the Theme the next draw receives, valid at once after
     // a THEME click) and ownerComponent() (the juce::Component a PopupMenu or FileChooser anchors to; nullptr headless)
-    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults.
+    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults. So is v0.8.0's UI
+    // zoom (UF1b; ADR-68, ADR-68a), for the Footer's ZOOM cells: zoomPercent(), setZoomPercent(), zoomSteps() and
+    // zoomFits(). Without them the Panel would always see 100 %, no steps and every step fitting.
     class Panel::HostProxy final : public funkgui::HostServices
     {
     public:
@@ -131,6 +134,10 @@ namespace fcmp::ui
         double nowSeconds() const override { return host_.nowSeconds(); }
         int    themeIndex() const override { return host_.themeIndex(); }
         juce::Component* ownerComponent() override { return host_.ownerComponent(); }
+        int    zoomPercent() const override { return host_.zoomPercent(); }
+        void   setZoomPercent(int percent) override { host_.setZoomPercent(percent); }
+        std::span<const int> zoomSteps() const override { return host_.zoomSteps(); }
+        bool   zoomFits(int percent) const override { return host_.zoomFits(percent); }
         void   beginBatch() override
         {
             facade_.beginBatch();
@@ -441,8 +448,9 @@ namespace fcmp::ui
     {
         // 02 §9.6: full rate while kUiLive (until the stream goes stale), an ease, a fade or a pending preview; and
         // (ADR-69) while a sub-view has something moving — HISTORY scrolling data in view at wall-clock rate after the
-        // audio stops, falling meters and bars, the operating dot's fade — or for layout::live::kActiveS after any input
-        // (DisplayRow's activity clock: hover, drag, click, wheel, keys). Idle rate only when nothing moves.
+        // audio stops, falling meters and bars, the operating dot's fade, the GR VU needle while it swings (UF2, ADR-72) —
+        // or for layout::live::kActiveS after any input (DisplayRow's activity clock: hover, drag, click, wheel, keys).
+        // Idle rate only when nothing moves.
         if (!ticked_ || fade_ < 1.0f || preview_->pending() || ctx_.frame.live)
             return true;
         if (!funkgui::ease::sameBits(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f))
@@ -570,10 +578,13 @@ namespace fcmp::ui
             return moveFocus(e.mods.shift ? -1 : 1);             // false without a Tab stop: the host keeps Tab
         if (e.key == funkgui::Key::escape)
         {
-            // 02 §7.1, §8.9: close an open browser -> hide the focus ring -> leave the screen.
+            // 02 §7.1, §8.9: close an open browser -> hide the focus ring -> leave the screen. The open browser sees Esc
+            // first, so a name being typed in the preset browser is cancelled without closing it (U6); the Mode browser
+            // never takes it.
             if (overlay_ != Overlay::none)
             {
-                closeOverlay();
+                if (!view(overlayView(overlay_)).key(e))
+                    closeOverlay();
                 return true;
             }
             if (ctx_.focusVisible)
@@ -638,5 +649,18 @@ namespace fcmp::ui
     {
         if (gestures_)
             gestures_->closeAll();
+    }
+
+    // ---- files dropped on the window (S12 lead revision 8): preset files import through the preset browser ------------
+
+    bool Panel::filesInterest(const std::vector<std::string>& files) const
+    {
+        return static_cast<const PresetBrowser&>(view(ViewIndex::presetBrowser)).filesInterest(files);
+    }
+
+    void Panel::filesDropped(const std::vector<std::string>& files)
+    {
+        if (!shutDown_)
+            static_cast<PresetBrowser&>(view(ViewIndex::presetBrowser)).filesDropped(files);
     }
 }

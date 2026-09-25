@@ -2,7 +2,8 @@
 // it: the spec line (in priority: the first-run hint, state notices, the Mode-switch summary,
 // the spec line of the item under the hand, the lookahead hint) and the THEME cells. The last Tab stop.
 //
-// U1b (S6) behaviour, where 02 is silent (U1b handoff). The line at (40, 604), fitted to 740 px, is the first of:
+// U1b (S6) behaviour, where 02 is silent (U1b handoff). The line at (40, 604), fitted to 740 px (554 px since UF1b,
+// layout::footer::kSpecLineW), is the first of:
 // 1. the first-run hint (HintLine, 6 s; the first pointer move cuts it to 0.4 s; PanelOptions::skipHint: none);
 // 2. a notice: AUDIO RESET AFTER A NON-FINITE SAMPLE for 3 s after a fresh frame carries kUiPoisonReset, else the
 //    StateNotice texts for 10 s after a load (01 §9.1; K2 #10) — a notice the facade holds when the editor opens is
@@ -17,6 +18,28 @@
 // Inks: hint and spec ink32 (02 §8.10), summary and lookahead hint ink52, notices ink70. Tags: HINT, NOTICE (2, 3),
 // FOOTER_SPEC (4, 5). The a11y staticText's value is the whole line, before the fit.
 //
+// UF1b (S12; ADR-68, ADR-68a): the ZOOM cells beside THEME. EditorHost (FunkGui v0.8.0) does the whole zoom (window,
+// render density, input, a11y); the footer only offers the steps, through HostServices (Panel's HostProxy forwards it):
+// - The caption "ZOOM" and one cell per layout::footer::kZoomSteps (100 125 150 175), a SegmentedSelector in
+//   CellStyle::text: the THEME cells' look (active ink70, hover ink100, rest ink32), row, height and 4 px gaps, with
+//   the display row's cell widths. The line above moves out of their way: it is fitted to layout::footer::kSpecLineW.
+// - The selected cell is HostServices::zoomPercent(), the effective zoom (after the display fit); none when that is
+//   not a step (a capture pin such as UI_ZOOM=110). A click, an arrow key or an a11y press on another cell calls
+//   setZoomPercent(step) once — a machine-wide preference, not a host parameter: no gesture, no batch — and nothing on
+//   the selected cell (tap semantics).
+// - A step whose zoomFits() is false (its window would not fit the display's user area) is unavailable: drawn in the
+//   n/a ink (ink16, 02 §8.10: calm, not an error), not clickable, skipped by the arrows, and a11y enabled = false with
+//   the help "Needs a larger display"; hovering it puts "<n> % NEEDS A LARGER DISPLAY" on the line (a spec, priority 5).
+//   A host with no zoom steps (HostServices' defaults; HeadlessHost before setZoom) offers every cell as available
+//   with 100 % selected, as zoomFits()'s default says, so a headless frame equals the live editor's under its
+//   CANVAS_DUMP pin (gui-live parity at 100 %).
+// - The host's answers are read once per tick, before acting on input (a key replayed before the first frame) and
+//   right after a selection, so draw() and accessibility() read the Footer's own state, as the preference mirrors of
+//   PanelContext are read (02 §3.7).
+// - Tab: the ZOOM group is one stop, before THEME (THEME stays the panel's last stop). A11y: the radioGroup "Zoom"
+//   with one radioButton per cell titled "ZOOM <n> %", checked when selected. Hover or focus: the spec
+//   "ZOOM   100 · 125 · 150 · 175 %   …" (with the unavailable steps when there are any).
+//
 // The members below the FZ4 declarations are additions (private state and SubView overrides with defaults); no FZ4
 // declaration changed.
 #pragma once
@@ -27,6 +50,7 @@
 #include <funkgui/core/Geometry.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/widgets/HintLine.h>
+#include <funkgui/widgets/SegmentedSelector.h>
 #include <funkgui/widgets/ThemeCells.h>
 
 #include <cstddef>
@@ -81,5 +105,34 @@ namespace fcmp::ui
         float    summaryLeft_ = 0.0f;
         char     summary_[160]{};
         bool     pointerOver_ = false;
+
+        // ---- UF1b additions (S12; ADR-68, ADR-68a): the ZOOM cells ------------------------------------------------------
+        // The CellModel of the ZOOM cells over the Footer's reading of the host's zoom (readZoom).
+        class ZoomCells final : public funkgui::CellModel
+        {
+        public:
+            explicit ZoomCells(Footer& f) noexcept : footer_(f) {}
+
+            int  count() const override;
+            int  active() const override;
+            const char* label(int) const override;
+            const char* spoken(int) const override;
+            bool enabled(int) const override;
+            const char* help(int) const override;
+            void select(int, funkgui::GestureController&) override;   // HostServices::setZoomPercent: no gesture
+
+        private:
+            Footer& footer_;
+        };
+
+        void readZoom() noexcept;                                // HostServices' zoom -> zoomActive_, zoomFits_
+        bool themeFocused() const noexcept;                      // the focus is on the THEME group or one of its cells
+        bool zoomFocused() const noexcept;                       // ... on the ZOOM group or one of its cells
+        void zoomSpec(char* out, std::size_t cap) const;         // the hover/focus spec line of the ZOOM group
+
+        ZoomCells                  zoomCells_ { *this };
+        funkgui::SegmentedSelector zoom_;
+        int                        zoomActive_ = 0;              // the cell of HostServices::zoomPercent(); -1: none
+        uint32_t                   zoomFits_ = ~0u;              // bit i: cell i's step would draw at it (zoomFits)
     };
 }

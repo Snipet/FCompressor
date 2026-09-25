@@ -191,6 +191,9 @@ if(NOT FCOMPRESSOR_HEADLESS)
       set_target_properties(${_t} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
     endif()
   endforeach()
+  # metal-cpp's private implementation (bgfx/src/renderer_mtl.cpp) marks ~2,000 MTL/NS/CA symbols visibility("default")
+  # unless this is defined; the preset above cannot hide them (found by R1's release.sh dry run).
+  target_compile_definitions(bgfx PRIVATE METALCPP_SYMBOL_VISIBILITY_HIDDEN)
   file(STRINGS "${bgfx_SOURCE_DIR}/bgfx/include/bgfx/defines.h" _api
        REGEX "^#define BGFX_API_VERSION UINT32_C\\(${FCMP_BGFX_API}\\)")
   if(NOT _api)

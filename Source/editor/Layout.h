@@ -100,7 +100,7 @@ namespace fcmp::ui::layout
     namespace footer
     {
         inline constexpr Point kSpec { 40.0f, 604.0f };         // spec line, kLabel ink32, fitEllipsis to kSpecMaxW
-        inline constexpr float kSpecMaxW = 740.0f;
+        inline constexpr float kSpecMaxW = 740.0f;              // retired by UF1b (the ZOOM cells): kSpecLineW below
         inline constexpr std::array<Rect, 2> kThemeCells { { { 790.0f, 601.0f, 72.0f, 16.0f },        // GRAPHITE
                                                              { 866.0f, 601.0f, 54.0f, 16.0f } } };    // PAPER
         inline constexpr float kHintS    = 6.0f;                // first-run hint
@@ -530,5 +530,101 @@ namespace fcmp::ui::layout
         inline constexpr float kGrTrackY    = 111.0f;
         inline constexpr float kGrTickTop   = 107.0f;
         inline constexpr float kGrTickH     = 6.0f;
+    }
+
+    // ---- UF1b additions (S12; ADR-68, ADR-68a): additive, no FZ4 declaration above changed ------------------------------
+    // The ZOOM cells beside THEME in the footer band. EditorHost (FunkGui v0.8.0) does the whole zoom: gpu/Editor.cpp passes
+    // kZoomSteps and kDefaultZoomPercent to its EditorConfig, and the Footer draws one cell per step, so the two never
+    // disagree. The panel stays 960 × 640 logical px at every zoom; nothing here scales.
+    // Geometry (the display row's cell rule, above): each cell is w("100") in kCaption (17.6 px) + 14 = 32 px wide, 16 px
+    // tall on the THEME cells' row (y 601), 4 px apart as the THEME cells are; the last one ends 12 px before GRAPHITE
+    // (its label 30 px from GRAPHITE's). The caption "ZOOM" (kCaption ink52, 24.2 px) sits 4 px under the cells' top, as
+    // the display row's captions do, and 8 px before the first cell. The spec line gives up the room: it is fitted to
+    // kSpecLineW (x 40–594, 12 px before the caption) instead of footer::kSpecMaxW (740, retired: nothing reads it). 554 px
+    // still holds the longest line that is not a slot's spec, the lookahead hint ("BRICKWALL WITHOUT LOOKAHEAD CAN
+    // OVERSHOOT — SET LOOKAHEAD 5 MS ABOVE (+5 MS LATENCY)", 552.8 px); slot spec lines were already cut at 740.
+    namespace footer
+    {
+        inline constexpr std::array<int, 4> kZoomSteps { 100, 125, 150, 175 };   // percent, ascending (ADR-68)
+        inline constexpr int   kDefaultZoomPercent = 125;                        // a missing or unlisted preference
+        inline constexpr Point kZoomCaption { 606.0f, 605.0f };                  // "ZOOM", kCaption ink52
+        inline constexpr std::array<Rect, 4> kZoomCells { { { 638.0f, 601.0f, 32.0f, 16.0f },      // 100
+                                                            { 674.0f, 601.0f, 32.0f, 16.0f },      // 125
+                                                            { 710.0f, 601.0f, 32.0f, 16.0f },      // 150
+                                                            { 746.0f, 601.0f, 32.0f, 16.0f } } };  // 175
+        inline constexpr float kSpecLineW = 554.0f;                              // the spec line's fit width
+    }
+
+    // ---- UF2 additions (S12; ADR-72): additive, no FZ4 declaration above changed ------------------------------------
+    // The band's HISTORY · VU switch and the GR VU meter (views/GrVuMeter.h). Only the band has them: the Characteristics
+    // screen's HISTORY (kCharsHistory) and CONTROL PATH are unchanged.
+    // - The switch replaces the "HISTORY" caption at kBandHistory.caption with two cells, HISTORY and VU, in the span
+    //   cells' look (CellStyle::text) and hit rule (the display row's cell rule above: 16 px tall on the span cells' row,
+    //   y 122; width = w(label) in kCaption + 14 rounded to an even number; 4 px apart). The HISTORY cell starts 7 px
+    //   left of the plot, so its centred label keeps the old caption's x 40 (within 0.1 px) and stays aligned with the
+    //   plot frame, as TRANSFER's caption is with its plot; Band::hit adds the cells to the band region for that 7 px.
+    // - The choice is the machine-wide UiPreferences int "grView" (0 = HISTORY, the default; 1 = VU), read and written
+    //   like historySpanTenths. While VU is shown the span cells, their "S" and the time labels are hidden (not dimmed),
+    //   and the plot rectangle holds the meter instead of the traces; the state lane and the part of the threshold line
+    //   outside the plot (into the TRANSFER handle) stay as they are, so nothing outside the plot rectangle, the caption
+    //   row and the time-label row changes.
+    // - The meter: one needle on a pivot centred in the plot, a thin arc scale (the rule and the ticks point outwards,
+    //   the labels outside them) that is symmetric about the pivot: −20 dB at −kEndDeg, +3 dB at +kEndDeg from vertical.
+    //   Deflection d = 10^((dB − 3) / 20) (the classic GR-on-a-VU law: linear gain, full scale = +3 dB, 0 dB at
+    //   10^(−3/20) = 70.8 % of full scale) maps linearly to the angle, so d = 0 (infinite GR) sits 7.3° left of −20. The
+    //   meter's box (the top label's cap top to the pivot's bottom) is centred in the plot within 0.5 px.
+    // - Ballistics (IEC 60268-17's VU): a mass-spring needle, ζ = 0.81272 and ω0 = 13.5119 rad/s (f0 = 2.150 Hz), so a
+    //   step reaches 99 % of its travel in 300 ms and overshoots by 1.25 %; integrated exactly (a zero-order hold per 1 ms
+    //   HistoryColumn) over HISTORY's timeline (views/Telemetry.h), so it runs at audio time while the feed is fresh and
+    //   falls back to rest at wall-clock time once it is stale (ADR-69), with the same law. It is drawn through a display
+    //   clock kShowLagMs behind the newest audio (below), so host blocks do not make it step.
+    namespace vu
+    {
+        inline constexpr int   kHistory = 0;                      // "grView" values
+        inline constexpr int   kVu = 1;
+        inline constexpr int   kDefaultView = kHistory;
+        inline constexpr std::array<Rect, 2> kViewCells { { { 33.0f, 122.0f, 58.0f, 16.0f },      // HISTORY (43.8 px)
+                                                            { 95.0f, 122.0f, 26.0f, 16.0f } } };   // VU (11.1 px)
+
+        inline constexpr Point kPivot { 290.0f, 318.0f };         // the plot's centre x; the box centred in y
+        inline constexpr float kPivotR  = 3.0f;                   // a disc, ink70
+        inline constexpr float kScaleR  = 150.0f;                 // the arc: a 1 px ink32 rule
+        inline constexpr float kRuleW   = 1.0f;
+        inline constexpr float kTickLong  = 7.0f;                 // outwards from the arc, 1 px: labelled ink52, the
+        inline constexpr float kTickShort = 4.0f;                 // +1…+3 region ink32; minor ticks short, ink32
+        inline constexpr float kTickW   = 1.0f;
+        inline constexpr float kLabelR  = 164.0f;                 // label centres, kMicro ink52, cap-centred
+        inline constexpr float kNeedleR = 156.0f;                 // the needle: pivot to tip, 1.5 px signal
+        inline constexpr float kNeedleW = 1.5f;
+        inline constexpr float kLegendDy = 96.0f;                 // "GR · VU" cap-centred this far above the pivot
+        inline constexpr float kEndDeg  = 48.0f;                  // the scale's ends, degrees from vertical
+        inline constexpr float kLowDb   = -20.0f;                 // ... at these readings
+        inline constexpr float kHighDb  = 3.0f;
+        inline constexpr int   kArcSegments = 96;                 // the arc as a polyline
+
+        inline constexpr std::array<AxisLabel, 8> kLabels { { { 0.0f, "0" },  { -1.0f, "\xE2\x88\x92" "1" },
+                                                              { -2.0f, "\xE2\x88\x92" "2" }, { -3.0f, "\xE2\x88\x92" "3" },
+                                                              { -5.0f, "\xE2\x88\x92" "5" }, { -7.0f, "\xE2\x88\x92" "7" },
+                                                              { -10.0f, "\xE2\x88\x92" "10" },
+                                                              { -20.0f, "\xE2\x88\x92" "20" } } };
+        inline constexpr std::array<float, 3> kOverDb  { 1.0f, 2.0f, 3.0f };                  // long ticks, no labels
+        inline constexpr std::array<float, 5> kMinorDb { -15.0f, -9.0f, -8.0f, -6.0f, -4.0f }; // short ticks
+        inline constexpr const char* kLegend = "GR \xC2\xB7 VU";   // kMicro ink32
+
+        inline constexpr double kZeta  = 0.8127170;               // 1.25 % overshoot
+        inline constexpr double kOmega = 13.511913;               // rad/s: 99 % of a step at 0.300 s
+        inline constexpr int    kCatchUpMs = 1000;                // a meter ticked after a pause integrates at most the
+                                                                  // last second of its timeline (>> the 0.3 s settle)
+        inline constexpr float  kValueS = 0.1f;                   // its a11y value regenerated at <= 10 Hz (02 §9.6)
+
+        // The needle is integrated up to the timeline's head, but drawn on a display clock that runs at the panel's own
+        // rate kShowLagMs of audio behind it, so audio that arrives in host blocks (Logic's 1024-sample process buffer
+        // is 23 ms) still moves it smoothly at the frame rate instead of in block steps. While fresh a slow pull (kPullS)
+        // keeps that lag, so its rate never departs from real time by more than a few per cent; over a stale span the
+        // clock simply runs at real time up to the head (the fall to rest is drawn exactly); more than kMaxLagMs
+        // behind (a burst, a pause) it skips forward.
+        inline constexpr double kShowLagMs = 40.0;
+        inline constexpr double kMaxLagMs  = 250.0;
+        inline constexpr double kPullS     = 1.0;
     }
 }

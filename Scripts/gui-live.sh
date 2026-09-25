@@ -3,7 +3,7 @@
 # Scripts/gui-live.sh <build-dir>: live parity, ui.live (03 §3.6; 02 §3.9, §5.1; C G1; U7). The real GPU editor in the
 # real Standalone must draw, frame for frame, what the headless probe draws for the same state.
 #
-#   For each view of {panel, chars.sidechain, modebrowser} x Mode clean:
+#   For each view of {panel, chars.sidechain, chars.colour, modebrowser, presetbrowser} x Mode clean (the 5 views, S12):
 #   1. headless  fcmp_probe_plugin ui.dump --mode clean -- --view <id> --dpi 2 --theme 0: a FakeFacade at its defaults,
 #                Panel{skipHint, syncPreview}, HeadlessHost settle at 1/60 s, the settled frame as dump v2.
 #   2. live      FunkGui's tools/capture-frame.sh on <build>'s Standalone with the product's environment prefix (FCMP_):
@@ -17,7 +17,7 @@
 #                The live dump must also say "clock fixed" and "dpi 2" (the capture hooks reached the editor).
 #   Results go to <build>/gui-live/: <id>.{headless,live}.dump, <id>.{headless,live}.fp, <id>.live.png (the live frame
 #   rendered by funkgui_framerender at 2x supersampling: what the GPU was given, as a picture), <id>.capture.log and
-#   summary.txt. The last line printed is "gui-live: N/3 equal".
+#   summary.txt. The last line printed is "gui-live: N/5 equal".
 #
 # Isolation. The Standalone runs with CFFIXED_USER_HOME=<scratch>/home, so JUCE's Standalone settings file (audio
 # device, saved plug-in state: ~/Library/Application Support/<product>.settings) is neither read nor written: the
@@ -37,7 +37,7 @@
 # Exit: 0 all views equal; 1 a view differs or could not be captured; 2 usage, setup or lock error.
 set -u
 
-VIEWS="panel chars.sidechain modebrowser"
+VIEWS="panel chars.sidechain chars.colour modebrowser presetbrowser"
 MODE=clean
 DT=0.0166666675
 LOCK=/tmp/fcmp-gui.lock

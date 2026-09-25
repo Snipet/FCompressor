@@ -12,3 +12,6 @@
 /CMakeUserPresets.json
 /.claude/worktrees/
 __pycache__/
+
+# release output (Scripts/release.sh <build> dist/)
+/dist/

@@ -537,11 +537,42 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   `HostServices::zoomFits()`. The ZOOM cells draw a step that does not fit as unavailable, with a footer hint, and a
   click on it does nothing (UF1b).
 
+- **ADR-72 GR VU meter (user request, 2026-09-25).** The band's HISTORY caption becomes a two-cell switch, **HISTORY ·
+  VU**. VU replaces the scrolling GR history, in the same plot rectangle (40, 140, 500 × 192), with one large
+  analog-style needle meter for gain reduction.
+  - **Look:** panel style (the user's choice). Theme inks, a thin arc scale with ticks, a needle and a pivot; it
+    follows GRAPHITE/PAPER.
+  - **Scale and ballistics:** the classic GR-on-a-VU scale, with the needle at rest on 0 and swinging left as GR grows
+    (0, −1, −2, −3, −5, −7, −10, −20 dB). VU ballistics: 99 % of a step in 300 ms, 1–1.5 % overshoot.
+  - **Other settings:** the span cells do not apply while VU is shown. The choice is a machine-wide preference, like
+    the span. Nothing else on the panel moves, and the history keeps recording while it is hidden. The Characteristics
+    screen's HISTORY is unchanged. When audio stops, the needle falls back to rest with the same ballistics (ADR-69).
+    Card UF2.
+  - **As built (UF2):** the preference key is `grView`, and the switch has its own Tab stop before the span group (a
+    radio group "GR view"). Deflection is 10^((dB − 3)/20), with 0 dB at 70.8 % of full scale. The needle is a
+    mass-spring with ζ 0.8127 and ω0 13.51 rad/s: 99 % in 300 ms, 1.25 % overshoot. It is drawn on a display clock
+    40 ms behind the newest audio, so host blocks never make it step.
+
+- **ADR-73 PAPER contrast (user request, 2026-09-25).** The user asked for the white theme's contrast to be
+  "majorly increased". FunkGui's `Theme::paper()` is HR's palette and stays as it is, since HR's goldens hold it.
+  FCompressor draws with its **own** high-contrast PAPER instead: the Panel maps `themeIndex()` 1 to a product palette
+  (`Source/editor`), and FunkGui changes nothing. The ground (the clear colour) stays `EDEBE6`, so EditorHost's clear
+  and fallback screen still match. GRAPHITE is unchanged.
+  - Measured on the old PAPER (WCAG ratio against the ground, with GRAPHITE's in brackets): ink70 5.47 (9.00), ink52
+    3.76 (5.45), ink32 1.84 (2.66), ink16 1.27 (1.50), accent 3.33 (5.75), accentDim 1.42 (2.10), signal 3.93 (10.66).
+    Every level was weaker than GRAPHITE's.
+  - **Targets for the new PAPER (spec rows):** ink100 ≥ 15, ink70 ≥ 9, ink52 ≥ 6, ink32 ≥ 3.5, ink16 ≥ 1.8, accent
+    ≥ 4.5, accentDim ≥ 2.2, signal ≥ 5.5. The ladder stays strictly ordered (ink100 > ink70 > ink52 > ink32 > ink16).
+    `textGamma` is re-tuned so thin dark text does not read lighter than its ink.
+  - Card H1a (S13), first deliverable. It adds a `ui.contrast` probe and PAPER PNGs of every view.
+
 ## HardwareReverb migration
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
   `preset.attributes` column, which FCompressor needs for `modeId`/`modeRev`, with `schema_min_reader` still 1, so
-  older builds keep reading and writing the file. Moving HR's presets onto it (migration phase 2) changes HR's
-  `schema.user_version` golden from 1 to 2, and the "newer build" fixtures move to 3. This is a deliberate, versioned
-  and backward-compatible format change, not a regression. It is the one approved exception to the gate's "never edit
-  HR's expectations" rule. Every other preset golden must hold unedited.
+  older builds keep reading and writing the file. Moving HR's presets onto it (migration phase 2, HR PR #2) changes
+  HR's **schema-version rows**. `schema.user_version`, `corrupt.notadb.user_version`, `migrate.v0_empty.user_version`
+  and `migrate.v0_foreign.user_version` move from 1 to 2, and `migrate.newer_readable.user_version_kept` moves from 2 to
+  3 with its fixture. This is a deliberate, versioned and backward-compatible format change, not a regression. It is
+  the one approved exception to the gate's "never edit HR's expectations" rule; every other preset golden held unedited.
+  A real v1 database, written by HR's own pre-migration store, migrates in place losing nothing (30 spec rows).
