@@ -58,6 +58,9 @@
 //   null.latency.reported_mismatches  latencySamples() of a configured host == latencyFor(its config), same grid: 0
 //   null.latency.eco.<fs>           latencySamples() of an ECO host without lookahead == 0
 //   null.tail.err_s                 tailSeconds(bp) == desc.tailSeconds(eng) + latency / fs
+// Lookahead limiter soak (Modes with wantsLookahead: Brickwall; K2 #21c, M7 S11): after 2 s of the program, 10 minutes
+// under the threshold at STD with a 5 ms budget keep the tapped GR exactly 0.0 (null.soak.gr_active_db,
+// null.soak.gr_nonzero; the section at the end of the body says how).
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -673,6 +676,73 @@ FCMP_PROBE(dsp, null)
                     t.latencySamples());
         P.near("null.tail.err_s", t.tailSeconds(bp) - want, 0.0, 1e-12);
     }
+
+    // ---- the lookahead limiter's soak (K2 #21c; 01 §10.7; 03 §3.4 "Brickwall: a 10-minute below-threshold soak keeps
+    // GR exactly 0.0"; M7, S11) ---------------------------------------------------------------------------------------
+    // Modes with wantsLookahead (Brickwall), STD with a 5 ms budget, the Mode's defaults: 2 s of the program above (12 dB
+    // over the threshold, so the box sums take non-representable GR values), then 10 minutes 20 dB under the threshold
+    // (1 kHz left, 220 Hz right); from 30 s after the loud part (the release has landed) the tapped GR of lanes 0-1 must be
+    // exactly 0.0 at every sample: the box averages' running sums are re-summed exactly every 4096 samples, so their
+    // rounding cannot accumulate (SlidingMaxBox.h).
+    //   null.soak.gr_active_db  the loud part limits (>= 3 dB of GR), so the soak starts from charged sums
+    //   null.soak.gr_nonzero    samples with GR != 0.0 (lanes 0-1) from 32 s to 10 min 2 s: 0
+    if (desc.wantsLookahead)
+    {
+        constexpr std::size_t kSoakBlock = 4096;
+        const std::size_t loud = static_cast<std::size_t>(2.0f * kFs), total = loud + static_cast<std::size_t>(600.0f * kFs);
+        const std::size_t judgedFrom = loud + static_cast<std::size_t>(30.0f * kFs);
+        const RawParams raw = fcmp::probe::modeRaw(en, LookaheadBudget::ms5);
+        const BlockParams bp = blockOf(en, raw);
+        const double quiet = measure::amplitudeFromDb(analysis::inputThresholdDb(bp.eng)
+                                                      - 0.5 * static_cast<double>(bp.eng.kneeDb) - 20.0 + peakOff);
+        auto host = std::make_unique<EngineHost>();
+        host->configure(config(Quality::std, LookaheadBudget::ms5), bp);
+        std::vector<float> il(kSoakBlock), ir(kSoakBlock), ol(kSoakBlock), orr(kSoakBlock);
+        std::vector<simd::f32x4> gr(kSoakBlock);
+        TestTap tap;
+        tap.grDb = gr;
+        double charged = 0.0;
+        std::int64_t nonzero = 0;
+        for (std::size_t off = 0; off < total; off += kSoakBlock)
+        {
+            const std::size_t m = std::min(kSoakBlock, total - off);
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                const std::size_t i = off + k;
+                il[k] = i < loud ? xl[i % n] : sig::sineAt(static_cast<std::int64_t>(i), 1000.0, kFs, quiet);
+                ir[k] = i < loud ? xr[i % n] : sig::sineAt(static_cast<std::int64_t>(i), 220.0, kFs, quiet);
+            }
+            tap.firstSample = off;
+            tap.written = 0;
+            host->setTap(&tap);
+            const float* ins[2] = { il.data(), ir.data() };
+            float* outs[2] = { ol.data(), orr.data() };
+            ProcessIo io;
+            io.in = ins;
+            io.numIn = 2;
+            io.out = outs;
+            io.numOut = 2;
+            io.n = static_cast<int>(m);
+            host->process(io, bp);
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                const float g0 = lane(gr[k], 0), g1 = lane(gr[k], 1);
+                if (off + k < loud)
+                    charged = std::max({ charged, static_cast<double>(g0), static_cast<double>(g1) });
+                else if (off + k >= judgedFrom)
+                    nonzero += g0 != 0.0f || g1 != 0.0f ? 1 : 0;
+            }
+        }
+        host->setTap(nullptr);
+        std::printf("NOTE     null.soak: STD, 5 ms budget, look %.3g ms: %.4g dB of GR in the loud 2 s, then 10 min at "
+                    "%.2f dBFS; %lld nonzero GR sample(s) from 32 s\n",
+                    static_cast<double>(bp.eng.lookMs), charged, measure::dbFromAmplitude(quiet),
+                    static_cast<long long>(nonzero));
+        P.ge("null.soak.gr_active_db", charged, 3.0);
+        P.eq("null.soak.gr_nonzero", nonzero, 0);
+    }
+    else
+        std::printf("NOTE     null.soak: %s does not want a lookahead (no sliding-max box); skipped\n", desc.name.data());
 
     return P.finish();
 }

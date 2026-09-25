@@ -21,7 +21,8 @@
 //   analysis.<c>.settled_max_err_db the engine's settled applied GR at constant levels T + {-10 ... +30} dB (rising,
 //                                   each held max(0.3 s, 30 tau_A)) against preGainDb - staticGain at the tapped
 //                                   detector level: <= 0.01 dB (03 §3.4: FB settled GR; FF too), release >= 100 ms;
-//                                   judged for peak-law Modes (DetectorLaw::peak), a NOTE for the others (03 §3.4)
+//                                   judged for peak-law Modes (DetectorLaw::peak), a NOTE for the others (03 §3.4) and
+//                                   for a true-peak configuration (a square's TP is its band-limited edge overshoot)
 //   analysis.<c>.step.written       analysis::stepResponse writes every sample of the burst
 //   analysis.<c>.step.mismatch      ... bit-identical to the Rig's tapped lane-0 GR for the same plugin-input burst (01
 //                                   §7: a 1 kHz square at thrDb + 12 - preGainDb for max(0.5 s, 10 tau_A), then at
@@ -1412,7 +1413,9 @@ FCMP_PROBE(dsp, analysis)
     for (const Config& c : configsOf(en, base))
     {
         staticGrRows(P, en, c);
-        settledRows(P, en, c, peakLaw);
+        // A true-peak configuration (Brickwall DETECT TP, M7 S11) reads the square's band-limited overshoot at every
+        // edge (+2 dB), so its settled GR is the edges' and the tapped plateau level cannot predict it: a NOTE.
+        settledRows(P, en, c, peakLaw && desc.detectorLaw(c.res.eng) != DetectorLaw::truePeak);
         StepResult s = stepRows(P, en, c);
         ratioRows(P, en, c);
         if (c.key == "def")

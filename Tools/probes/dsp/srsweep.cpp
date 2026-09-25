@@ -13,7 +13,9 @@
 //     srsweep.<fs>.curve_vs_48k_db       reduced D1 (1 kHz sine, fastest attack, slowest release; T - 10, -3, 0, +3,
 //                                        +10, +20 dB): the output level against 48 kHz's, max over the levels
 //     srsweep.<fs>.{atk,rel}.tau_ratio   D2 (1 kHz square steps, dsp.time's stimulus): the attack and release times
-//                                        by the declared TimeLaw, over 48 kHz's (1 +- tauFsRatio)
+//                                        by the declared TimeLaw, over 48 kHz's (1 +- tauFsRatio); an attack published
+//                                        below one sample at 48 kHz (instantaneous) is .atk.instant_diff_s instead:
+//                                        |tau - tau(48k)| <= kTauMinSamples / 48 kHz (M7, S11)
 //     srsweep.<fs>.hold_s                a live `hold` at 50 ms (clamped to its range): the GR stays exactly still for
 //                                        the hold after the level drops (max(tauRel x hold, 1.5 / fs))
 //     srsweep.<fs>.auto.tau_ratio        a `tmode` step tagged AUTO: the release over 48 kHz's
@@ -286,7 +288,13 @@ FCMP_PROBE(dsp, srsweep)
         if (r.judged && r.fs != 48000.0f)
         {
             F.le(k + ".curve_vs_48k_db", curveDev, tol.curveVs48kDb);
-            F.near(k + ".atk.tau_ratio", atkRatio, 1.0, tol.tauFsRatio);
+            // An instantaneous attack (published below one sample at 48 kHz: Brickwall with the budget OFF, M7 S11)
+            // measures one sample at every rate, so its ratio is the rates' ratio, not the Mode's: judged by the
+            // 1.5-sample tau floor instead (03 §3.7, kTauMinSamples at 48 kHz).
+            if (static_cast<double>(desc.attackSpec(timeRes.view, timeRes.eng).seconds) * 48000.0 < 1.0)
+                F.le(k + ".atk.instant_diff_s", std::fabs(st.atkS - refSteps.atkS), tolns::kTauMinSamples / 48000.0);
+            else
+                F.near(k + ".atk.tau_ratio", atkRatio, 1.0, tol.tauFsRatio);
             F.near(k + ".rel.tau_ratio", relRatio, 1.0, tol.tauFsRatio);
         }
         P.eq(k + ".nonfinite", cv.nonfinite + st.nonfinite, 0);
