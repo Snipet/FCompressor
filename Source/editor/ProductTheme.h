@@ -47,6 +47,7 @@
 //   bus-25      245°   A9A5FF   8.12      4238A8  7.46     periwinkle
 //   diode-609   275°   D69EFF   8.70      6E2FA3  6.78     violet
 //   brickwall   320°   FF92D4   8.80      962470  6.33     magenta
+//   octo        350°   FF8FA3   8.29      A3243F  6.12     rose (v1.2, wave 2)
 // A Mode not in the table (a later wave before it gets its own) draws Clean's colour.
 #pragma once
 
@@ -81,7 +82,7 @@ namespace fcmp::ui
         std::string_view key;
         funkgui::Col     graphite, paper;
     };
-    inline constexpr std::array<ModeColour, 8> kModeColours { {
+    inline constexpr std::array<ModeColour, 9> kModeColours { {
         { "clean",     { 0x7F, 0xD4, 0xE8 }, { 0x0A, 0x56, 0x68 } },
         { "bus-g",     { 0x8C, 0xB8, 0xFF }, { 0x1C, 0x4A, 0x9E } },
         { "fet-76",    { 0xFF, 0xC8, 0x57 }, { 0x7A, 0x4E, 0x00 } },
@@ -90,6 +91,7 @@ namespace fcmp::ui
         { "diode-609", { 0xD6, 0x9E, 0xFF }, { 0x6E, 0x2F, 0xA3 } },
         { "bus-25",    { 0xA9, 0xA5, 0xFF }, { 0x42, 0x38, 0xA8 } },
         { "brickwall", { 0xFF, 0x92, 0xD4 }, { 0x96, 0x24, 0x70 } },
+        { "octo",      { 0xFF, 0x8F, 0xA3 }, { 0xA3, 0x24, 0x3F } },
     } };
 
     // A light-ground theme (PAPER) takes a Mode colour's dark variant.
