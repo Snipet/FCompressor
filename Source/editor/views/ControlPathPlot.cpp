@@ -371,6 +371,12 @@ namespace fcmp::ui
 
     ControlPathPlot::~ControlPathPlot() = default;
 
+    // S13 H1a: HISTORY's clock while PANEL is shown (HistoryPlot::keepTime), so both plots keep the same gaps.
+    void ControlPathPlot::keepTime(float)
+    {
+        st_->timeline.tick(ctx_);
+    }
+
     // ---- tick -------------------------------------------------------------------------------------------------------------
 
     void ControlPathPlot::tick(float dt)

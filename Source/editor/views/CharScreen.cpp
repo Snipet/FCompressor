@@ -108,6 +108,12 @@ namespace fcmp::ui
                 plots_[static_cast<std::size_t>(k)]->tick(dt);
     }
 
+    void CharScreen::keepTime(float dt)
+    {
+        history_.keepTime(dt);
+        controlPath_.keepTime(dt);
+    }
+
     void CharScreen::draw(funkgui::Canvas& c, const funkgui::Theme& th) const
     {
         for (int k = 0; k < kPlots; ++k)
@@ -185,16 +191,21 @@ namespace fcmp::ui
     {
         if (ctx_.focus == a11yId(ViewIndex::charScreen, kTabGroupId))
         {
+            // 02 §8.9's cell-group keys (S13 H1a: ↑ ↓ Return Space were not taken, so a host saw them too): ↑ → next,
+            // ↓ ← previous, Home / End first / last; Return and Space select the focused cell, which is the pinned one.
             switch (e.key)
             {
                 case funkgui::Key::left:
+                case funkgui::Key::down:
                 case funkgui::Key::home:  pinTab(ScTab::sidechain); return true;
                 case funkgui::Key::right:
+                case funkgui::Key::up:
                 case funkgui::Key::end:   pinTab(ScTab::colour);    return true;
-                case funkgui::Key::character: case funkgui::Key::tab:     case funkgui::Key::up:
-                case funkgui::Key::down:      case funkgui::Key::pageUp:  case funkgui::Key::pageDown:
-                case funkgui::Key::escape:    case funkgui::Key::enter:   case funkgui::Key::backspace:
-                case funkgui::Key::del:       case funkgui::Key::space:
+                case funkgui::Key::enter:
+                case funkgui::Key::space: return true;
+                case funkgui::Key::character: case funkgui::Key::tab:     case funkgui::Key::pageUp:
+                case funkgui::Key::pageDown:  case funkgui::Key::escape:  case funkgui::Key::backspace:
+                case funkgui::Key::del:
                     return false;
             }
             return false;

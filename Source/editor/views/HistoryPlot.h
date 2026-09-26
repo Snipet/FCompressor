@@ -92,6 +92,12 @@ namespace fcmp::ui
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
 
+        // ---- S13 H1a addition (additive): the clock while the plot is not shown -------------------------------------
+        // Its composite calls it each frame the Panel does not tick it (the other screen is shown): the timeline keeps
+        // time, so a stale span that starts and ends while the plot is hidden is still a gap when it is shown again
+        // (UF1a, ADR-69), and the band's VU needle stays current (it is ticked under HISTORY for the same reason).
+        void keepTime(float dt);
+
     private:
         struct State;                                            // HistoryPlot.cpp: cells, columns, drag, freeze
 

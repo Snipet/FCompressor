@@ -186,8 +186,9 @@ CV before the link: the loop's CV state in OLD; in NEW, which links the targets,
   timing, which differs only while the two channels' ballistics take different branches.
 - The 2500+'s link SHAPE (FAST / SLOW / BOTH) and the original 2500's link filters are not modelled (D §2.4).
 - THRUST pivots at 1 kHz (the host tilt); the 527's published "±15 dB at 20 Hz / 20 kHz" pivots near 630 Hz [C].
-- `ctBudgetNsPerSample` (45) is DW's; `fcmp_bench` was not run (other agents were building). OLD with a link costs
-  about 1–2.4 coupled iterations (2–5 QuadKnee solves) per sample against SmoothBranching's 2.
+- `ctBudgetNsPerSample` 40 (S13 H1b, from measurement; was DW's 45): 21.1 / 24.0 ns/sample/ch at STD 48 kHz
+  detached / attached (the defaults: NEW, FF), 38.2 / 41.2 at HQ against 70 ([budgets.md](budgets.md)). OLD with a
+  link costs about 1–2.4 coupled iterations (2–5 QuadKnee solves) per sample against SmoothBranching's 2.
 
 ## Revision history
 

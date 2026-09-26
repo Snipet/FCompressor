@@ -340,10 +340,58 @@ namespace fcmp::ui
         pressed_ = -1;
         armed_ = false;
         pressAlt_ = false;
-        keyboard_ = ctx_.focusVisible;                           // opened from the keyboard: the ring shows at once
+        keyboard_ = ctx_.focusVisible;                           // opened from the keyboard: the ring shows at once ...
+        if (keyboard_)
+            takeFocus();                                         // ... on the row, not on the latch (S13 H1a)
+        else
+            focusSeen_ = ctx_.focus;
         typedLen_ = 0;
         wheelAcc_ = 0.0f;
         needsReset_ = false;
+    }
+
+    // ---- keyboard focus (S13 H1a; ModeBrowser.h "Keyboard focus") ---------------------------------------------------
+
+    void ModeBrowser::takeFocus()
+    {
+        if (highlight_ >= 0 && highlight_ < grid_.size())
+        {
+            ctx_.focus = rowId(grid_.slot(highlight_));
+            ctx_.focusVisible = true;
+        }
+        focusSeen_ = ctx_.focus;
+    }
+
+    void ModeBrowser::followFocus()
+    {
+        if (ctx_.focus == focusSeen_)
+            return;
+        focusSeen_ = ctx_.focus;
+        if (!ctx_.focusVisible || viewIndexOf(ctx_.focus) != static_cast<int>(ViewIndex::modeBrowser))
+            return;
+        const uint32_t local = ctx_.focus & 0xFFFFu;
+        if (local < kRowIdBase || local >= kRowIdBase + static_cast<uint32_t>(fcdsp::kModeCapacity))
+            return;                                              // a pager button: the highlight stays
+        const int item = grid_.find(static_cast<int>(local - kRowIdBase));
+        if (item < 0)
+            return;
+        highlight_ = item;
+        keyboard_ = true;
+        hover_ = -1;
+        if (const int page = grid_.pageOfItem(item); page != page_)
+        {
+            page_ = page;
+            ++revision_;
+        }
+    }
+
+    int ModeBrowser::focusedPager() const noexcept
+    {
+        if (!ctx_.focusVisible || grid_.pages() <= 1)
+            return 0;
+        if (ctx_.focus == a11yId(ViewIndex::modeBrowser, kPagerPrevId))
+            return -1;
+        return ctx_.focus == a11yId(ViewIndex::modeBrowser, kPagerNextId) ? 1 : 0;
     }
 
     void ModeBrowser::sync()
@@ -367,6 +415,7 @@ namespace fcmp::ui
         if (gap)
             needsReset_ = true;
         sync();
+        followFocus();                                           // Tab, or an a11y focus, may have moved it
         if (typedLen_ > 0 && ctx_.seconds - typedAt_ > static_cast<double>(B::kTypeAheadS))
             typedLen_ = 0;
 
@@ -427,6 +476,11 @@ namespace fcmp::ui
         if (const int to = grid_.onPage(highlight_, page_); to >= 0)
             highlight_ = to;
         hover_ = ctx_.pointerIn ? grid_.hit(page_, ctx_.pointer) : -1;
+        // A focused row leaves with its page: the focus follows the highlight onto the new one (a focused pager button
+        // keeps the focus, so Return pages again).
+        if (ctx_.focusVisible && viewIndexOf(ctx_.focus) == static_cast<int>(ViewIndex::modeBrowser)
+            && focusedPager() == 0)
+            takeFocus();
     }
 
     void ModeBrowser::moveHighlight(int item)
@@ -442,6 +496,7 @@ namespace fcmp::ui
             page_ = page;
             ++revision_;
         }
+        takeFocus();                                             // the keyboard highlight is the Panel focus (S13 H1a)
     }
 
     void ModeBrowser::typeChar(char32_t ch)
@@ -565,8 +620,12 @@ namespace fcmp::ui
                 }
             }
         }
-        if (keyboard_ && highlight_ >= 0 && grid_.pageOfItem(highlight_) == page_)
+        // One ring (S13 H1a): on the focused row while the keyboard drives the highlight, or on a focused pager button.
+        if (keyboard_ && ctx_.focusVisible && highlight_ >= 0 && grid_.pageOfItem(highlight_) == page_
+            && ctx_.focus == rowId(grid_.slot(highlight_)))
             funkgui::drawFocusRing(c, ringRect(grid_.rowRect(highlight_)), th.accent);
+        if (const int dir = focusedPager(); dir != 0)
+            funkgui::drawFocusRing(c, dir < 0 ? kPagerPrev : kPagerNext, th.accent);
 
         if (grid_.pages() > 1)
         {
@@ -691,7 +750,14 @@ namespace fcmp::ui
         if (!isOpen())
             return false;
         sync();
+        followFocus();
         const bool typing = typedLen_ > 0 && ctx_.seconds - typedAt_ <= static_cast<double>(B::kTypeAheadS);
+        if (const int dir = focusedPager(); dir != 0 && (e.key == funkgui::Key::enter || e.key == funkgui::Key::space))
+        {
+            if (pagerEnabled(dir))
+                setPage(page_ + dir);                            // the focused pager button (S13 H1a)
+            return true;
+        }
         switch (e.key)
         {
             case funkgui::Key::up:

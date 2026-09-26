@@ -34,6 +34,15 @@
 //   state.concurrent.*            41 loads alternating A's blob and G's own into running G while a second thread calls
 //                                 processBlock continuously (at least 2 blocks between loads): the last (A's) restores
 //                                 bitwise, no non-finite output, no batch left open: 0
+//   state.race.*                  (S13 H1b, lead revision 5a: the S8 race) a host thread loads R 200 times, alternating
+//                                 A's blob and M (A's with an unknown modeId and UiState {expanded, sidechain}), while a
+//                                 second host thread saves R continuously and this thread, the message thread, plays
+//                                 the editor: it reads stateNotice() and uiState() and clicks the SC|COLOUR tab through
+//                                 the reference. Every notice read is one a load published (flags and keys agree: 0
+//                                 torn) and serials never go back (0); every concurrent save is a <PARAMS> tree with a
+//                                 <UI> child (0 bad); a final load from another thread reaches the editor's copy at its
+//                                 next uiState() (1) with serial = loads + 1 and A's notice (0 wrong). Under tsan-agent
+//                                 a data race on the notice or the UI state fails the probe (the S8 finding)
 //   state.batch.*                 fcmp::loadState into non-fresh F through a recording facade: exactly one beginBatch
 //                                 (the first event) and one endBatch (the last), every parameter change and the readPreset
 //                                 hook between them (so endBatch's snap follows the last write, K2 #23), depth 0 after
@@ -543,6 +552,77 @@ FCMP_PROBE(proc, state)
         P.eq("state.concurrent.batch_open", g->batchDepth(), 0);
         std::printf("NOTE     state.concurrent: 41 loads, %lld blocks processed meanwhile\n",
                     static_cast<long long>(blocks.load()));
+    }
+
+    // ---- loads and saves on host threads while the editor reads the notice and the UI state (lead revision 5a) -------
+    {
+        constexpr int kRaceLoads = 200;
+        constexpr const char* kUnknownKey = "zz-race";           // not a registered key: the load migrates to clean
+        juce::MemoryBlock blobM;
+        {
+            const std::unique_ptr<juce::XmlElement> xml = xmlOf(blob);
+            xml->setAttribute("modeId", kUnknownKey);
+            if (juce::XmlElement* ui = xml->getChildByName("UI"))
+                ui->setAttribute("scTab", "sidechain");
+            blobM = blobOf(*xml);
+        }
+        // A notice some load published: A's (nothing to report) or M's (migrated from kUnknownKey to clean).
+        const auto consistent = [&](const fcmp::StateNotice& n) {
+            const bool plain = !n.modeMigrated && n.fromKey[0] == '\0' && n.toKey[0] == '\0';
+            const bool migrated = n.modeMigrated && std::strcmp(n.fromKey, kUnknownKey) == 0
+                               && std::strcmp(n.toKey, "clean") == 0;
+            return !n.newerSession && !n.modeRevised && (plain || migrated || n.serial == 0u);
+        };
+
+        auto r = nonFresh(*other, 100);
+        const std::uint32_t serial0 = r->stateNotice().serial;
+        std::atomic<bool> loading{ true };
+        std::atomic<std::int64_t> saves{ 0 }, badSaves{ 0 };
+        std::thread host([&] {
+            for (int i = 0; i < kRaceLoads; ++i)
+                load(*r, i % 2 == 0 ? blobM : blob);
+            loading.store(false, std::memory_order_release);
+        });
+        std::thread saver([&] {
+            while (loading.load(std::memory_order_acquire) || saves.load(std::memory_order_relaxed) == 0)
+            {
+                const std::unique_ptr<juce::XmlElement> xml = xmlOf(save(*r));
+                const juce::XmlElement* ui = xml != nullptr ? xml->getChildByName("UI") : nullptr;
+                const bool ok = xml != nullptr && xml->hasTagName("PARAMS") && ui != nullptr
+                             && (ui->getStringAttribute("charExpanded") == "0"
+                                 || ui->getStringAttribute("charExpanded") == "1")
+                             && (ui->getStringAttribute("scTab") == "sidechain"
+                                 || ui->getStringAttribute("scTab") == "colour");
+                badSaves.fetch_add(ok ? 0 : 1, std::memory_order_relaxed);
+                saves.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        std::int64_t reads = 0, torn = 0, backwards = 0;
+        std::uint32_t last = serial0;
+        while (loading.load(std::memory_order_acquire))
+        {
+            const fcmp::StateNotice n = r->stateNotice();
+            torn += consistent(n) ? 0 : 1;
+            backwards += n.serial < last ? 1 : 0;
+            last = n.serial;
+            fcmp::UiState& ui = r->uiState();                    // the editor: read, then a tab click now and then
+            if (++reads % 7 == 0)
+                ui.scTab = ui.scTab == fcmp::ScTab::colour ? fcmp::ScTab::sidechain : fcmp::ScTab::colour;
+        }
+        host.join();
+        saver.join();
+        std::thread lastLoad([&] { load(*r, blob); });           // one more load, off this thread, with A's UI
+        lastLoad.join();
+        const fcmp::UiState& ui = r->uiState();
+        const fcmp::StateNotice n = r->stateNotice();
+        P.eq("state.race.notice.torn", torn, 0);
+        P.eq("state.race.notice.backwards", backwards, 0);
+        P.eq("state.race.save.bad", badSaves.load(), 0);
+        P.eq("state.race.ui.final", ui.charExpanded == uiA.charExpanded && ui.scTab == uiA.scTab ? 1 : 0, 1);
+        P.eq("state.race.notice.final", (n.serial == serial0 + kRaceLoads + 1u ? 0 : 1) + (n.modeMigrated ? 1 : 0)
+                                            + (n.fromKey[0] != '\0' ? 1 : 0) + (n.toKey[0] != '\0' ? 1 : 0), 0);
+        std::printf("NOTE     state.race: %d loads, %lld saves and %lld editor reads overlapped\n", kRaceLoads + 1,
+                    static_cast<long long>(saves.load()), static_cast<long long>(reads));
     }
 
     // ---- one batch, the hooks ----------------------------------------------------------------------------------------

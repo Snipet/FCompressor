@@ -186,6 +186,15 @@ deviation of M3; −5.1 dB on that row, no golden moved).
 - **Hand-over into Opto 2A** from another Mode starts with the slow part charged (s = the carried GR): the GR comes down
   at the memory's pace (`dsp.switch`'s over-compression allowance covers it).
 
+## Cost
+
+`ctBudgetNsPerSample` 60 (S13 H1b, from measurement with the editor open; was 50). With the editor attached the FB
+kernel solves the static FB curve for `tgtDb` at every sample (`FeedbackZdf`'s Newton: the curve has no closed-form
+root), which was +53…+59 ns/sample/ch. S13 H1b cut it to +15 without changing a bit: the solve stops at a Newton fixed
+point, and the engine reuses the last solve while OptoSense's held level and the settled controls repeat. Measured at
+48 kHz: STD 40.0 / 55.0 ns/sample/ch detached / attached (was 46.1 / 105.2), HQ 61.4 / 77.0 against 90
+([budgets.md](budgets.md)).
+
 ## Revision history
 
 | Revision | Sprint | Change |

@@ -22,6 +22,9 @@
 // 5 us-250 ms, knee 0-24 dB, up to inf:1), the worst error against 200-step bisection is 3 dB after two steps, 0.06 dB
 // after four, 5e-4 dB after five and 5e-6 dB (float precision) after six, which dsp.fbsolve holds to 1e-5 dB. The
 // derivative is G::slope when G provides one (QuadKnee does), else a central difference over +-kSlopeStepDb.
+// S13 H1b: the loop stops early once every lane sits on a Newton fixed point (fixedPoint(), below), where the remaining
+// steps provably return the same bits, so the result is still the kNewtonSteps result, at a lower cost (the static FB
+// target, FbAffine{0, 1}, is an FB kernel's per-sample telemetry, ControlIo::tgtDb).
 // NaN or inf in x gives NaN (the poison check sees it, 01 §5.8).
 //
 // FbAffine::base (S10 interface revision, X10; Stage.h): the solve runs in the frame of base, on the increment
@@ -40,7 +43,9 @@
 #include "fcdsp/engine/Stage.h"
 #include "fcdsp/engine/stages/gain/QuadKnee.h"
 #include "fcdsp/params/EngineParams.h"
+#include <bit>
 #include <concepts>
+#include <cstdint>
 
 namespace fcdsp::stage {
 
@@ -122,9 +127,29 @@ struct FeedbackZdf {
             const simd::f32x4 df = simd::fma(one, a.B, slopeFb(c, y, fb));    // F'(r) = 1 + B r^_fb'(y) >= 1
             const simd::f32x4 next = simd::sub(r, simd::div(f, df));
             const simd::m32x4 inside = simd::band(simd::ge(next, lo), simd::ge(hi, next));   // false for NaN
+            if (fixedPoint(inside, next, r))
+                break;                                                         // every later step returns r (below)
             r = simd::sel(inside, next, simd::mul(half, simd::add(lo, hi)));
         }
         return simd::fma(r, x, zero);                                          // + x*0: poison stays poison
+    }
+
+    // S13 H1b (lead revision 5c): the early exit of solveFb, the same bits as the fixed kNewtonSteps. When every lane's
+    // Newton candidate lies in its bracket and IS r (bit for bit), the step keeps r, and every later step recomputes
+    // the same F(r), F'(r) and candidate r, re-narrows the bracket to r on the same side (so r stays inside it) and
+    // keeps r again: the remaining steps cannot change the result, which depends on r alone. A lane that took the
+    // bisection branch, moved, or holds NaN keeps iterating, so all 4 lanes (aux lanes included) must be at their fixed
+    // point.
+    static bool fixedPoint(simd::m32x4 inside, simd::f32x4 next, simd::f32x4 r) noexcept FCDSP_NONBLOCKING
+    {
+        alignas(16) float in[4], nx[4], rr[4];
+        simd::store(in, simd::sel(inside, simd::set1(1.0f), simd::set1(0.0f)));
+        simd::store(nx, next);
+        simd::store(rr, r);
+        for (int k = 0; k < 4; ++k)
+            if (in[k] == 0.0f || std::bit_cast<uint32_t>(nx[k]) != std::bit_cast<uint32_t>(rr[k]))
+                return false;
+        return true;
     }
 };
 

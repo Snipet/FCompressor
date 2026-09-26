@@ -93,7 +93,8 @@ namespace fcmp::ui
         // only the newest (partial) one grows; "now" (entry `head`) is the plot's right edge and the strip is offset by
         // the partial column's phase (the smooth scroll). Writes the windows that hold at least one entry, oldest first:
         // at most out.size() (the newest out.size() − 1 complete columns and the partial one; HistoryPlot passes 256).
-        // Returns the count; *pxPerMs, when not null, receives colWidth / W. Same arithmetic as HistoryPlot's, in double.
+        // Returns the count; *pxPerMs, when not null, receives colWidth / W. In double. HistoryPlot and ControlPathPlot
+        // both call it (S13 H1a), so their columns cannot drift apart.
         static int columnWindows(uint64_t head, int spanTenths, int columns, float colWidth, float left, float width,
                                  std::span<ColumnWindow> out, double* pxPerMs = nullptr) noexcept
         {

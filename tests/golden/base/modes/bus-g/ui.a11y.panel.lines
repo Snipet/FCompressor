@@ -1,0 +1,70 @@
+ 5 Mode                     656,14,264,32        value=BUS G help=VCA BUS · FEED-FORWARD · PEAK
+ 7 Display                  40,66,332,54         value=Gain reduction, no signal [ro]
+ 3 Quality                  446,62,98,16         value=Std
+ 4 Eco                      446,62,32,16         unchecked help=Eco: no oversampling, 0 samples latency
+ 4 Std                      482,62,32,16         checked help=Std: 2 times IIR oversampling, 4 samples latency
+ 4 HQ                       518,62,26,16         unchecked help=HQ: 4 times FIR oversampling, 61 samples latency
+ 3 Lookahead budget         446,88,122,16        value=Off
+ 4 Off                      446,88,32,16         checked help=Off: no lookahead, no added latency
+ 4 5 ms                     482,88,38,16         unchecked help=5 ms: up to 5 ms of lookahead, adds 5 ms of latency
+ 4 20 ms                    524,88,44,16         unchecked help=20 ms: up to 20 ms of lookahead, adds 20 ms of latency
+ 1 DELTA                    588,72,88,36         unchecked
+ 1 BYPASS                   684,72,96,36         unchecked
+ 1 CHARACTERISTICS          788,72,132,36        unchecked
+ 0 THRESHOLD                34,356,124,80        value=0.0
+ 0 RATIO                    162,356,124,80       value=4:1 help=3 steps: 2, 4, 10
+ 0 KNEE                     290,356,124,80       value=6.0 decibels [ro] help=KNEE FOLLOWS RATIO: SOFT AT 2, MEDIUM AT 4, HARD AT 10
+ 0 ATTACK                   418,356,124,80       value=10 MS help=6 steps: .1, .3, 1, 3, 10, 30
+ 0 RELEASE                  546,356,124,80       value=0.3 S help=5 steps: .1, .3, .6, 1.2, AUTO
+ 0 MAKEUP                   674,356,124,80       value=0.0 decibels
+ 0 MIX                      802,356,124,80       value=100 percent
+ 0 RANGE                    34,444,124,66        value=off
+ 0 DETECT                   162,444,124,66       value=PEAK, fixed [ro] [off] help=PEAK DETECTOR, FIXED IN THIS CIRCUIT
+ 1 EXT                      246,445,38,18        unchecked
+ 7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=AUTO IS THE FIFTH RELEASE POSITION
+ 0 DRIVE                    674,444,124,66       value=0.0 decibels
+ 0 VOICE                    802,444,124,66       value=VCA + CONSOLE help=2 steps: VCA, CLEAN
+ 0 SC HPF                   34,516,124,66        value=off
+ 1 LISTEN                   118,517,38,18        unchecked
+ 7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 LINK                     290,516,124,66       value=100 percent
+ 0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
+ 7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 8 History, last 5 seconds  40,140,500,192       [ro] help=Press and hold to read a moment; drag the threshold line to set the threshold
+ 3 GR view                  33,122,88,16         value=History
+ 4 History                  33,122,58,16         checked help=The scrolling gain reduction history
+ 4 VU meter                 95,122,26,16         unchecked help=One needle meter of gain reduction, with VU ballistics
+ 3 History span             418,122,114,16       value=5 seconds
+ 4 2.5 seconds              418,122,32,16        unchecked
+ 4 5 seconds                454,122,18,16        checked
+ 4 10 seconds               476,122,26,16        unchecked
+ 4 20 seconds               506,122,26,16        unchecked
+ 8 Transfer curve: threshold −18.0 dB, ratio 4:1, knee 6 dB 556,140,192,192      [ro]
+ 3 Meter scale              618,122,116,16       value=48 decibels
+ 4 12 decibels              618,122,26,16        unchecked
+ 4 24 decibels              648,122,26,16        unchecked
+ 4 48 decibels              678,122,26,16        checked
+ 4 72 decibels              708,122,26,16        unchecked
+ 9 Input left               783,140,6,192        value=– [ro]
+ 9 Input right              791,140,6,192        value=– [ro]
+ 9 Gain reduction           837,140,10,192       value=– [ro]
+ 9 Output left              887,140,6,192        value=– [ro]
+ 9 Output right             895,140,6,192        value=– [ro]
+ 2 Reset meters             764,122,156,16       help=Resets the peak holds and the maxima since the last reset
+ 2 Previous preset          228,14,24,32
+ 5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
+ 2 Next preset              528,14,24,32
+ 2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 7 Footer                   40,600,554,20        [ro]
+ 3 Zoom                     638,601,140,16       value=ZOOM 100 %
+ 4 ZOOM 100 %               638,601,32,16        checked
+ 4 ZOOM 125 %               674,601,32,16        unchecked
+ 4 ZOOM 150 %               710,601,32,16        unchecked
+ 4 ZOOM 175 %               746,601,32,16        unchecked
+ 3 Theme                    790,601,130,16       value=Graphite theme
+ 4 Graphite theme           790,601,72,16        checked
+ 4 Paper theme              866,601,54,16        unchecked

@@ -31,6 +31,11 @@
 //   rate.hover_ends            ... for layout::live::kActiveS; 0.2 s after that the panel is idle again
 //   chars.rest                 on chars.sidechain at the end, READOUTS DET reads "−∞", TARGET and APPLIED "0.0", PHASE
 //                              "IDLE" (the frame at rest), and no row reads "–" but an n/a S2 GR
+//   hidden_gap.<plot>.*        (S13 H1a) the band's HISTORY and CONTROL PATH: 1 s of audio, then the other screen for
+//                              1.5 s without a frame and 1 s of audio again, then back: the plot draws the same GAP runs
+//                              (±1 px) as the same plot left in view all along (.same), which draws at least one
+//                              (.reference); the stop happened while it was hidden, and is still a gap
+//                              (HistoryPlot::keepTime)
 //
 // Pictures (not a test): probe-own flags after "--": -- --png-dir <dir> writes <dir>/stale-<key>-live.png (the last
 // live frame), <dir>/stale-<key>-<ms>.png at 250, 500, 750, 1000, 1500 and 2000 ms after it (the stopped transport),
@@ -486,6 +491,93 @@ namespace
         P.eq("chars.rest", b(restOk && dashOk), 1);
         png(P, host, dir, "stale-" + key + "-chars");
     }
+
+    // ---- a stop that starts and ends while the plot is hidden (S13 H1a, UF1a follow-up) ---------------------------------
+
+    struct GapRun
+    {
+        float x0 = 0.0f, x1 = 0.0f;
+    };
+
+    // The GAP runs drawn inside `plot` (its dotted floor line: one primitive per dot, merged while < 4 px apart).
+    std::vector<GapRun> gapRuns(const funkgui::PrimList& pl, const funkgui::Rect& plot)
+    {
+        std::vector<GapRun> runs;
+        for (const funkgui::Prim* p : tagged(pl, ui::tag::gap))
+        {
+            const float cx = 0.5f * (p->x0 + p->x1), cy = 0.5f * (p->y0 + p->y1);
+            if (!plot.contains({ cx, cy }))
+                continue;
+            if (!runs.empty() && p->x0 - runs.back().x1 < 4.0f)
+                runs.back().x1 = std::max(runs.back().x1, p->x1);
+            else
+                runs.push_back({ p->x0, p->x1 });
+        }
+        return runs;
+    }
+
+    // HISTORY on the band (hidden on CHARACTERISTICS) and CONTROL PATH (hidden on PANEL): 1 s of audio, then the other
+    // screen is shown for 1.5 s of silence (the host stopped) and 1 s of audio again, then the plot's screen comes
+    // back. Its gaps must be exactly those of the same plot left in view all along.
+    void hiddenGap(Probe& P, const fcdsp::ModeEntry& entry)
+    {
+        const ui::ViewSpec* panelView = ui::findView("panel");
+        const ui::ViewSpec* charsView = ui::findView("chars.sidechain");
+        if (panelView == nullptr || charsView == nullptr)
+        {
+            P.harnessError("ui.live_stale: no panel or chars.sidechain view");
+            return;
+        }
+        for (const bool band : { true, false })
+        {
+            const ui::ViewSpec& home = band ? *panelView : *charsView;
+            const ui::ViewSpec& away = band ? *charsView : *panelView;
+            const funkgui::Rect plot = band ? L::kBandHistory.plot : L::kControlPath.plot;
+            std::array<std::vector<GapRun>, 2> runs;               // [0]: in view all along, [1]: hidden in between
+            for (int hide = 0; hide < 2; ++hide)
+            {
+                FakeFacade facade(entry.desc->key);
+                ui::Panel panel(facade, kOpts);
+                funkgui::HeadlessHost host(panel, 0, 2.0f);
+                panel.setView(home, true);
+                host.settle(600, kDt);
+                const auto slot0 = static_cast<uint8_t>(panel.context().frame.res.view.slot);
+                Script s{ facade, FakeFacade::quietFrame(slot0, panel.context().frame.res.eng), slot0, 0.0, {}, 0.0f,
+                          0.0f };
+                int k = 0;
+                for (; k < 60; ++k)
+                {
+                    s.frame(k);
+                    host.tick(1, kDt);
+                }
+                if (hide == 1)
+                    panel.setView(away, true);
+                host.tick(90, kDt);                                // 1.5 s without a frame
+                for (int i = 0; i < 60; ++i, ++k)
+                {
+                    s.frame(k);
+                    host.tick(1, kDt);
+                }
+                if (hide == 1)
+                    panel.setView(home, true);
+                host.tick(1, kDt);
+                runs[static_cast<std::size_t>(hide)] = gapRuns(host.draw(), plot);
+            }
+            bool same = runs[0].size() == runs[1].size();
+            for (std::size_t i = 0; same && i < runs[0].size(); ++i)
+                same = std::fabs(runs[0][i].x0 - runs[1][i].x0) <= 1.0f
+                    && std::fabs(runs[0][i].x1 - runs[1][i].x1) <= 1.0f;
+            const std::string k = std::string("hidden_gap.") + (band ? "history" : "control_path");
+            std::printf("NOTE     %s: %zu run(s) in view all along, %zu hidden in between\n", k.c_str(), runs[0].size(),
+                        runs[1].size());
+            for (std::size_t h = 0; h < 2; ++h)
+                for (const GapRun& g : runs[h])
+                    std::printf("NOTE       %s x %.1f–%.1f\n", h == 0 ? "shown " : "hidden", static_cast<double>(g.x0),
+                                static_cast<double>(g.x1));
+            P.ge(k + ".reference", static_cast<double>(runs[0].size()), 1.0);
+            P.eq(k + ".same", b(same), 1);
+        }
+    }
 }
 
 FCMP_PROBE(ui, live_stale)
@@ -506,5 +598,6 @@ FCMP_PROBE(ui, live_stale)
     funkgui::UiPreferences::get().setInt("historySpanTenths", L::kDefaultSpanTenths);
     funkgui::UiPreferences::get().setInt("meterScaleDb", L::kDefaultScaleDb);
     run(P, *entry);
+    hiddenGap(P, *entry);
     return P.finish();
 }

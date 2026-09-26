@@ -65,6 +65,14 @@
 //   shown are listed; a11yRevision() bumps when the list, the filter, the scroll or the edit changes.
 // - Keys the browser does not use (Tab; Esc when there is nothing to cancel) are the Panel's; Cmd and Ctrl chords go to
 //   the host.
+// - Keyboard focus (S13 H1a): while the browser is open it is the Panel's whole Tab order (Panel::composeFocusOrder):
+//   the SHOW filters (one stop), the rows shown, then the action cells that are available; while a name is typed, the
+//   category (save as) and the edit's two cells. Opened from the keyboard, it takes the focus onto the selected row;
+//   the keys that move the selection (arrows, type-ahead) move the focus with it, and Tab onto a row selects it (as an a11y focus does,
+//   without loading). On the filters, ← → ↑ ↓ Home End choose the filter; on an action cell, Return and Space press it;
+//   while a name is typed, Return presses the focused CANCEL or category (the typing keeps every other key). A focused
+//   stop that goes away (an edit starts or ends, a row scrolls out or is deleted) hands the focus to the selection. The
+//   ring is drawn on the focused stop. Closing gives the focus back to its opener (Panel).
 //
 // The members below the FZ4 declarations are additions (SubView overrides with defaults, the actions shared by pointer,
 // keyboard, menus, drops and a11y, and private state; P3c: kSaveLocal and SAVE's private state); no FZ4 declaration
@@ -72,6 +80,8 @@
 #pragma once
 
 #include "editor/SubView.h"
+
+#include "FcmpProduct.h"
 
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/core/Geometry.h>
@@ -129,9 +139,9 @@ namespace fcmp::ui
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
 
-        // A preset file's extension: FunkPresets' ProductConfig of the processor (P3: ".fcmppreset"). The editor never
-        // includes plugin/factory, so it is spelled here too.
-        static constexpr char kFileExtension[] = ".fcmppreset";
+        // A preset file's extension: FunkPresets' ProductConfig of the processor (".fcmppreset"), taken from the
+        // generated FcmpProduct.h, the product's one source of constants (S13 H1a; it was a literal here).
+        static constexpr const auto& kFileExtension = product::kPresetExtension;
 
         // Files dropped on the panel (Panel::filesInterest / filesDropped): interested when any path ends in
         // kFileExtension (ASCII case-insensitive); a drop imports those and ignores the rest (see above).
@@ -310,5 +320,14 @@ namespace fcmp::ui
         std::unique_ptr<funkgui::MenuLook> menuLook_;
         std::unique_ptr<juce::FileChooser> chooser_;
         std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // callbacks check it: this view still exists
+
+        // ---- S13 H1a additions: the browser in the Panel's Tab order (see "Keyboard focus" above) -------------------
+        static uint32_t localOf(Action) noexcept;                // an action cell's a11y local
+        uint32_t focusLocal() const noexcept;                    // the shown Panel focus's local in this browser; 0
+        void takeFocus(uint32_t local);                          // the Panel focus onto one of this browser's stops
+        void followFocus();                                      // Tab moved the Panel focus onto a row: select it
+        void rehomeFocus();                                      // the focused stop went away: onto the selection
+        uint32_t rowLocal(int entry) const noexcept;             // kRowLocal0 + its PresetAccess index; 0: none
+        uint32_t focusSeen_ = 0;                                 // the Panel focus as this browser last saw it
     };
 }

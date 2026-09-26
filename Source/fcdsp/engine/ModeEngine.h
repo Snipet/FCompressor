@@ -77,6 +77,9 @@ class ModeEngine final : public IEngine {
     Smoother4 lvl_{}, lvl2_{};        // {thrDb, slope, min(rangeDb,60), -}, {s2ThrDb, kneeDb, -, -}: -> LevelCtl above
     LinearRamp offAmt_{}, s2On_{};    // GR OFF and stage 2 on/off: 20 ms ramps, never a step (K2 #4, #20)
     EngineParams p_{}; ControlTicker tick_{}; StageCtx ctx_{};
+    // S13 H1b (lead revision 5c; additive, for the lead's approval): the FB kernel's last static target (tgtDb) and the
+    // x and LevelCtl it was solved for. A sample whose x and LevelCtl are the same bits reuses it ("Bodies": tgtDb).
+    simd::f32x4 memoX_{}, memoTgt_{}; LevelCtl memoL_{}; bool memoValid_ = false;
 
 public:
     static IEngine* construct(void* arena) noexcept FCDSP_NONBLOCKING;   // placement-new; RT-safe
@@ -167,6 +170,12 @@ public:
 //               has rhatFb (HasRhatFb), the FB step commits with rhat = G::rhatFb(gc_, x - r, l) at the linked r;
 //               otherwise commitFb(c, s, r) as before.
 //   - FbAffine::base reaches the computer unchanged through the solve lambda: G::solveFb honours it (Stage.h).
+//   S13 H1b (lead revision 5c; an additive private member, for the lead's approval):
+//   - tgtDb of the FB kernel is G::solveFb(gc_, x, l, FbAffine{0, 1}) at every sample, a pure function of gc_, x and l.
+//               The engine keeps the last one with its x and l (memoX_, memoL_, memoTgt_) and reuses it while both are
+//               the same bits (a held detector under settled controls: Opto 2A's OptoSense holds 5 ms); every design of
+//               gc_ (a control tick, snapParams) drops it. So tgtDb is the same bits as before at a fraction of the
+//               cost (the solve is Newton's; it was most of Opto 2A's attached cost).
 
 namespace detail::modeengine {
 
@@ -243,6 +252,23 @@ inline bool finite(float v) noexcept FCDSP_NONBLOCKING
 inline bool finite(simd::f32x4 v) noexcept FCDSP_NONBLOCKING
 {
     return finite(simd::lane<0>(v)) && finite(simd::lane<1>(v)) && finite(simd::lane<2>(v)) && finite(simd::lane<3>(v));
+}
+
+// Bit-for-bit equality (the static target's memo, "Bodies": tgtDb): -0 differs from +0, and NaN equals only its own
+// bits.
+inline bool sameBits(float a, float b) noexcept FCDSP_NONBLOCKING
+{
+    return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b);
+}
+inline bool sameBits(simd::f32x4 a, simd::f32x4 b) noexcept FCDSP_NONBLOCKING
+{
+    return sameBits(simd::lane<0>(a), simd::lane<0>(b)) && sameBits(simd::lane<1>(a), simd::lane<1>(b))
+        && sameBits(simd::lane<2>(a), simd::lane<2>(b)) && sameBits(simd::lane<3>(a), simd::lane<3>(b));
+}
+inline bool sameBits(const LevelCtl& a, const LevelCtl& b) noexcept FCDSP_NONBLOCKING
+{
+    return sameBits(a.thrDb, b.thrDb) && sameBits(a.slope, b.slope) && sameBits(a.kneeDb, b.kneeDb)
+        && sameBits(a.s2ThrDb, b.s2ThrDb);
 }
 
 // A nominal context for the rate-independent analysis designs (the gain computer, the colour transfer).
@@ -337,6 +363,7 @@ void ModeEngine<M>::snapParams() noexcept FCDSP_NONBLOCKING
     M::Ballistics::design(bc_, p_, ctx_);
     M::Stage2::design(s2c_, p_, ctx_);
     M::Colour::design(cc_, p_, ctx_);
+    memoValid_ = false;                           // gc_ was re-designed
 }
 
 template <class M>
@@ -401,6 +428,7 @@ void ModeEngine<M>::control(const ControlIo& io) noexcept FCDSP_NONBLOCKING
                 B::design(bc_, p_, ctx_);
                 S2::design(s2c_, p_, ctx_);
                 C::design(cc_, p_, ctx_);
+                memoValid_ = false;                   // gc_ was re-designed: the static target's memo is stale
             }
             const simd::f32x4 a = lvl_.tick(), b = lvl2_.tick();
             const LevelCtl l{ me::bcast<0>(a), me::bcast<1>(a), me::bcast<1>(b), me::bcast<0>(b) };
@@ -420,8 +448,18 @@ void ModeEngine<M>::control(const ControlIo& io) noexcept FCDSP_NONBLOCKING
                     B::commitFb(bc_, bal_, r1, G::rhatFb(gc_, simd::sub(x, r1), l));   // S10: r^_fb at the linked r
                 else
                     B::commitFb(bc_, bal_, r1);
-                tgt = io.tgtDb != nullptr ? G::solveFb(gc_, x, l, FbAffine{ simd::set1(0.0f), simd::set1(1.0f) })
-                                          : r1;
+                if (io.tgtDb == nullptr)
+                    tgt = r1;
+                else if (memoValid_ && me::sameBits(x, memoX_) && me::sameBits(l, memoL_))
+                    tgt = memoTgt_;                   // the same solve's same bits ("Bodies": tgtDb)
+                else
+                {
+                    tgt = G::solveFb(gc_, x, l, FbAffine{ simd::set1(0.0f), simd::set1(1.0f) });
+                    memoX_ = x;
+                    memoL_ = l;
+                    memoTgt_ = tgt;
+                    memoValid_ = true;
+                }
             }
             else
             {

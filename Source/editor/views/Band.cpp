@@ -43,6 +43,8 @@ namespace fcmp::ui
             p->tick(dt);
     }
 
+    void Band::keepTime(float dt) { history_.keepTime(dt); }
+
     void Band::draw(funkgui::Canvas& c, const funkgui::Theme& th) const
     {
         for (const SubView* p : plots_)

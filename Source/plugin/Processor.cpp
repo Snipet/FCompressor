@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <thread>
 
 // The plugin wrappers' factory (declared by JUCE only inside juce_audio_plugin_client).
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
@@ -40,6 +41,29 @@ namespace fcmp
         }
         int modeSlotOf(float plain) noexcept { return indexOf(plain, fcdsp::kModeCapacity - 1); }
         bool isOn(float plain) noexcept { return plain >= 0.5f; }
+
+        // The UI handoff word (Processor.h): b0 charExpanded, b1 scTab == colour, b8-31 the load generation (it wraps;
+        // only equality is used).
+        constexpr std::uint32_t kUiExpanded = 1u, kUiColour = 2u;
+        constexpr int kUiGenerationShift = 8;
+
+        std::uint32_t packUi(const UiState& ui, std::uint32_t generation) noexcept
+        {
+            return (ui.charExpanded ? kUiExpanded : 0u) | (ui.scTab == ScTab::colour ? kUiColour : 0u)
+                 | generation << kUiGenerationShift;
+        }
+
+        UiState unpackUi(std::uint32_t word) noexcept
+        {
+            UiState ui;
+            ui.charExpanded = (word & kUiExpanded) != 0u;
+            ui.scTab = (word & kUiColour) != 0u ? ScTab::colour : ScTab::sidechain;
+            return ui;
+        }
+
+        std::uint32_t generationOf(std::uint32_t word) noexcept { return word >> kUiGenerationShift; }
+
+        bool onMessageThread() noexcept { return juce::MessageManager::existsAndIsCurrentThread(); }
     } // namespace
 
     // ==== construction =============================================================================================
@@ -49,7 +73,7 @@ namespace fcmp
                                    .withInput("Input", juce::AudioChannelSet::stereo(), true)
                                    .withOutput("Output", juce::AudioChannelSet::stereo(), true)
                                    .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)),
-          apvts_(*this, nullptr, "PARAMS", makeParameterLayout(*this))       // no UndoManager: undo is the host's (K2 #7)
+          apvts_(*this, nullptr, kStateType, makeParameterLayout(*this))      // no UndoManager: undo is the host's (K2 #7)
     {
         for (std::size_t i = 0; i < fcdsp::kNumParams; ++i)
         {
@@ -108,6 +132,12 @@ namespace fcmp
         return std::isfinite(tail) && tail > 0.0 ? tail : 0.0;
     }
 
+    // Main 1->1, 1->2, 2->2; the side chain mono or stereo, or disabled except under an Audio Unit wrapper (S13 H1b, lead
+    // revision 5b). An AU has no disabled buses: its wrapper enables every bus at construction, the AU SDK refuses a
+    // 0-channel stream format on any element, and JUCE's AU wrapper lists every layout this accepts as the element's
+    // kAudioUnitProperty_SupportedChannelLayoutTags, where a disabled side chain appeared as a 0-channel
+    // DiscreteInOrder tag (0x930000) that no host can set. The VST3 and Standalone layouts are unchanged (a VST3 host
+    // deactivates the side-chain bus; the Standalone disables it).
     bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const
     {
         const auto mono = juce::AudioChannelSet::mono();
@@ -120,7 +150,9 @@ namespace fcmp
         if (layouts.inputBuses.size() == 2)
         {
             const auto sidechain = layouts.getChannelSet(true, 1);
-            if (!(sidechain.isDisabled() || sidechain == mono || sidechain == stereo))
+            const bool audioUnit = wrapperType == wrapperType_AudioUnit || wrapperType == wrapperType_AudioUnitv3;
+            const bool disabledOk = sidechain.isDisabled() && !audioUnit;
+            if (!(disabledOk || sidechain == mono || sidechain == stereo))
                 return false;
         }
         return true;
@@ -145,14 +177,41 @@ namespace fcmp
 
     // ==== state (State.h: P1's APVTS-only body, replaced by P2) ======================================================
 
+    // Any thread (Processor.h, "The per-instance UI state and the state notice"). A save on the message thread first
+    // syncs, so it holds exactly what the editor last wrote; elsewhere it reads the handoff word. saveState does not
+    // read the notice (StateContext still needs one).
     void Processor::getStateInformation(juce::MemoryBlock& destData)
     {
-        saveState(StateContext{ apvts_, *this, ui_, notice_, stateHooks_ }, destData);
+        UiState ui;
+        if (onMessageThread())
+        {
+            syncUi();
+            ui = ui_;
+        }
+        else
+            ui = unpackUi(uiShared_.load(std::memory_order_acquire));
+        StateNotice unused{};
+        saveState(StateContext{ apvts_, *this, ui, unused, stateHooks_ }, destData);
     }
 
+    // Any thread. loadState fills a local UiState and a local notice (serial 0 + 1 marks an accepted load; a blob that is
+    // not <PARAMS> leaves both untouched and changes nothing); the processor then hands the UiState over, numbers the
+    // notice and publishes it.
     void Processor::setStateInformation(const void* data, int sizeInBytes)
     {
-        loadState(StateContext{ apvts_, *this, ui_, notice_, stateHooks_ }, data, sizeInBytes);
+        UiState ui = unpackUi(uiShared_.load(std::memory_order_acquire));
+        StateNotice notice{};
+        loadState(StateContext{ apvts_, *this, ui, notice, stateHooks_ }, data, sizeInBytes);
+        if (notice.serial == 0u)
+            return;                                               // ignored (01 §9.1 load step 1): nothing changed
+        publishLoadedUi(ui);
+        {
+            const std::lock_guard<std::mutex> lock(noticeWrite_); // publishers only: Seqlock has one writer at a time
+            notice.serial = ++noticeSerial_;
+            notice_.publish(notice);
+        }
+        if (onMessageThread())
+            syncUi();                                             // the editor's copy follows at once
     }
 
     // ==== parameters ===============================================================================================
@@ -261,9 +320,47 @@ namespace fcmp
     bool Processor::readUiFrame(fcdsp::UiFrame& frame) const { return engine_.readUiFrame(frame); }
     const fcdsp::HistoryRing& Processor::history() const { return engine_.history(); }
     void Processor::setUiAttached(bool attached) { engine_.setUiAttached(attached); }
-    UiState& Processor::uiState() { return ui_; }
-    StateNotice Processor::stateNotice() const { return notice_; }
+    UiState& Processor::uiState()
+    {
+        syncUi();
+        return ui_;
+    }
+
+    StateNotice Processor::stateNotice() const
+    {
+        StateNotice n{};
+        while (!notice_.read(n))                                  // a publish in progress: 64 bytes, then it is done
+            std::this_thread::yield();
+        return n;
+    }
+
     PresetAccess& Processor::presets() { return *presets_; }
+
+    // Message thread. A generation the editor's copy has not seen is a load: adopt it. Otherwise mirror ui_ into the word
+    // for the other threads' saves; a failed exchange means a load published meanwhile, which the next sync adopts.
+    void Processor::syncUi() noexcept
+    {
+        std::uint32_t word = uiShared_.load(std::memory_order_acquire);
+        if (generationOf(word) != uiGeneration_)
+        {
+            ui_ = unpackUi(word);
+            uiGeneration_ = generationOf(word);
+            return;
+        }
+        const std::uint32_t mine = packUi(ui_, uiGeneration_);
+        if (mine != word)
+            (void) uiShared_.compare_exchange_strong(word, mine, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+
+    // Any thread: the loaded UiState with the next generation (a load always wins over an unsynced editor write).
+    void Processor::publishLoadedUi(const UiState& ui) noexcept
+    {
+        std::uint32_t word = uiShared_.load(std::memory_order_relaxed);
+        while (!uiShared_.compare_exchange_weak(word, packUi(ui, generationOf(word) + 1u), std::memory_order_acq_rel,
+                                                std::memory_order_relaxed))
+        {
+        }
+    }
 
     // ==== setup: prepareToPlay and the configured engine =============================================================
 
@@ -449,6 +546,9 @@ namespace fcmp
             ++announcements_;
             p.updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withParameterInfoChanged(true));
         }
+
+        // 3. the UI handoff (Processor.h): a load's UiState reaches the editor's copy, the editor's reaches the word
+        p.syncUi();
     }
 } // namespace fcmp
 

@@ -1,2 +1,10 @@
 # modes-ever.tsv: every Mode slot/key ever released (01 §8.3, 03 §1.1). Append-only, write-once rows; retired Modes stay listed. Lead-owned. Lines starting with # are comments.
 # slot	key
+0	clean
+1	bus-g
+2	fet-76
+3	opto-2a
+4	mu-67
+5	diode-609
+6	bus-25
+7	brickwall
