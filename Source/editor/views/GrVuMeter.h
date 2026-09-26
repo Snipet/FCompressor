@@ -29,6 +29,13 @@
 // the store, the timeline and the dt sequence: deterministic under a fixed dt (UI_FIXED_DT, HeadlessHost). The Panel
 // runs at full rate while the drawn needle has not reached the settled one (wantsFullRate).
 //
+// Faces (ADR-76, v1.1): the meter wears the face of the Mode it shows (views/MeterFaces.h): the panel face above for
+// Clean (and any Mode without its own), a hardware-class plate for the others (fixed colours, a scale of their own, the
+// needle's base under a shroud), or an LED ladder for Brickwall. The state integrated is the needle's position on the
+// face's scale (0 left, 1 right; the panel face's is affine in the deflection d, so everything above holds as it was);
+// the LED ladder's is the GR in dB, with an instant attack and a kLedFallDbPerS fall. A Mode change puts the new face
+// at rest.
+//
 // HistoryPlot ticks it every frame the band is ticked, whichever view is shown, so switching to VU shows the needle
 // where it is. A meter ticked after a pause (the other screen was shown) integrates at most the last
 // layout::vu::kCatchUpMs of the timeline.
@@ -36,6 +43,7 @@
 
 #include "editor/Layout.h"
 #include "editor/SubView.h"
+#include "editor/views/MeterFaces.h"
 #include "editor/views/Telemetry.h"
 
 #include "fcdsp/telemetry/HistoryRing.h"
@@ -70,10 +78,12 @@ namespace fcmp::ui
         static double readingDb(double deflection) noexcept;    // its inverse (−inf at 0)
         static double angleDeg(double deflection) noexcept;     // from vertical, + to the right; linear in d
         static funkgui::Point onScale(double angleDeg, float radius) noexcept;   // a point of the face at that angle
+        static double angleOfPos(double x) noexcept;            // ADR-76: −E + 2E·x, x the face's scale position
 
-        double needle() const noexcept { return pos_; }         // the needle's deflection at the head
+        double needle() const noexcept { return pos_; }         // the needle's scale position at the head (ADR-76)
         double shown() const noexcept { return shown_; }        // ... and as drawn (at the display clock)
         bool   settled() const noexcept { return settled_; }
+        const MeterFace& face() const noexcept { return *face_; }
 
     private:
         static constexpr int kTrack = 512;                      // needle states kept, one per ms (> kMaxLagMs + 2)
@@ -82,9 +92,16 @@ namespace fcmp::ui
         void   advance(const fcdsp::HistoryColumn*, int64_t steps) noexcept;   // nullptr: rest; moves cursor_
         void   restart(uint64_t at) noexcept;                   // the kept states begin at `at` (the needle as it is)
         double stateAt(double ms) const noexcept;               // the kept state at ms, linear between two
+        double restPos() const noexcept;                        // the face's position at 0 dB GR
+        double inputOf(const fcdsp::HistoryColumn*) const noexcept;   // a column's GR as the face's position
+        void   setFace(const MeterFace&) noexcept;              // a Mode change: the new face, at rest
+        void   drawPanel(funkgui::Canvas&, const funkgui::Theme&) const;
+        void   drawPlate(funkgui::Canvas&, const funkgui::Theme&) const;
+        void   drawLed(funkgui::Canvas&, const funkgui::Theme&) const;
 
         PanelContext&              ctx_;
         const uint32_t             id_;
+        const MeterFace*           face_ = &meterface::kPanel;
         telemetry::HistoryTimeline timeline_;
         uint64_t cursor_ = 0;                                   // the timeline ms the needle has reached
         uint64_t from_ = 0;                                     // the oldest kept state

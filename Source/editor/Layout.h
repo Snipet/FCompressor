@@ -639,5 +639,48 @@ namespace fcmp::ui::layout
         inline constexpr double kShowLagMs = 40.0;
         inline constexpr double kMaxLagMs  = 250.0;
         inline constexpr double kPullS     = 1.0;
+
+        // ---- v1.1 hardware faces (ADR-76; views/MeterFaces.h) ----------------------------------------------------------
+        // An analog plate: a bezel (radius 12) with a window inset 8 (radius 6); the ring plate adds a bright ring
+        // kHwRingInset inside the bezel. The scale is the panel face's arc (pivot, kScaleR, ±kEndDeg); ticks point
+        // inwards from it (long kHwTickLong, short kHwTickShort) and labels sit inside at kHwLabelR. The needle runs
+        // from the pivot to kHwNeedleR and its base hides under a shroud at the window's bottom, as on a real meter.
+        inline constexpr Rect  kHwBezel     { 90.0f, 144.0f, 400.0f, 184.0f };   // centred in the plot (4 px margins)
+        inline constexpr float kHwBezelR    = 12.0f;
+        inline constexpr float kHwEdgeMix   = 0.14f;               // the bezel's 1 px edge: its colour towards white
+        inline constexpr float kHwWindowInset = 8.0f;
+        inline constexpr float kHwWindowR   = 6.0f;
+        inline constexpr float kHwRingInset = 4.0f;
+        inline constexpr float kHwRingW     = 3.0f;
+        inline constexpr float kHwTickLong  = 10.0f;
+        inline constexpr float kHwTickShort = 5.0f;
+        inline constexpr float kHwTickW     = 1.2f;
+        inline constexpr float kHwArcW      = 1.2f;
+        inline constexpr float kHwZoneR     = 146.0f;              // the red zone: a band inside the arc
+        inline constexpr float kHwZoneW     = 4.0f;
+        inline constexpr float kHwLabelR    = 128.0f;
+        inline constexpr float kHwNeedleR   = 154.0f;
+        inline constexpr float kHwNeedleW   = 1.6f;
+        inline constexpr float kHwLegendDy  = 80.0f;               // the legend's cap centre above the pivot
+        inline constexpr float kHwLegend2Dy = 60.0f;               // the small legend's
+        inline constexpr Rect  kHwShroud    { 236.0f, 296.0f, 108.0f, 24.0f };   // top corners rounded 12
+        inline constexpr Point kHwLamp      { 112.0f, 166.0f };    // the Mode colour's lamp (ADR-75), radius 3
+        inline constexpr float kHwLampR     = 3.0f;
+        inline constexpr Rect  kHwGlow      { 176.0f, 200.0f, 228.0f, 60.0f };   // the backlit plate's lamp glow; with
+        inline constexpr float kHwGlowSoft  = 40.0f;               // its softness it stays inside the window
+        inline constexpr float kHwGlowAlpha = 0.55f;
+
+        // The LED ladder: a bezel with a window inset 8, 24 segments of 1 dB (kLedPitch apart, left = 0 dB GR), the
+        // legend over them and the dB labels under them at the segment edges.
+        inline constexpr Rect  kLedBezel    { 100.0f, 184.0f, 380.0f, 104.0f };   // centred in the plot
+        inline constexpr float kLedSegW     = 11.0f;
+        inline constexpr float kLedPitch    = 14.0f;
+        inline constexpr float kLedSegY     = 216.0f;
+        inline constexpr float kLedSegH     = 28.0f;
+        inline constexpr float kLedSegR     = 2.0f;
+        inline constexpr float kLedLeft     = 290.0f - 0.5f * (24.0f * 14.0f - 3.0f);   // 123.5: the ladder centred
+        inline constexpr float kLedLegendY  = 202.0f;              // cap centres
+        inline constexpr float kLedLabelY   = 258.0f;
+        inline constexpr Point kLedLamp     { 118.0f, 202.0f };
     }
 }

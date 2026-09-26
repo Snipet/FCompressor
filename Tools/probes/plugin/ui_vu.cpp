@@ -40,6 +40,16 @@
 //               row changes between HISTORY and VU (rasterised at dpi 2, pixel for pixel), and switching back restores
 //               the whole frame exactly.
 //
+// Faces (ADR-76, v1.1): the meter wears its Mode's face (views/MeterFaces.h). The law rows above are judged against the
+// face's own law, recomputed here from its parameters: vuGain (the panel face's, and the VU hardware faces') or
+// grLinear (x = GR / 20, resting left or right). The tick set and the labels are the face's own; scale.zero_fraction is
+// judged on a vuGain face only. The LED ladder (Brickwall) has no needle: its rows are led.*:
+//   led.segments      24 segments of 1 dB inside the plot, kLedPitch apart; every label (GR 0, 3 … 24) centred on its
+//                     segment edge within 0.5 px; the ladder's box centred in the plot
+//   led.rest          nothing lit before any frame and at 0 dB
+//   led.attack        12 dB of GR lights exactly 12 segments within kShowLagMs + 2 ms of the step (no slew)
+//   led.fall          back to 0 dB, the lit count falls at kLedFallDbPerS (the time to 0 lit: 600 ms ± 25 ms)
+//   led.stale         (ADR-69) the audio stops at 12 dB: nothing lit once the fall has run, no dimming of the plate
 // The probe writes UiPreferences ("grView", the span): it refuses to run without FCMP_PREFS_DIR (CTest sets a sandbox).
 //
 // Review pictures (not a test): `fcmp_probe_plugin ui.vu --mode <key> -- --png-dir <dir>` writes vu-<key>-<theme>-
@@ -53,6 +63,7 @@
 #include "editor/Panel.h"
 #include "editor/SubView.h"
 #include "editor/Tags.h"
+#include "editor/views/MeterFaces.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
@@ -106,14 +117,24 @@ namespace
     void setView(int v) { funkgui::UiPreferences::get().setInt(kViewKey, v); }
     int  prefView() { return funkgui::UiPreferences::get().getInt(kViewKey, -1, -1, 99); }
 
-    // ---- the law, recomputed here (ADR-72) --------------------------------------------------------------------------
+    // ---- the law, recomputed here (ADR-72; ADR-76: the face's own) ---------------------------------------------------
 
     double gain(double db) { return std::pow(10.0, db / 20.0); }
+
+    const ui::MeterFace* gFace = &ui::faceFor("");               // the face of the Mode under test (main)
+
+    bool panelFace() { return gFace->plate == ui::FacePlate::panel; }
+    bool ledFace() { return gFace->law == ui::FaceLaw::led; }
 
     double lawDeg(double db)
     {
         const double e = static_cast<double>(V::kEndDeg);
-        const double lo = gain(static_cast<double>(V::kLowDb)), hi = gain(static_cast<double>(V::kHighDb));
+        if (gFace->law == ui::FaceLaw::grLinear)
+        {
+            const double gr = -db / 20.0;
+            return -e + 2.0 * e * (gFace->restRight ? 1.0 - gr : gr);
+        }
+        const double lo = gain(static_cast<double>(gFace->lowDb)), hi = gain(static_cast<double>(gFace->highDb));
         return -e + 2.0 * e * (gain(db) - lo) / (hi - lo);
     }
 
@@ -178,6 +199,16 @@ namespace
             return std::hypot(x - static_cast<double>(V::kPivot.x), y - static_cast<double>(V::kPivot.y));
         };
         return d(s->x0, s->y0) > d(s->x1, s->y1) ? angleOf(s->x0, s->y0) : angleOf(s->x1, s->y1);
+    }
+
+    // The VU view is shown: a needle, or a hardware plate / LED ladder (METER_FACE) in the plot (ADR-76).
+    bool meterShown(const funkgui::PrimList& pl)
+    {
+        if (needleOf(pl).has_value())
+            return true;
+        return std::any_of(pl.prims.begin(), pl.prims.end(), [](const funkgui::Prim& p) {
+            return p.tag == ui::tag::meterFace && centreIn(p, L::kBandHistory.plot);
+        });
     }
 
     // ---- the rig ----------------------------------------------------------------------------------------------------
@@ -310,7 +341,7 @@ namespace
         Rig r(key);
         {
             const funkgui::PrimList& pl = r.host.draw();
-            P.eq("toggle.history", b(prefView() == V::kHistory && !needleOf(pl) && hasHistAxis(pl)), 1);
+            P.eq("toggle.history", b(prefView() == V::kHistory && !meterShown(pl) && hasHistAxis(pl)), 1);
         }
         const std::vector<funkgui::A11yItem> items0 = r.host.accessibility();
         const uint32_t rev0 = r.panel.a11yRevision();
@@ -349,7 +380,7 @@ namespace
         r.host.move(700.0f, 500.0f);
         r.host.tick(1, kDt);
         const funkgui::PrimList& vl = r.host.draw();
-        P.eq("toggle.click_vu", b(prefView() == V::kVu && needleOf(vl).has_value()), 1);
+        P.eq("toggle.click_vu", b(prefView() == V::kVu && meterShown(vl)), 1);
         P.eq("toggle.click_vu.no_param", b(r.facade.writes().empty() && r.facade.batches() == 0
                                            && r.host.log.batches == batches0), 1);
         {
@@ -405,7 +436,7 @@ namespace
         // HISTORY again by a click at x 34 (left of the band region x 40).
         r.host.click(h.x + 1.0f, h.centreY());
         r.host.tick(1, kDt);
-        P.eq("toggle.click_history_left_edge", b(prefView() == V::kHistory && !needleOf(r.host.draw())), 1);
+        P.eq("toggle.click_history_left_edge", b(prefView() == V::kHistory && !meterShown(r.host.draw())), 1);
 
         // Keys on the focused group.
         {
@@ -457,15 +488,32 @@ namespace
                 ticks.push_back(angleOf(0.5 * (s.x0 + s.x1), 0.5 * (s.y0 + s.y1)));
         }
         std::vector<double> want;
-        for (const L::AxisLabel& l : V::kLabels)
-            want.push_back(lawDeg(static_cast<double>(l.value)));
-        for (const float db : V::kOverDb)
-            want.push_back(lawDeg(static_cast<double>(db)));
-        for (const float db : V::kMinorDb)
-            want.push_back(lawDeg(static_cast<double>(db)));
+        struct Label { float db; const char* text; };
+        std::vector<Label> labels;
+        if (panelFace())
+        {
+            for (const L::AxisLabel& l : V::kLabels)
+            {
+                want.push_back(lawDeg(static_cast<double>(l.value)));
+                labels.push_back({ l.value, l.text });
+            }
+            for (const float db : V::kOverDb)
+                want.push_back(lawDeg(static_cast<double>(db)));
+            for (const float db : V::kMinorDb)
+                want.push_back(lawDeg(static_cast<double>(db)));
+        }
+        else
+        {
+            for (const ui::FaceMark& m : gFace->marks)
+            {
+                want.push_back(lawDeg(static_cast<double>(m.readingDb)));
+                if (m.label != nullptr)
+                    labels.push_back({ m.readingDb, m.label });
+            }
+        }
         std::sort(ticks.begin(), ticks.end());
         std::sort(want.begin(), want.end());
-        P.eq("scale.ticks.count", static_cast<int64_t>(ticks.size()), 16);
+        P.eq("scale.ticks.count", static_cast<int64_t>(ticks.size()), static_cast<int64_t>(want.size()));
         double worstTick = ticks.size() == want.size() ? 0.0 : 99.0;
         for (std::size_t i = 0; i < ticks.size() && i < want.size(); ++i)
             worstTick = std::max(worstTick, std::fabs(ticks[i] - want[i]));
@@ -479,7 +527,7 @@ namespace
         std::size_t at = 0;
         double worstLabel = 0.0;
         std::vector<std::array<double, 4>> boxes;
-        for (const L::AxisLabel& l : V::kLabels)
+        for (const Label& l : labels)
         {
             int n = 0;
             for (const char* q = l.text; *q != '\0';)
@@ -504,9 +552,9 @@ namespace
             at += static_cast<std::size_t>(n);
             boxes.push_back({ x0, y0, x1, y1 });
             const double a = angleOf(0.5 * (x0 + x1), 0.5 * (y0 + y1));
-            worstLabel = std::max(worstLabel, std::fabs(a - lawDeg(static_cast<double>(l.value))));
+            worstLabel = std::max(worstLabel, std::fabs(a - lawDeg(static_cast<double>(l.db))));
             std::printf("NOTE     ui.vu: label %-6s at %8.3f deg, law %8.3f deg\n", l.text, a,
-                        lawDeg(static_cast<double>(l.value)));
+                        lawDeg(static_cast<double>(l.db)));
         }
         P.eq("scale.labels.count", static_cast<int64_t>(glyphs.size()), static_cast<int64_t>(at));
         P.le("scale.labels.deg", worstLabel, 0.25);
@@ -521,14 +569,17 @@ namespace
         P.ge("scale.labels.apart_px", closest, 2.0);
 
         P.eq("scale.pivot_centred", b(V::kPivot.x == plot.centreX()), 1);
-        P.le("scale.symmetric_deg", std::fabs(lawDeg(static_cast<double>(V::kLowDb)) + lawDeg(static_cast<double>(V::kHighDb))),
+        P.le("scale.symmetric_deg", std::fabs(lawDeg(static_cast<double>(gFace->lowDb)) + lawDeg(static_cast<double>(gFace->highDb))),
              1e-9);
-        // The needle at rest, as a fraction of full scale (d = 0 .. +3 dB), from the drawn −20 and +3 ticks.
-        const double rest = needleDeg(pl);
-        const double lo = gain(static_cast<double>(V::kLowDb) - static_cast<double>(V::kHighDb));
-        const double tLo = ticks.empty() ? 0.0 : ticks.front(), tHi = ticks.empty() ? 1.0 : ticks.back();
-        const double frac = lo + (rest - tLo) / (tHi - tLo) * (1.0 - lo);
-        P.near("scale.zero_fraction", frac, gain(-3.0), 0.002);
+        // The needle at rest, as a fraction of full scale (d = 0 .. +3 dB), from the drawn −20 and +3 ticks (a VU law).
+        if (gFace->law == ui::FaceLaw::vuGain)
+        {
+            const double rest = needleDeg(pl);
+            const double lo = gain(static_cast<double>(gFace->lowDb) - static_cast<double>(gFace->highDb));
+            const double tLo = ticks.empty() ? 0.0 : ticks.front(), tHi = ticks.empty() ? 1.0 : ticks.back();
+            const double frac = lo + (rest - tLo) / (tHi - tLo) * (1.0 - lo);
+            P.near("scale.zero_fraction", frac, gain(-3.0), 0.002);
+        }
 
         // Everything of the meter inside the plot (inset by its 1 px frame), clear of the state lane and time labels;
         // its box centred.
@@ -538,7 +589,7 @@ namespace
         for (const funkgui::Prim& p : pl.prims)
         {
             const bool mine = (p.tag == ui::tag::grid || p.tag == ui::tag::axisLabel || p.tag == ui::tag::caption
-                               || p.tag == ui::tag::grNeedle) && centreIn(p, inner);
+                               || p.tag == ui::tag::grNeedle || p.tag == ui::tag::meterFace) && centreIn(p, inner);
             if (!mine)
                 continue;
             inside = inside && inRect(p, inner);
@@ -786,6 +837,129 @@ namespace
         setView(V::kHistory);
     }
 
+    // ---- led.* (ADR-76: Brickwall's LED ladder) ----------------------------------------------------------------------
+
+    // The lit segments: live GR_NEEDLE rrects in the plot; the unlit ones: METER_FACE rrects on the segments' row.
+    int litOf(const funkgui::PrimList& pl)
+    {
+        int n = 0;
+        for (const funkgui::Prim& p : pl.prims)
+            if (p.tag == ui::tag::grNeedle && isLive(p) && isKind(p, funkgui::PrimKind::rrect)
+                && centreIn(p, L::kBandHistory.plot))
+                ++n;
+        return n;
+    }
+
+    void ledRows(Probe& P, std::string_view key)
+    {
+        setView(V::kVu);
+        Rig r(key);
+        {
+            // The segments: 24 on the row, kLedPitch apart from kLedLeft; the labels on their edges; the box centred.
+            const funkgui::PrimList& pl = r.host.draw();
+            std::vector<double> xs;
+            for (const funkgui::Prim& p : pl.prims)
+                if ((p.tag == ui::tag::grNeedle || p.tag == ui::tag::meterFace) && isKind(p, funkgui::PrimKind::rrect)
+                    && std::fabs(0.5 * (static_cast<double>(p.y0) + static_cast<double>(p.y1))
+                                 - static_cast<double>(V::kLedSegY + 0.5f * V::kLedSegH)) < 0.5
+                    && static_cast<double>(p.x1 - p.x0) < 2.0 * static_cast<double>(V::kLedPitch))
+                    xs.push_back(0.5 * (static_cast<double>(p.x0) + static_cast<double>(p.x1)));
+            std::sort(xs.begin(), xs.end());
+            double worst = xs.size() == 24 ? 0.0 : 99.0;
+            for (std::size_t i = 0; i < xs.size() && i < 24; ++i)
+                worst = std::max(worst, std::fabs(xs[i] - (static_cast<double>(V::kLedLeft) + static_cast<double>(i) * V::kLedPitch
+                                                          + 0.5 * V::kLedSegW)));
+            P.eq("led.segments.count", static_cast<int64_t>(xs.size()), 24);
+            P.le("led.segments.pitch_px", worst, 0.01);
+            std::vector<const funkgui::Prim*> glyphs;
+            for (const funkgui::Prim* g : tagged(pl, ui::tag::axisLabel))
+                if (isKind(*g, funkgui::PrimKind::text) && centreIn(*g, L::kBandHistory.plot))
+                    glyphs.push_back(g);
+            std::size_t at = 0;
+            double worstLabel = 0.0;
+            for (const ui::FaceMark& m : gFace->marks)
+            {
+                const std::size_t n = std::string_view(m.label).size();   // ASCII digits
+                if (at + n > glyphs.size())
+                {
+                    worstLabel = 99.0;
+                    break;
+                }
+                double x0 = 1e9, x1 = -1e9;
+                for (std::size_t k = 0; k < n; ++k)
+                {
+                    x0 = std::min(x0, static_cast<double>(glyphs[at + k]->x0));
+                    x1 = std::max(x1, static_cast<double>(glyphs[at + k]->x1));
+                }
+                at += n;
+                const double edge = static_cast<double>(V::kLedLeft) - static_cast<double>(m.readingDb) * V::kLedPitch
+                                  - 0.5 * (static_cast<double>(V::kLedPitch) - V::kLedSegW);
+                worstLabel = std::max(worstLabel, std::fabs(0.5 * (x0 + x1) - edge));
+            }
+            P.le("led.labels.on_edges_px", worstLabel, 0.5);
+            const funkgui::Rect& plot = L::kBandHistory.plot;
+            const funkgui::Rect& bz = V::kLedBezel;
+            P.le("led.box_centred_px",
+                 std::fabs(static_cast<double>(bz.y - plot.y) - static_cast<double>(plot.bottom() - bz.bottom())), 1.5);
+            P.eq("led.rest.no_frame", litOf(pl), 0);
+        }
+        for (int i = 0; i < 400; ++i)
+        {
+            r.feed(1, 0.0f);
+            r.host.tick(1, kMs);
+        }
+        P.eq("led.rest.zero_gr", litOf(r.host.draw()), 0);
+        // The attack: 12 dB lights exactly 12 segments, at once (after the display lag).
+        long lit12 = -1;
+        int most = 0;
+        for (long ms = 1; ms <= 400; ++ms)
+        {
+            r.feed(1, 12.0f);
+            r.host.tick(1, kMs);
+            const int lit = litOf(r.host.draw());
+            most = std::max(most, lit);
+            if (lit12 < 0 && lit == 12)
+                lit12 = ms;
+        }
+        std::printf("NOTE     ui.vu: LED 12 dB lit after %ld ms\n", lit12);
+        P.le("led.attack.ms", static_cast<double>(lit12), V::kShowLagMs + 2.0);
+        P.ge("led.attack.ms_found", static_cast<double>(lit12), 1.0);
+        P.eq("led.attack.no_overshoot", most, 12);
+        // The fall: from the first segment going off to none lit, 11.5 dB at kLedFallDbPerS.
+        long first = -1, none = -1;
+        for (long ms = 1; ms <= 2000 && none < 0; ++ms)
+        {
+            r.feed(1, 0.0f);
+            r.host.tick(1, kMs);
+            const int lit = litOf(r.host.draw());
+            if (first < 0 && lit < 12)
+                first = ms;
+            if (lit == 0)
+                none = ms;
+        }
+        const double fallMs = static_cast<double>(none - first + 1);
+        std::printf("NOTE     ui.vu: LED fall 12 -> 0 lit in %.0f ms\n", fallMs);
+        P.near("led.fall.ms", fallMs, 11.5 / ui::meterface::kLedFallDbPerS * 1000.0, 25.0);
+        // Stale (ADR-69): 12 dB held, the audio stops; nothing lit once the fall has run, and the plate does not dim.
+        {
+            Rig s(key);
+            for (int i = 0; i < 90; ++i)
+                s.frame60(12.0f);
+            const auto bezelOf = [&]() -> uint32_t {
+                const std::vector<const funkgui::Prim*> f = tagged(s.host.draw(), ui::tag::meterFace);
+                return f.empty() ? 0u : f.front()->c0;               // the first METER_FACE rrect: the bezel
+            };
+            const uint32_t liveBezel = bezelOf();
+            P.eq("led.stale.lit_before", litOf(s.host.draw()), 12);
+            for (int i = 0; i < 2000; ++i)
+                s.host.tick(1, kMs);
+            const uint32_t staleBezel = bezelOf();
+            P.eq("led.stale.none_lit", litOf(s.host.draw()), 0);
+            P.eq("led.stale.no_dim", b(liveBezel != 0 && liveBezel == staleBezel), 1);
+        }
+        setView(V::kHistory);
+    }
+
     // ---- history.* --------------------------------------------------------------------------------------------------
 
     std::vector<std::array<float, 5>> historyPrims(const funkgui::PrimList& pl)
@@ -813,7 +987,7 @@ namespace
             both(3.0f + static_cast<float>(i % 7), 1u + static_cast<uint32_t>(i / 20), V::kHistory);
         for (int i = 0; i < 120; ++i)
             both(6.0f + static_cast<float>(i % 5), 1u + static_cast<uint32_t>((i / 15) % 3), V::kVu);
-        const bool wasVu = needleOf(c.host.draw()).has_value();
+        const bool wasVu = meterShown(c.host.draw());
         setView(V::kHistory);
         c.host.tick(1, 0.0f);                                     // back to HISTORY, no time passes
         const funkgui::PrimList& al = a.host.draw();
@@ -990,7 +1164,7 @@ FCMP_PROBE(ui, vu)
     if (prefView() == -1)
     {
         Rig r(C.key);
-        const bool noNeedle = !needleOf(r.host.draw()).has_value();
+        const bool noNeedle = !meterShown(r.host.draw());
         P.eq("toggle.default_history", b(noNeedle && hasHistAxis(r.host.draw())), 1);
     }
     else
@@ -998,11 +1172,17 @@ FCMP_PROBE(ui, vu)
         std::printf("NOTE     ui.vu: grView is already set in this sandbox; toggle.default_history not judged\n");
     }
     setView(V::kHistory);
+    gFace = &ui::faceFor(C.key);                                  // ADR-76: the Mode's face, and its law
     toggleRows(P, C.key);
-    scaleRows(P, C.key);
-    std::vector<double> step;
-    stepRows(P, C.key, &step);
-    staleRows(P, C.key);
+    if (ledFace())
+        ledRows(P, C.key);
+    else
+    {
+        scaleRows(P, C.key);
+        std::vector<double> step;
+        stepRows(P, C.key, &step);
+        staleRows(P, C.key);
+    }
     historyRows(P, C.key);
     outsideRows(P, C.key);
     if (const std::string dir = pngDir(); !dir.empty())
