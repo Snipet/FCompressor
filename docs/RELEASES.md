@@ -5,6 +5,17 @@ Signed with `Developer ID Application: Sean Funk (Y29FLXW57M)`, notarised and st
 
 ## v1.1.0 — 2026-09-26
 
+Tag `v1.1.0` = ba7d23e (PR #45). `dist/FCompressor-1.1.0/`: `FCompressor.component.zip`, `FCompressor.vst3.zip`,
+`FCompressor.app.zip` and `MANIFEST.txt`. Signed and hardened; notarytool **Accepted** all three; stapled. The lead's
+independent check: `shasum -c` OK, `spctl` "Notarized Developer ID", `stapler validate` and `codesign --verify
+--strict` OK, arm64, version 1.1.0. Gates at the tag:
+
+- lead-verify and `verify.sh --integration` 281/281, with 0 candidates;
+- `validate.sh --install` (auval -strict, pluginval 10);
+- gui-live 5/5;
+- asan, tsan, tsan-agent and rtsan green;
+- universal compile.
+
 User requests after v1 (the UI only; the DSP and the saved state are unchanged from v1.0.0):
 
 - **Linked controls in a box (ADR-74).** A control that follows another parameter and is not edited on its own sits
