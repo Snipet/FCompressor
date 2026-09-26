@@ -381,9 +381,14 @@ namespace fcmp::ui
         };
         chevron(c, H::kModePrev, -1, capCentre, chevronInk(Part::prev, hoverAmt_[0]));
         chevron(c, H::kModeNext, +1, capCentre, chevronInk(Part::next, hoverAmt_[2]));
+        // ADR-75 (v1.1): the rule under the Mode name is the Mode's colour (the signal ink, eased by the Panel across
+        // a Mode change), kModeRuleH thick; hovering the name or opening the browser brightens it toward ink100.
         const bool open = ctx_.overlay == Overlay::modeBrowser;
-        c.hairlineH(H::kModeName.x, kNameRuleY, H::kModeName.w,
-                    open ? th.ink52 : funkgui::mix(th.ink16, th.ink32, hoverAmt_[1]));
+        {
+            const funkgui::Canvas::Scope rule(c, tag::modeRule, false);
+            const funkgui::Col ink = funkgui::mix(th.signal, th.ink100, open ? 0.35f : 0.35f * hoverAmt_[1]);
+            c.rrect(H::kModeName.x, kNameRuleY, H::kModeName.w, layout::kModeRuleH, 0.0f, ink);
+        }
         if (ctx_.focusVisible && ctx_.focus == a11yId(ViewIndex::header, kLatchLocal))
             funkgui::drawFocusRing(c, kLatchCells, th.accent);
     }

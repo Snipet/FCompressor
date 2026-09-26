@@ -160,6 +160,9 @@ namespace fcmp::ui
         int      captured_ = -1;                                 // ViewIndex holding the pointer between down and up
         int      hovered_  = -1;                                 // ViewIndex under the pointer
         uint8_t  lastSlot_ = 0;
+        // ADR-75 (v1.1): the Mode colour eases from the outgoing Mode's to the incoming one's over kModeColourS
+        std::string_view colourFrom_ {}, colourTo_ {};
+        float    colourAmt_ = 1.0f;
         bool     resolvedOnce_ = false;
         bool     ticked_   = false;
         bool     shutDown_ = false;

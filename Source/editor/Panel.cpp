@@ -415,6 +415,16 @@ namespace fcmp::ui
         refreshFrame(dt);
         history_->drain(facade_.history());
         fader_.tick(dt);                                         // τ 0.12 s, snaps within 1e−3 (layout::chars)
+        // ADR-75: a new Mode starts the colour ease from the colour the previous one had (the target so far).
+        if (const std::string_view key = ctx_.frame.entry != nullptr ? ctx_.frame.entry->desc->key : std::string_view{};
+            key != colourTo_)
+        {
+            colourFrom_ = colourTo_.empty() ? key : colourTo_;
+            colourTo_ = key;
+            colourAmt_ = colourFrom_ == colourTo_ ? 1.0f : 0.0f;
+        }
+        if (colourAmt_ < 1.0f)
+            colourAmt_ = std::min(1.0f, colourAmt_ + dt / layout::kModeColourS);
         overlayAmt_ = funkgui::ease::toward(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f, dt,
                                             layout::browser::kOpenTau, layout::chars::kScreenFadeSnap);
         if (overlayAmt_ <= 0.0f && overlay_ == Overlay::none)
@@ -463,7 +473,12 @@ namespace fcmp::ui
         // dump's view line and the GPU all see it. Nothing else in the frame's info changes.
         const funkgui::PrimList& frame = c.end();
         const bool paper = frame.info.theme == kThemePaper;
-        const funkgui::Theme th = paper ? paperHighContrast() : hostTheme;
+        funkgui::Theme th = paper ? paperHighContrast() : hostTheme;
+        // ADR-75: the Mode's colour is the signal ink (live GR data), eased across a Mode change (smootherstep).
+        {
+            const float u = colourAmt_ * colourAmt_ * colourAmt_ * (colourAmt_ * (colourAmt_ * 6.0f - 15.0f) + 10.0f);
+            th.signal = funkgui::mix(modeColour(colourFrom_, th), modeColour(colourTo_, th), u);
+        }
         if (paper && frame.prims.empty() && frame.axes.empty()
             && !funkgui::ease::sameBits(frame.info.textGamma, th.textGamma))
         {
@@ -497,7 +512,7 @@ namespace fcmp::ui
         // audio stops, falling meters and bars, the operating dot's fade, the GR VU needle while it swings (UF2, ADR-72) —
         // or for layout::live::kActiveS after any input (DisplayRow's activity clock: hover, drag, click, wheel, keys).
         // Idle rate only when nothing moves.
-        if (!ticked_ || !fader_.settled() || preview_->pending() || ctx_.frame.live)
+        if (!ticked_ || !fader_.settled() || preview_->pending() || ctx_.frame.live || colourAmt_ < 1.0f)
             return true;
         if (!funkgui::ease::sameBits(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f))
             return true;

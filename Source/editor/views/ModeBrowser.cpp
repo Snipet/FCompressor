@@ -3,6 +3,7 @@
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
+#include "editor/ProductTheme.h"
 #include "editor/Tags.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -612,6 +613,13 @@ namespace fcmp::ui
                     char fitted[64];
                     funkgui::text::fitEllipsis(ctx_.atlas, grid_.name(i), T::kLabel, kNameMaxW, fitted, sizeof fitted);
                     c.text(fitted, x, y, T::kLabel, ink);
+                    // ADR-75 (v1.1): the Mode's colour, a swatch after its name, so colour and Mode are learnt together.
+                    if (const fcdsp::ModeEntry* e = fcdsp::bySlot(grid_.slot(i)); e != nullptr && e->desc != nullptr)
+                    {
+                        const funkgui::Canvas::Scope sw(c, tag::modeSwatch, false);
+                        c.disc(x + c.textWidth(fitted, T::kLabel) + layout::kSwatchInset,
+                               y - c.capCentreTop(0.0f, T::kLabel), layout::kSwatchR, modeColour(e->desc->key, th));
+                    }
                 }
                 if (isCurrent)
                 {

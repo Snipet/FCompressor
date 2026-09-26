@@ -12,6 +12,11 @@
 //   contrast.text_gamma           re-tuned below FunkGui PAPER's 1.4 (thin dark text no longer thinned), in (0.5, 1]
 //   contrast.graphite.unchanged   productTheme(0) is funkgui::Theme::graphite(), bit for bit; productTheme(1) is the
 //                                 product PAPER; an index that names no theme draws GRAPHITE, as Theme::byIndex
+//   contrast.mode.<key>.<theme>   ADR-75 (v1.1): every registered Mode has its own colour (ProductTheme.h
+//                                 kModeColours), at least 7 against GRAPHITE's ground and 5.5 against PAPER's; no two
+//                                 Modes share one
+//   contrast.mode.<key>.drawn.<theme>  the panel of that Mode, settled, draws its header rule (MODE_RULE) in exactly
+//                                 that colour (the Panel's signal ink, eased to the Mode's)
 //   contrast.draw.<theme>.*       every view of fcmp::ui::views() for every registered Mode, headless (FakeFacade,
 //                                 dpi 1): the frame's clear colour is the theme's ground; its textGamma and every text
 //                                 primitive's are the theme's (PAPER: the product's, so the Panel re-began the frame;
@@ -24,6 +29,7 @@
 
 #include "editor/Panel.h"
 #include "editor/ProductTheme.h"
+#include "editor/Tags.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
@@ -231,11 +237,65 @@ namespace
     }
 }
 
+namespace
+{
+    // ---- ADR-75: the Mode colours ------------------------------------------------------------------------------------
+
+    void modeColours(Probe& P)
+    {
+        const funkgui::Theme themes[2] = { funkgui::Theme::graphite(), ui::paperHighContrast() };
+        const char* names[2] = { "graphite", "paper" };
+        const double targets[2] = { 7.0, 5.5 };
+        int distinctFails = 0;
+        for (const fcdsp::ModeSlot& m : fcdsp::modeSlots())
+        {
+            if (m.entry == nullptr || m.entry->desc == nullptr)
+                continue;
+            const std::string_view key = m.entry->desc->key;
+            bool listed = false;
+            for (const ui::ModeColour& c : ui::kModeColours)
+                listed = listed || c.key == key;
+            P.eq("contrast.mode." + std::string(key) + ".listed", listed ? 1 : 0, 1);
+            for (int t = 0; t < 2; ++t)
+            {
+                const funkgui::Col col = ui::modeColour(key, themes[t]);
+                const double r = ratio(col, themes[t].ground);
+                std::printf("NOTE     mode %-10s %-8s %s %6.2f\n", std::string(key).c_str(), names[t], hex(col).c_str(),
+                            r);
+                P.ge("contrast.mode." + std::string(key) + "." + names[t], r, targets[t]);
+
+                // What the settled panel draws: the header rule (MODE_RULE) in exactly the Mode's colour.
+                fcmp::probe::FakeFacade facade(key);
+                ui::Panel panel(facade, { true, true, false });
+                funkgui::HeadlessHost host(panel, t == 0 ? ui::kThemeGraphite : ui::kThemePaper, 1.0f);
+                panel.setView(ui::views()[0], true);
+                host.settle(kMaxSettle, kDt);
+                int rules = 0, right = 0;
+                for (const funkgui::Prim& p : host.draw().prims)
+                    if (p.tag == ui::tag::modeRule)
+                    {
+                        ++rules;
+                        const funkgui::Col c { static_cast<uint8_t>(p.c0), static_cast<uint8_t>(p.c0 >> 8),
+                                               static_cast<uint8_t>(p.c0 >> 16), static_cast<uint8_t>(p.c0 >> 24) };
+                        right += same(c, col) ? 1 : 0;
+                    }
+                P.eq("contrast.mode." + std::string(key) + ".drawn." + names[t], rules > 0 && right == rules ? 1 : 0, 1);
+            }
+        }
+        for (std::size_t i = 0; i < ui::kModeColours.size(); ++i)
+            for (std::size_t j = i + 1; j < ui::kModeColours.size(); ++j)
+                distinctFails += same(ui::kModeColours[i].graphite, ui::kModeColours[j].graphite)
+                              || same(ui::kModeColours[i].paper, ui::kModeColours[j].paper) ? 1 : 0;
+        P.eq("contrast.mode.distinct", distinctFails, 0);
+    }
+}
+
 FCMP_PROBE(ui, contrast)
 {
     const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
     P.eq("contrast.font.ok", funkgui::FontService::get().atlas().baked() ? 1 : 0, 1);
     palette(P);
+    modeColours(P);
     drawn(P);
     return P.finish();
 }

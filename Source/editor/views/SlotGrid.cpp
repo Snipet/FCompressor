@@ -450,6 +450,15 @@ namespace fcmp::ui
         for (std::size_t i = 0; i < sliders_.size(); ++i)
         {
             const funkgui::RuleSlider& slider = *sliders_[i];
+            if (slider.view().state == funkgui::ValueState::derived)
+            {
+                // ADR-74 (v1.1): a linked slot follows another parameter and is not edited on its own; it sits in a
+                // box (the slot's hit rectangle) so that reads at a glance, under the tag that names what it follows.
+                const funkgui::Rect b = slider.geom().hit();
+                const funkgui::Canvas::Scope scope(c, tag::linkedBox, false);
+                c.rrect(b.x, b.y, b.w, b.h, layout::kLinkedRadius, th.ink16.withAlpha(layout::kLinkedFillAlpha), 1.0f,
+                        th.ink32);
+            }
             slider.draw(c, th, focused(slider.a11yId()));
 
             const fcdsp::Pid pid = layout::kSlots[i].pid;
