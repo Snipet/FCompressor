@@ -1,0 +1,18 @@
+# funkgui-golden 2  probe=proc.fixtures  scope=global
+# key	value	tolerance
+fixtures.released.1-brickwall-default.render.rms_db	-4.71872532	absrel:0.001:0.0001
+fixtures.released.1-brickwall-odd.render.rms_db	-13.2484576	absrel:0.001:0.0001
+fixtures.released.1-bus-25-default.render.rms_db	-15.9465683	absrel:0.001:0.0001
+fixtures.released.1-bus-25-odd.render.rms_db	-2.0825686	absrel:0.001:0.0001
+fixtures.released.1-bus-g-default.render.rms_db	-17.6101808	absrel:0.001:0.0001
+fixtures.released.1-bus-g-odd.render.rms_db	-14.7900599	absrel:0.001:0.0001
+fixtures.released.1-clean-default.render.rms_db	-17.5822469	absrel:0.001:0.0001
+fixtures.released.1-clean-odd.render.rms_db	-15.5808045	absrel:0.001:0.0001
+fixtures.released.1-diode-609-default.render.rms_db	-18.0363295	absrel:0.001:0.0001
+fixtures.released.1-diode-609-odd.render.rms_db	-13.6270971	absrel:0.001:0.0001
+fixtures.released.1-fet-76-default.render.rms_db	-19.7217512	absrel:0.001:0.0001
+fixtures.released.1-fet-76-odd.render.rms_db	-15.5113736	absrel:0.001:0.0001
+fixtures.released.1-mu-67-default.render.rms_db	-19.8506301	absrel:0.001:0.0001
+fixtures.released.1-mu-67-odd.render.rms_db	-9.58294695	absrel:0.001:0.0001
+fixtures.released.1-opto-2a-default.render.rms_db	-19.1294182	absrel:0.001:0.0001
+fixtures.released.1-opto-2a-odd.render.rms_db	-12.0321097	absrel:0.001:0.0001

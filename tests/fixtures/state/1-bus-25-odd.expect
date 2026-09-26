@@ -1,0 +1,34 @@
+# proc.fixtures expectations (write-once with the .bin): the restored raw value of every parameter
+modeId	bus-25
+modeRev	1
+charExpanded	1
+scTab	colour
+param	thr	-23.9704609
+param	ratio	0.666666627
+param	knee	12
+param	range	19.5159702
+param	atk	10
+param	rel	1608.43958
+param	tmode	1
+param	hold	365.65155
+param	look	8.05624676
+param	det	4
+param	schpf	302.915405
+param	sce	3.00999999
+param	link	0
+param	stmode	1
+param	voice	1
+param	drive	8.80209446
+param	makeup	8.51726818
+param	automu	0.654558182
+param	mix	0.557904661
+param	s2thr	-25.3175144
+param	s2atk	228.278122
+param	s2rel	12973.5361
+param	mode	6
+param	extkey	0.610000014
+param	listen	0
+param	delta	0
+param	bypass	0.289999992
+param	quality	2
+param	labudget	2
