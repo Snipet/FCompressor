@@ -1,0 +1,54 @@
+ 5 Mode                     656,14,264,32        value=BUS 25 help=VCA · NEW FEED-FORWARD / OLD FEEDBACK · RMS
+ 0 THRESHOLD                34,356,124,80        value=4.0 d B u
+ 0 RATIO                    162,356,124,80       value=4:1 help=7 steps: 1.5, 2, 3, 4, 6, 10, ∞
+ 0 KNEE                     290,356,124,80       value=MEDIUM help=3 steps: HARD, MED, SOFT
+ 0 ATTACK                   418,356,124,80       value=10 MS help=7 steps: .03, .1, .3, 1, 3, 10, 30
+ 0 RELEASE                  546,356,124,80       value=0.2 S help=6 steps: .05, .1, .2, .5, 1, 2
+ 0 MAKEUP                   674,356,124,80       value=0.0 decibels
+ 1 AUTO                     758,357,38,18        unchecked
+ 0 MIX                      802,356,124,80       value=100 percent
+ 0 RANGE                    34,444,124,66        value=off
+ 0 DETECT                   162,444,124,66       value=RMS, fixed [ro] [off] help=RMS DETECTOR (THAT 2252), FIXED IN THIS CIRCUIT
+ 1 EXT                      246,445,38,18        unchecked
+ 7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 TIME MODE                546,444,124,66       value=FIXED help=2 steps: FIXED, VAR
+ 0 DRIVE                    674,444,124,66       value=0.0 decibels
+ 0 VOICE                    802,444,124,66       value=NEW (FEEDFORWARD) help=2 steps: NEW, OLD
+ 0 SC HPF                   34,516,124,66        value=off
+ 1 LISTEN                   118,517,38,18        unchecked
+ 0 THRUST                   162,516,124,66       value=NORMAL help=3 steps: NORM, MED, LOUD
+ 0 LINK                     290,516,124,66       value=100 percent help=7 steps: IND, 50, 60, 70, 80, 90, 100
+ 0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
+ 7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 VCA  2                   40,69,106,16         [ro]
+ 6 BUS G                    40,88,106,20         unchecked help=BUS G   VCA BUS · 2/4/10 · .1–30 MS · .1–1.2 S + AUTO
+ 6 BUS 25                   40,108,106,20        checked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
+ 7 FET  1                   150,69,106,16        [ro]
+ 6 FET 76                   150,88,106,20        unchecked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
+ 7 OPTO  1                  260,69,106,16        [ro]
+ 6 OPTO 2A                  260,88,106,20        unchecked help=OPTO 2A   T4 CELL · COMP/LIMIT · ~10 MS · 60 MS→50 %, THEN 1–15 S
+ 7 VARI-MU  1               370,69,106,16        [ro]
+ 6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
+ 7 DIODE  1                 480,69,106,16        [ro]
+ 6 DIODE 609                480,88,106,20        unchecked help=DIODE 609   DIODE BRIDGE · 1.5–6 · FAST/SLOW · .1–1.5 S + A1/A2 · LIMITER +4…+15 DBU
+ 7 MODERN  1                590,69,106,16        [ro]
+ 6 CLEAN                    590,88,106,20        unchecked help=CLEAN   FEED-FORWARD · PEAK/RMS · 5 µS–250 MS · 1:1–∞ · 0–200 % MIX
+ 7 LIMIT  1                 700,69,106,16        [ro]
+ 6 BRICKWALL                700,88,106,20        unchecked help=BRICKWALL   LOOKAHEAD LIMITER · ∞:1 · 0.5–20 MS LOOKAHEAD · 1–1000 MS · CEILING −12…0
+ 7 OTHER  0                 810,69,106,16        [ro]
+ 2 Previous preset          228,14,24,32
+ 5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
+ 2 Next preset              528,14,24,32
+ 2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 7 Footer                   40,600,554,20        [ro]
+ 3 Zoom                     638,601,140,16       value=ZOOM 100 %
+ 4 ZOOM 100 %               638,601,32,16        checked
+ 4 ZOOM 125 %               674,601,32,16        unchecked
+ 4 ZOOM 150 %               710,601,32,16        unchecked
+ 4 ZOOM 175 %               746,601,32,16        unchecked
+ 3 Theme                    790,601,130,16       value=Graphite theme
+ 4 Graphite theme           790,601,72,16        checked
+ 4 Paper theme              866,601,54,16        unchecked

@@ -1,0 +1,22 @@
+1 header:1 comboBox Mode
+2 presetStrip:1 button Previous preset
+3 presetStrip:2 comboBox Preset
+4 presetStrip:3 button Next preset
+5 presetStrip:4 button Save preset
+6 displayRow:16 radioGroup Quality
+7 displayRow:32 radioGroup Lookahead budget
+8 displayRow:48 toggleButton DELTA
+9 displayRow:49 toggleButton BYPASS
+10 displayRow:50 toggleButton CHARACTERISTICS
+11 charScreen:258 radioGroup History span
+12 charScreen:514 radioGroup Meter scale
+13 charScreen:1 radioGroup Side chain or colour
+14 charScreen:776 button Reset meters
+15 charScreen:640 slider THRESHOLD
+16 charScreen:641 slider KNEE
+17 charScreen:642 slider RATIO
+18 charScreen:1664 slider ATTACK
+19 charScreen:1920 slider RELEASE
+20 charScreen:2176 slider SC HPF
+21 footer:32 radioGroup Zoom
+22 footer:16 radioGroup Theme
