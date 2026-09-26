@@ -609,6 +609,20 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - The LED ladder shows the GR at once (after the display lag) and falls at 20 dB/s.
   - A needle's base hides under a shroud, and hardware needles stop at their pins.
   - `ui.vu` judges every face against its own law, recomputed in the probe, and the ladder with its own `led.*` rows.
+- **ADR-77 Wave 2 Modes: Octo first (v1.2).** The user asked which Modes to add next and chose the hybrid VCA (D §2.7,
+  M18) to start. The lead adds Wave 2 Modes directly, one branch each, with no sprint card. Each gets its
+  `Modes.def` line (slot 8 onward, permanent), its traits, descriptor, factory `<key>.inc`, colour, meter face,
+  a `docs/modes/<key>.md` sheet and its first goldens. Octo reuses the engine's policies: `QuadKnee`, `PeakLog`,
+  `LinkMean`, and Bus G's `DualRelease` behind an `AutoSwitch` that engages only at the 10:1 OPTO step. It adds two
+  stages to the catalogue:
+  - `scshape/BandEmphasis.h`, a side-chain peaking bell;
+  - `colour/OctoDist.h`, the AUDIO distortion generator with an optional 65 Hz third-order high-pass.
+
+  INPUT is a gain into a fixed −18 dBFS threshold, so the host's threshold parameter keeps its meaning while the panel
+  shows the unit's dial. The AUDIO voices are static, so the describing-function model holds. The Mode joins
+  `modes-ever.tsv`, `modeparam.tsv` and the state fixtures when a release first ships it; until then it is
+  revision 1. Its colour is rose, and its meter is a red LED ladder. Adding it touched 10 source files (808 lines,
+  including the probe) plus its sheet, and no CMake or shared engine code.
 
 ## HardwareReverb migration
 
