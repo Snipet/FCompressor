@@ -120,8 +120,9 @@ namespace fcmp::ui::tag
     inline constexpr Tag linkedBox     = 330;   // LINKED_BOX      the box around a linked (derived) slot
     inline constexpr Tag modeRule      = 331;   // MODE_RULE       the Mode-coloured rule under the Mode name
     inline constexpr Tag modeSwatch    = 332;   // MODE_SWATCH     a Mode browser row's colour swatch
+    inline constexpr Tag meterFace     = 333;   // METER_FACE      a GR meter's hardware plate, shroud, unlit LEDs (ADR-76)
 
-    inline constexpr Tag last          = 332;
+    inline constexpr Tag last          = 333;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -154,6 +155,7 @@ namespace fcmp::ui::tag
         { browserBg, "BROWSER_BG" },         { browserHeading, "BROWSER_HEADING" }, { browserRow, "BROWSER_ROW" },
         { browserCurrent, "BROWSER_CURRENT" }, { browserPager, "BROWSER_PAGER" },
         { linkedBox, "LINKED_BOX" },         { modeRule, "MODE_RULE" },          { modeSwatch, "MODE_SWATCH" },
+        { meterFace, "METER_FACE" },
     } };
 
     namespace detail

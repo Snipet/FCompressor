@@ -589,6 +589,27 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - A Mode not in the table draws Clean's colour.
   - The accent (the control under the hand) is unchanged.
 
+- **ADR-76 Hardware-style GR meter faces (v1.1).** The user asked that each Mode's analog GR meter look like the
+  equivalent hardware. The band's VU meter (ADR-72) now wears a face per Mode (`views/MeterFaces.h`). Each face
+  evokes the meter of the hardware class the Mode models, drawn from general knowledge of those meters, with no maker's
+  name or logo:
+  - FET 76: an ivory VU with a red zone, on a black panel.
+  - Opto 2A: a big warm backlit VU with its lamp glow, on a silver-grey panel.
+  - Mu 67: a black meter in a bright ring bezel, DB COMPRESSION 0 → 20.
+  - Diode 609: a dark grey-blue meter with cream print, GAIN REDUCTION 0 → 20 on a 1 dB ruler.
+  - Bus G: a black console meter, COMPRESSION 20 … 0, with the needle resting right.
+  - Bus 25: a cream console meter, GAIN REDUCTION 20 … 0, resting right.
+  - Brickwall: a digital limiter's LED ladder, 24 × 1 dB, amber with red from 12 dB.
+  - Clean keeps the panel face (ADR-72).
+  The rules:
+  - The hardware plates keep fixed colours in both themes, as hardware does. A small lamp lit in the Mode colour
+    (ADR-75) sits in each plate's corner.
+  - The needle keeps the ADR-72 ballistics, integrated in the face's own scale position (the needle's mass acts on its
+    dial), so every needle face takes 300 ms to 99 % with 1.25 % overshoot.
+  - The LED ladder shows the GR at once (after the display lag) and falls at 20 dB/s.
+  - A needle's base hides under a shroud, and hardware needles stop at their pins.
+  - `ui.vu` judges every face against its own law, recomputed in the probe, and the ladder with its own `led.*` rows.
+
 ## HardwareReverb migration
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a
