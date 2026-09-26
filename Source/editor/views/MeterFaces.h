@@ -54,7 +54,8 @@ namespace fcmp::ui
         bool      restRight = true;                               // grLinear: 0 dB GR on the right end
         float     lowDb = -20.0f, highDb = 3.0f;                  // the readings at the scale's ends (vuGain)
         std::span<const FaceMark> marks;                          // labelled and unlabelled ticks, labels in order
-        float     zoneFromDb = 1.0f;                              // vuGain: a red zone from here to highDb (> hi: none)
+        float     zoneFromDb = 1.0f;                              // vuGain: a red zone from here to highDb (> hi: none);
+                                                                  // led: segments from here (GR dB) up are red (> kLedMaxDb: none)
         funkgui::Col bezel, ring, face, print, zone, needle, glow, dim;   // dim: an unlit LED segment
         const char* legend = "";                                  // large, above the pivot
         const char* legend2 = "";                                 // small, under the legend
@@ -64,7 +65,7 @@ namespace fcmp::ui
     {
         inline constexpr float kLedMaxDb = 24.0f;                 // the ladder: 24 segments of 1 dB
         inline constexpr int   kLedSegments = 24;
-        inline constexpr float kLedRedFromDb = 12.0f;             // segments from here up are red
+        inline constexpr float kLedRedFromDb = 12.0f;             // Brickwall's ladder: red from here up
         inline constexpr double kLedFallDbPerS = 20.0;            // the ladder falls this fast (attack is instant)
 
         // A VU face prints its numbers without signs, as the hardware does: 20 … 1 0 in the print ink, 1 2 3 above 0
@@ -121,7 +122,7 @@ namespace fcmp::ui
             { "bus-25", FacePlate::light, FaceLaw::grLinear, true, -20.0f, 0.0f, kGr2Marks, 99.0f,
               rgb(0x2F3A45), rgb(0x2F3A45), rgb(0xECE4CE), rgb(0x1E1E1E), rgb(0x000000), rgb(0x1A1A1A), rgb(0xFFFFFF),
               rgb(0x000000), "GAIN REDUCTION", "DB" },
-            { "brickwall", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, 99.0f,
+            { "brickwall", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, meterface::kLedRedFromDb,
               rgb(0x2B2B2E), rgb(0x2B2B2E), rgb(0x0E0E10), rgb(0xC8C2B0), rgb(0xFF3B30), rgb(0xFFB000), rgb(0x000000),
               rgb(0x2E2410), "ATTENUATION", "DB" },
             { "octo", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, 99.0f,
