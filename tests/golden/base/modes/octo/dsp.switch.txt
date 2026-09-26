@@ -1,0 +1,18 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/octo
+# key	value	tolerance
+switch.octo-clean.settle_ms	20	rel:0.1
+switch.clean-octo.settle_ms	20	rel:0.1
+switch.octo-bus-g.settle_ms	20	rel:0.1
+switch.bus-g-octo.settle_ms	20	rel:0.1
+switch.octo-fet-76.settle_ms	15	rel:0.1
+switch.fet-76-octo.settle_ms	15	rel:0.1
+switch.octo-opto-2a.settle_ms	30	rel:0.1
+switch.opto-2a-octo.settle_ms	135	rel:0.1
+switch.octo-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-octo.settle_ms	220	rel:0.1
+switch.octo-diode-609.settle_ms	50	rel:0.1
+switch.diode-609-octo.settle_ms	40	rel:0.1
+switch.octo-bus-25.settle_ms	999.916667	rel:0.1
+switch.bus-25-octo.settle_ms	35	rel:0.1
+switch.octo-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-octo.settle_ms	125	rel:0.1
