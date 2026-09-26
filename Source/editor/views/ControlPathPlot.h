@@ -68,6 +68,11 @@ namespace fcmp::ui
         ~ControlPathPlot() override;
         bool wantsFullRate() const override;
 
+        // ---- S13 H1a addition (additive): HISTORY's clock while the plot is not shown -------------------------------
+        // CharScreen calls it each frame the Panel does not tick it (PANEL is shown): the plot's timeline keeps time,
+        // so a stale span that starts and ends while it is hidden is still a gap when it is shown again (UF1a, ADR-69).
+        void keepTime(float dt);
+
     private:
         struct State;                                            // ControlPathPlot.cpp: columns, strips, lanes, title
 

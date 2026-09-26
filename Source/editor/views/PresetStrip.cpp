@@ -4,6 +4,7 @@
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
+#include "editor/ProductTheme.h"
 #include "editor/Tags.h"
 #include "editor/views/PresetBrowser.h"
 
@@ -387,8 +388,8 @@ namespace fcmp::ui
             return;                                              // headless: no window to anchor a menu on
         refresh();
         if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
-        menuLook_->setTheme(funkgui::Theme::byIndex(ctx_.host->themeIndex()));
+            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
+        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
 
         std::array<MenuItem, 4> items{};
         const int n = menu(items);

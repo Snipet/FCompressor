@@ -27,6 +27,12 @@
 //   a11y.*       press on a row = the click's commit (open stays); focus moves the highlight; eight group headings;
 //                unique ids.
 //   chars.*      on CHARACTERISTICS the browser opens over the same region, commits, and Esc returns to the screen.
+//   focus.*      (S13 H1a) opened from the keyboard there is ONE focus ring in the whole frame, on this row (the Mode
+//                latch underneath has given up the focus); while open, Tab and Shift-Tab walk the browser's rows only
+//                (its focusOrder: the page's rows in column order), wrapping, with the highlight, footer and ring
+//                following each stop and nothing written; Esc closes and gives the focus back to the Mode latch with
+//                the ring shown; with the browser open, no item of another view whose centre lies under the browser's
+//                ground is visible in a11y (the display row, the band), while the slot rows (outside it) stay visible.
 //
 // Review pictures (not a test): `fcmp_probe_plugin ui.modebrowser --mode <key> … -- --png-dir <dir>` writes
 // modebrowser-<key>-{hover,keys,chars}.png (dpi 2, theme 0).
@@ -661,6 +667,134 @@ namespace
         P.eq("chars.escape_returns", b(!r.open() && r.panel.screen() == ui::Screen::characteristics), 1);
     }
 
+    // ---- keyboard focus and what the overlay covers (S13 H1a) -----------------------------------------------------------
+
+    // The bounding box of every FOCUS_RING primitive in the frame, and how many there are.
+    struct Rings
+    {
+        int   n = 0;
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    };
+
+    Rings rings(Rig& r)
+    {
+        Rings g;
+        for (const funkgui::Prim& p : r.host.draw().prims)
+            if (p.tag == funkgui::tags::focusRing)
+            {
+                ++g.n;
+                g.x0 = std::min(g.x0, p.x0);
+                g.y0 = std::min(g.y0, p.y0);
+                g.x1 = std::max(g.x1, p.x1);
+                g.y1 = std::max(g.y1, p.y1);
+            }
+        return g;
+    }
+
+    // Every ring primitive of the frame belongs to one ring around `want` (FocusRing: want.reduced(1), AA apron).
+    bool oneRingAround(Rig& r, const funkgui::Rect& want)
+    {
+        const Rings g = rings(r);
+        const funkgui::Rect w = want.reduced(1.0f);
+        const auto near = [](float a, float c) { return std::fabs(a - c) <= 2.5f; };
+        const bool ok = g.n > 0 && near(g.x0, w.x) && near(g.y0, w.y) && near(g.x1, w.right())
+                     && near(g.y1, w.bottom());
+        if (!ok)
+            std::printf("NOTE     rings: %d prims over {%g,%g}-{%g,%g}, want one around {%g,%g}-{%g,%g}\n", g.n,
+                        static_cast<double>(g.x0), static_cast<double>(g.y0), static_cast<double>(g.x1),
+                        static_cast<double>(g.y1), static_cast<double>(w.x), static_cast<double>(w.y),
+                        static_cast<double>(w.right()), static_cast<double>(w.bottom()));
+        return ok;
+    }
+
+    funkgui::Rect rowRing(const ui::ModeGrid& g, int i)       // ModeBrowser.cpp's ring: x − 8 … x + 102
+    {
+        const funkgui::Rect row = g.rowRect(i);
+        return { row.x - 8.0f, row.y, row.w + 4.0f, row.h };
+    }
+
+    uint32_t latchId(const Rig& r)
+    {
+        for (const funkgui::A11yItem& it : r.host.accessibility())
+            if (ui::viewIndexOf(it.id) == static_cast<int>(ui::ViewIndex::header)
+                && it.role == funkgui::A11yRole::comboBox)
+                return it.id;
+        return 0;
+    }
+
+    void focus(Probe& P, const Case& c)
+    {
+        {
+            Rig r(c.key);
+            const uint32_t latch = latchId(r);
+            const bool opened = openByKeys(r);
+            r.host.tick(1, kDt);
+            P.eq("focus.one_ring", b(opened && r.panel.context().focus == rowId(c.grid.slot(c.own))
+                                     && oneRingAround(r, rowRing(c.grid, c.own))), 1);
+
+            // The browser's stops: the shown page's rows in column order (ModeBrowser::focusOrder).
+            std::vector<int> order;
+            for (int k = 0; k < c.grid.columns(); ++k)
+                if (ui::ModeGrid::pageOf(k) == 0)
+                    for (int row = 0; row < c.grid.column(k).count; ++row)
+                        order.push_back(c.grid.column(k).first + row);
+            const auto at = std::find(order.begin(), order.end(), c.own);
+            bool trap = at != order.end() && order.size() == static_cast<std::size_t>(c.grid.size());
+            bool follows = trap;
+            std::size_t i = trap ? static_cast<std::size_t>(at - order.begin()) : 0;
+            for (std::size_t step = 0; trap && step < order.size(); ++step)
+            {
+                i = (i + 1) % order.size();
+                r.host.keys("tab");
+                r.host.tick(1, kDt);
+                const int want = order[i];
+                trap = trap && r.panel.context().focus == rowId(c.grid.slot(want)) && r.open();
+                follows = follows && startsWith(footerLine(r), c.grid.spec(want))
+                       && oneRingAround(r, rowRing(c.grid, want));
+            }
+            r.host.keys("shift+tab");
+            r.host.tick(1, kDt);
+            const int back = order.empty() ? -1 : order[(i + order.size() - 1) % order.size()];
+            trap = trap && back >= 0 && r.panel.context().focus == rowId(c.grid.slot(back));
+            P.eq("focus.tab_trap", b(trap), 1);
+            P.eq("focus.tab_follows", b(follows), 1);
+            P.eq("focus.tab_writes_nothing", b(nothingWritten(r.facade)), 1);
+
+            r.host.keys("escape");
+            r.settle();
+            const bool back2 = !r.open() && latch != 0 && r.panel.context().focus == latch
+                            && r.panel.context().focusVisible;
+            // Header.cpp's latch ring: ‹ name › as one rectangle.
+            const funkgui::Rect latchCells { L::header::kModePrev.x, L::header::kModePrev.y,
+                                             L::header::kModeNext.right() - L::header::kModePrev.x,
+                                             L::header::kModePrev.h };
+            P.eq("focus.returns_to_latch", b(back2 && oneRingAround(r, latchCells)), 1);
+        }
+        {
+            Rig r(c.key);
+            openByClick(r);
+            int covered = 0, slots = 0;
+            for (const funkgui::A11yItem& it : r.host.accessibility())
+            {
+                if (!it.visible)
+                    continue;
+                const int v = ui::viewIndexOf(it.id);
+                const funkgui::Rect ground { L::kOverlay.x - 8.0f, L::kOverlay.y - 4.0f, L::kOverlay.w + 16.0f,
+                                             L::kOverlay.h + 8.0f };
+                if (v != static_cast<int>(ui::ViewIndex::modeBrowser)
+                    && ground.contains({ it.bounds.centreX(), it.bounds.centreY() }))
+                {
+                    ++covered;
+                    std::printf("NOTE     covered but visible: %s\n", funkgui::a11yDumpLine(it).c_str());
+                }
+                if (v == static_cast<int>(ui::ViewIndex::slotGrid) && (it.id & 0xFFFFu) >= 1 && (it.id & 0xFFFFu) <= 21)
+                    ++slots;
+            }
+            P.eq("focus.a11y_covered_hidden", covered, 0);
+            P.eq("focus.a11y_slots_visible", slots, 21);
+        }
+    }
+
     // ---- review pictures (`-- --png-dir <dir>`) ---------------------------------------------------------------------
 
     std::string pngDir()
@@ -746,6 +880,7 @@ FCMP_PROBE(ui, modebrowser)
     keys(P, c);
     a11y(P, c);
     chars(P, c);
+    focus(P, c);
     if (const std::string dir = pngDir(); !dir.empty())
         pictures(P, c, dir);
     return P.finish();

@@ -4,6 +4,7 @@
 #include "editor/HistoryStore.h"
 #include "editor/Layout.h"
 #include "editor/PreviewWorker.h"
+#include "editor/ProductTheme.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
 #include "editor/views/Band.h"
@@ -21,6 +22,7 @@
 #include "fcdsp/telemetry/UiFrame.h"
 
 #include <funkgui/canvas/Canvas.h>
+#include <funkgui/canvas/PrimList.h>
 #include <funkgui/core/Col.h>
 #include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
@@ -104,6 +106,20 @@ namespace fcmp::ui
         {
             return o == Overlay::presetBrowser ? ViewIndex::presetBrowser : ViewIndex::modeBrowser;
         }
+
+        // Both browsers draw an opaque ground over layout::kOverlay grown by 8 px left and right and 4 px up and down
+        // (ModeBrowser.h, PresetBrowser.h). An item whose centre lies under it is covered while a browser is open.
+        constexpr funkgui::Rect kBrowserGround { layout::kOverlay.x - 8.0f, layout::kOverlay.y - 4.0f,
+                                                 layout::kOverlay.w + 16.0f, layout::kOverlay.h + 8.0f };
+        bool covered(const funkgui::Rect& r) noexcept
+        {
+            return kBrowserGround.contains({ r.x + 0.5f * r.w, r.y + 0.5f * r.h });
+        }
+
+        // The screen crossfade is a funkgui::ScreenFader (Panel.h), whose τ and snap are 02 §7.1's (layout::chars).
+        static_assert(funkgui::kScreenFadeTau == layout::chars::kScreenFadeTau
+                          && layout::chars::kScreenFadeSnap == 1.0e-3f,
+                      "ScreenFader eases with kScreenFadeTau and snaps at ease::toward's 1e-3");
     }
 
     std::span<const ViewSpec> views() noexcept { return kViews; }
@@ -172,7 +188,8 @@ namespace fcmp::ui
 
         // The per-instance UI state restores the screen and the tab (01 §9.1); a session opens without a browser.
         const UiState& st = facade_.uiState();
-        screen_ = outgoing_ = st.charExpanded ? Screen::characteristics : Screen::panel;
+        screen_ = st.charExpanded ? Screen::characteristics : Screen::panel;
+        fader_.pin(static_cast<int>(screen_), /*instant*/ true);
         scTab_ = st.scTab;
         ctx_.screen = screen_;
         ctx_.scTab = scTab_;
@@ -210,18 +227,17 @@ namespace fcmp::ui
     {
         if (v.screen != screen_)
         {
-            // Reversing a running crossfade continues from where it is instead of jumping.
-            const bool reversing = fade_ < 1.0f && v.screen == outgoing_;
-            outgoing_ = screen_;
+            // funkgui::ScreenFader (S13 H1a): the new screen fades in from 0; going back to the screen that is fading
+            // out reverses the running crossfade from where it is instead of jumping (DwellSelector's rule).
             screen_ = v.screen;
-            fade_ = instant ? 1.0f : (reversing ? 1.0f - fade_ : 0.0f);
+            fader_.pin(static_cast<int>(screen_), instant);
             facade_.uiState().charExpanded = screen_ == Screen::characteristics;
             preview_->setActive(screen_ == Screen::characteristics);
             ++a11yRevision_;
         }
         else if (instant)
         {
-            fade_ = 1.0f;
+            fader_.pin(static_cast<int>(screen_), true);
         }
         if (v.tab != scTab_)
         {
@@ -231,7 +247,14 @@ namespace fcmp::ui
         }
         if (v.overlay != overlay_)
         {
+            // The keyboard focus (S13 H1a): a browser takes it while it is open (it is the whole Tab order then, see
+            // composeFocusOrder), and gives it back to the item that had it when the browser opened.
+            const Overlay closing = overlay_;
             overlay_ = v.overlay;
+            if (closing == Overlay::none)
+                opener_ = ctx_.focus;
+            else if (viewIndexOf(ctx_.focus) == static_cast<int>(overlayView(closing)))
+                ctx_.focus = opener_;
             if (overlay_ != Overlay::none)
                 drawnOverlay_ = overlay_;
             ++a11yRevision_;
@@ -283,7 +306,8 @@ namespace fcmp::ui
 
     bool Panel::shown(ViewIndex v) const noexcept
     {
-        const bool fading = fade_ < 1.0f;
+        const bool fading = fader_.amount() < 1.0f;
+        const auto outgoing = static_cast<Screen>(fader_.outgoing());
         switch (v)
         {
             case ViewIndex::header:
@@ -291,9 +315,9 @@ namespace fcmp::ui
             case ViewIndex::presetStrip:
             case ViewIndex::footer:        return true;
             case ViewIndex::slotGrid:
-            case ViewIndex::band:          return screen_ == Screen::panel || (fading && outgoing_ == Screen::panel);
+            case ViewIndex::band:          return screen_ == Screen::panel || (fading && outgoing == Screen::panel);
             case ViewIndex::charScreen:    return screen_ == Screen::characteristics
-                                               || (fading && outgoing_ == Screen::characteristics);
+                                               || (fading && outgoing == Screen::characteristics);
             case ViewIndex::modeBrowser:   return overlayAmt_ > 0.0f && drawnOverlay_ == Overlay::modeBrowser;
             case ViewIndex::presetBrowser: return overlayAmt_ > 0.0f && drawnOverlay_ == Overlay::presetBrowser;
         }
@@ -390,8 +414,7 @@ namespace fcmp::ui
         ctx_.seconds += static_cast<double>(dt);
         refreshFrame(dt);
         history_->drain(facade_.history());
-        if (fade_ < 1.0f)
-            fade_ = funkgui::ease::toward(fade_, 1.0f, dt, layout::chars::kScreenFadeTau, layout::chars::kScreenFadeSnap);
+        fader_.tick(dt);                                         // τ 0.12 s, snaps within 1e−3 (layout::chars)
         overlayAmt_ = funkgui::ease::toward(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f, dt,
                                             layout::browser::kOpenTau, layout::chars::kScreenFadeSnap);
         if (overlayAmt_ <= 0.0f && overlay_ == Overlay::none)
@@ -402,6 +425,12 @@ namespace fcmp::ui
         for (std::size_t i = 0; i < views_.size(); ++i)
             if (shown(static_cast<ViewIndex>(i)))
                 views_[i]->tick(dt);
+        // S13 H1a (UF1a follow-up): the screen not shown keeps HISTORY's clock, so a stop that starts and ends while it
+        // is hidden is still drawn as a gap when it comes back (HistoryPlot::keepTime).
+        if (!shown(ViewIndex::band))
+            static_cast<Band&>(view(ViewIndex::band)).keepTime(dt);
+        if (!shown(ViewIndex::charScreen))
+            static_cast<CharScreen&>(view(ViewIndex::charScreen)).keepTime(dt);
         ctx_.hand = ctx_.handNext;
         ticked_ = true;
     }
@@ -425,15 +454,32 @@ namespace fcmp::ui
         }
     }
 
-    void Panel::draw(funkgui::Canvas& c, const funkgui::Theme& th)
+    void Panel::draw(funkgui::Canvas& c, const funkgui::Theme& hostTheme)
     {
+        // ADR-73: PAPER (theme index 1) is FCompressor's own high-contrast palette (ProductTheme.h); every other index
+        // draws with the host's theme, so GRAPHITE is FunkGui's, unchanged. The host began this frame with its own
+        // theme's textGamma, and the frame is still empty here (both hosts call draw() right after Canvas::begin), so a
+        // PAPER frame is begun again with the same FrameInfo and the product's textGamma: every text primitive, the
+        // dump's view line and the GPU all see it. Nothing else in the frame's info changes.
+        const funkgui::PrimList& frame = c.end();
+        const bool paper = frame.info.theme == kThemePaper;
+        const funkgui::Theme th = paper ? paperHighContrast() : hostTheme;
+        if (paper && frame.prims.empty() && frame.axes.empty()
+            && !funkgui::ease::sameBits(frame.info.textGamma, th.textGamma))
+        {
+            funkgui::FrameInfo info = frame.info;
+            info.textGamma = th.textGamma;
+            c.begin(info);
+        }
+
         view(ViewIndex::header).draw(c, th);
         view(ViewIndex::presetStrip).draw(c, th);
         view(ViewIndex::displayRow).draw(c, th);
-        if (fade_ < 1.0f && outgoing_ != screen_)
+        const float fade = fader_.amount();
+        if (const auto outgoing = static_cast<Screen>(fader_.outgoing()); fade < 1.0f && outgoing != screen_)
         {
-            drawScreen(c, outgoing_, faded(th, 1.0f - fade_));
-            drawScreen(c, screen_, faded(th, fade_));
+            drawScreen(c, outgoing, faded(th, 1.0f - fade));
+            drawScreen(c, screen_, faded(th, fade));
         }
         else
         {
@@ -451,7 +497,7 @@ namespace fcmp::ui
         // audio stops, falling meters and bars, the operating dot's fade, the GR VU needle while it swings (UF2, ADR-72) —
         // or for layout::live::kActiveS after any input (DisplayRow's activity clock: hover, drag, click, wheel, keys).
         // Idle rate only when nothing moves.
-        if (!ticked_ || fade_ < 1.0f || preview_->pending() || ctx_.frame.live)
+        if (!ticked_ || !fader_.settled() || preview_->pending() || ctx_.frame.live)
             return true;
         if (!funkgui::ease::sameBits(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f))
             return true;
@@ -546,6 +592,11 @@ namespace fcmp::ui
 
     int Panel::composeFocusOrder(std::span<uint32_t> out) const
     {
+        // An open browser is the whole Tab order (S13 H1a): it takes the keys first and a click outside it closes it,
+        // so a stop outside it could not be operated from the keyboard; Esc closes it and the focus returns to its
+        // opener.
+        if (overlay_ != Overlay::none)
+            return view(overlayView(overlay_)).focusOrder(out);
         std::size_t n = 0;
         for (const ViewIndex v : kTabOrder)
             if (live(v) && n < out.size())
@@ -614,12 +665,17 @@ namespace fcmp::ui
 
     void Panel::accessibility(std::vector<funkgui::A11yItem>& out) const
     {
+        // S13 H1a: while a browser is open, the items it covers (their centre lies under the browser's ground) are not
+        // visible either: an assistive technology lists what the screen shows.
+        const bool covering = overlay_ != Overlay::none;
+        const int open = covering ? static_cast<int>(overlayView(overlay_)) : -1;
         for (std::size_t i = 0; i < views_.size(); ++i)
         {
             const std::size_t first = out.size();
             views_[i]->accessibility(out);
-            if (!live(static_cast<ViewIndex>(i)))                // HR skips hidden items; so does the dump (A §1)
-                for (std::size_t k = first; k < out.size(); ++k)
+            const bool hidden = !live(static_cast<ViewIndex>(i));   // HR skips hidden items; so does the dump (A §1)
+            for (std::size_t k = first; k < out.size(); ++k)
+                if (hidden || (covering && static_cast<int>(i) != open && covered(out[k].bounds)))
                     out[k].visible = false;
         }
     }

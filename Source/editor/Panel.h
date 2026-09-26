@@ -15,12 +15,20 @@
 //   pointerUp and ends its gesture). A pointer down outside an open browser closes it and is consumed (02 §8.6
 //   "clicking outside cancels").
 // - Tab order: Header, PresetStrip, DisplayRow, Band, SlotGrid, CharScreen, Footer — each live sub-view's
-//   focusOrder() in turn (02 §8.9, §7.5). Keys go to the open browser first, then to the focused item's sub-view while
-//   the focus ring is shown. Esc: close the browser, else hide the ring, else leave CHARACTERISTICS.
+//   focusOrder() in turn (02 §8.9, §7.5). While a browser is open it is the whole Tab order (S13 H1a): it takes the
+//   keys first and a click outside closes it, so no stop outside it could be operated; it takes the focus when it was
+//   opened from the keyboard, and closing it gives the focus back to the item that had it (opener_). Keys go to the
+//   open browser first, then to the focused item's sub-view while the focus ring is shown. Esc: close the browser, else
+//   hide the ring, else leave CHARACTERISTICS.
+// - Accessibility: a sub-view that is not live lists its items as not visible; so does an open browser for every item
+//   of another sub-view whose centre lies under its ground (S13 H1a).
 // - Every frame, before the sub-views tick: the raw values are resolved (cached by their hash), the UiFrame is read
 //   (staleness 0.5 s), the live smoothed fields are overlaid, the HistoryRing is drained into the HistoryStore, and the
-//   PreviewWorker runs (inline with PanelOptions::syncPreview). The screen crossfade eases with τ 0.12 s and snaps at
-//   1e−3 (ScreenFader's contract, 02 §5.7, until G6's DwellSelector lands).
+//   PreviewWorker runs (inline with PanelOptions::syncPreview). The screen crossfade is a funkgui::ScreenFader
+//   (τ 0.12 s, snaps at 1e−3; 02 §5.7, §7.1; S13 H1a). The screen not shown keeps HISTORY's clock (Band /
+//   CharScreen::keepTime).
+// - Theme (ADR-73, S13 H1a): PAPER draws with FCompressor's own high-contrast palette (ProductTheme.h), GRAPHITE with
+//   the host's.
 // - HostServices::beginBatch/endBatch from GestureController::tapMany reach ProcessorFacade::beginBatch/endBatch (K2 #23).
 // - Teardown (K2 #27): shutdown() stops the PreviewWorker, then closes the open gestures; the destructor calls it
 //   when the owner has not. Parameter ports belong to the facade and outlive the Panel.
@@ -33,6 +41,7 @@
 #include <funkgui/core/Geometry.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/panel/Panel.h>
+#include <funkgui/widgets/DwellSelector.h>
 
 #include <array>
 #include <cstdint>
@@ -140,11 +149,12 @@ namespace fcmp::ui
         std::unique_ptr<HostProxy>        proxy_;
         std::unique_ptr<funkgui::GestureController> gestures_;
 
-        Screen   screen_   = Screen::panel;
-        Screen   outgoing_ = Screen::panel;                      // the screen fading out while fade_ < 1
-        float    fade_     = 1.0f;                               // ScreenFader amount: the incoming screen's alpha
+        Screen   screen_   = Screen::panel;                      // the target screen: input goes here at once
+        funkgui::ScreenFader fader_ { static_cast<int>(Screen::panel), funkgui::kScreenFadeTau };   // S13 H1a:
+                                                                 // the middle region's crossfade (02 §7.1, §5.7)
         ScTab    scTab_    = ScTab::sidechain;
         Overlay  overlay_  = Overlay::none;                      // the open browser (input goes here)
+        uint32_t opener_   = 0;                                  // S13 H1a: the focus when the browser opened
         Overlay  drawnOverlay_ = Overlay::none;                  // the browser drawn while overlayAmt_ > 0
         float    overlayAmt_ = 0.0f;
         int      captured_ = -1;                                 // ViewIndex holding the pointer between down and up
