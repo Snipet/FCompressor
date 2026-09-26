@@ -185,7 +185,7 @@ extern constexpr ModeDescriptor kMu67 {
     .hasColour = true, .colourStatic = false, .wantsLookahead = false,
     .rigor = Rigor::character, .family = CurveFamily::custom,
     .attackSpec = &attackFromView, .releaseSpec = &releaseFromView, .tailSeconds = &tailFromRelease,
-    .ctBudgetNsPerSample = 60, .internals = kMuInt };
+    .ctBudgetNsPerSample = 90, .internals = kMuInt };   // S13 H1b: measured, editor open (docs/modes/budgets.md)
 
 } // namespace fcdsp::modes
 

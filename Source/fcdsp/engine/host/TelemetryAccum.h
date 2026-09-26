@@ -40,6 +40,7 @@
 #include "fcdsp/core/Units.h"
 #include "fcdsp/telemetry/HistoryRing.h"
 #include "fcdsp/telemetry/UiFrame.h"
+#include <cstddef>
 #include <cstdint>
 
 namespace fcdsp::host {
@@ -71,7 +72,8 @@ struct TelemetryChunk {
     int n = 0;
     const float* in[2]{};            // sanitised main input (mono duplicated)
     const float* out[2]{};           // final output
-    const float* colourIn[2]{};      // what entered colour(): dry x g
+    const float* colourIn[2]{};      // what entered colour(): dry x g (only its block peak is read, so EngineHost
+                                     // passes each chunk's peak at [0] and 0 after it)
     const float* preGainDb = nullptr;
     const simd::f32x4* sc = nullptr; // the side chain as fed to control() (lanes 0-1 metered)
     const simd::f32x4* grDb = nullptr;
@@ -133,67 +135,143 @@ public:
     // Per sample of one chunk starting at absolute index `first`: block meters, control-path values and columns;
     // completed columns are pushed to `ring`. `extraBits` = the host's column bits (b6 fading, slot << 8); internal0 =
     // the latched history internal.
+    // S13 H1b (lead revision 5d): the loop runs on local copies of the accumulators, stored back before every column
+    // push and at the end (members written through `this` inside the loop cannot stay in registers across the float
+    // loads from t). The operations and their order are the per-sample ones of F4's loop, so the results are the same
+    // bits; the last sample's control-path values are taken once, after the loop.
     void accumulate(const TelemetryChunk& t, uint64_t first, uint32_t extraBits, float internal0,
                     HistoryRing& ring) noexcept FCDSP_NONBLOCKING
     {
+        if (t.n <= 0)
+            return;
+        const float* const in0 = t.in[0];
+        const float* const in1 = t.in[1];
+        const float* const out0 = t.out[0];
+        const float* const out1 = t.out[1];
+        const float* const col0 = t.colourIn[0];
+        const float* const col1 = t.colourIn[1];
+        float inPeak0 = inPeak_[0], inPeak1 = inPeak_[1], outPeak0 = outPeak_[0], outPeak1 = outPeak_[1];
+        float inSq0 = inSq_[0], inSq1 = inSq_[1], outSq0 = outSq_[0], outSq1 = outSq_[1];
+        float colPeak0 = colPeak_[0], colPeak1 = colPeak_[1], scPeak0 = scPeak_[0], scPeak1 = scPeak_[1];
+        float blockMaxGr0 = blockMaxGr_[0], blockMaxGr1 = blockMaxGr_[1];
+        uint32_t blockBits = blockBits_;
+        bool outOver = outOver_;
+        // the open column
+        float colIn = colIn_, colOut = colOut_, colDet = colDet_, colGrMax = colGrMax_, colGrMin = colGrMin_;
+        float colTgt = colTgt_;
+        uint32_t colBits = colBits_, colPhase = colPhase_;
+        bool colAny = colAny_;
+        uint64_t cut = nextCut_;
+
         for (int i = 0; i < t.n; ++i)
         {
-            const float aIn0 = absf(t.in[0][i]), aIn1 = absf(t.in[1][i]);
-            const float aOut0 = absf(t.out[0][i]), aOut1 = absf(t.out[1][i]);
-            inPeak_[0] = maxf(inPeak_[0], aIn0);
-            inPeak_[1] = maxf(inPeak_[1], aIn1);
-            outPeak_[0] = maxf(outPeak_[0], aOut0);
-            outPeak_[1] = maxf(outPeak_[1], aOut1);
-            inSq_[0] += t.in[0][i] * t.in[0][i];
-            inSq_[1] += t.in[1][i] * t.in[1][i];
-            outSq_[0] += t.out[0][i] * t.out[0][i];
-            outSq_[1] += t.out[1][i] * t.out[1][i];
-            colPeak_[0] = maxf(colPeak_[0], absf(t.colourIn[0][i]));
-            colPeak_[1] = maxf(colPeak_[1], absf(t.colourIn[1][i]));
-            outOver_ = outOver_ || aOut0 > 1.0f || aOut1 > 1.0f;
+            const float aIn0 = absf(in0[i]), aIn1 = absf(in1[i]);
+            const float aOut0 = absf(out0[i]), aOut1 = absf(out1[i]);
+            inPeak0 = maxf(inPeak0, aIn0);
+            inPeak1 = maxf(inPeak1, aIn1);
+            outPeak0 = maxf(outPeak0, aOut0);
+            outPeak1 = maxf(outPeak1, aOut1);
+            inSq0 += in0[i] * in0[i];
+            inSq1 += in1[i] * in1[i];
+            outSq0 += out0[i] * out0[i];
+            outSq1 += out1[i] * out1[i];
+            colPeak0 = maxf(colPeak0, absf(col0[i]));
+            colPeak1 = maxf(colPeak1, absf(col1[i]));
+            outOver = outOver || aOut0 > 1.0f || aOut1 > 1.0f;
 
-            const simd::f32x4 sc = t.sc[i], gr = t.grDb[i], det = t.detDb[i], tgt = t.tgtDb[i], s2 = t.s2GrDb[i];
-            scPeak_[0] = maxf(scPeak_[0], absf(simd::lane<0>(sc)));
-            scPeak_[1] = maxf(scPeak_[1], absf(simd::lane<1>(sc)));
+            const simd::f32x4 sc = t.sc[i], gr = t.grDb[i], det = t.detDb[i], tgt = t.tgtDb[i];
+            scPeak0 = maxf(scPeak0, absf(simd::lane<0>(sc)));
+            scPeak1 = maxf(scPeak1, absf(simd::lane<1>(sc)));
             const float pre = t.preGainDb[i];
-            lastGr_[0] = simd::lane<0>(gr);
-            lastGr_[1] = simd::lane<1>(gr);
-            lastX_[0] = simd::lane<0>(det) - pre;
-            lastX_[1] = simd::lane<1>(det) - pre;
-            lastTgt_[0] = simd::lane<0>(tgt);
-            lastTgt_[1] = simd::lane<1>(tgt);
-            lastS2_[0] = simd::lane<0>(s2);
-            lastS2_[1] = simd::lane<1>(s2);
-            blockMaxGr_[0] = maxf(blockMaxGr_[0], lastGr_[0]);
-            blockMaxGr_[1] = maxf(blockMaxGr_[1], lastGr_[1]);
+            const float gr0 = simd::lane<0>(gr), gr1 = simd::lane<1>(gr);
+            const float x0 = simd::lane<0>(det) - pre, x1 = simd::lane<1>(det) - pre;
+            blockMaxGr0 = maxf(blockMaxGr0, gr0);
+            blockMaxGr1 = maxf(blockMaxGr1, gr1);
             const uint32_t b = t.bits[i];
-            blockBits_ |= b;
-            lastPhase_ = b & kBitsPhase;
-            haveControl_ = true;
+            blockBits |= b;
 
             // column
-            const float g = maxf(lastGr_[0], lastGr_[1]);
-            if (!colAny_ || g > colGrMax_)
+            const float g = maxf(gr0, gr1);
+            if (!colAny || g > colGrMax)
             {
-                colGrMax_ = g;
-                colPhase_ = b & kBitsPhase;
+                colGrMax = g;
+                colPhase = b & kBitsPhase;
             }
-            colGrMin_ = colAny_ ? minf(colGrMin_, g) : g;
-            colIn_ = maxf(colIn_, maxf(aIn0, aIn1));
-            colOut_ = maxf(colOut_, maxf(aOut0, aOut1));
-            const float x = maxf(lastX_[0], lastX_[1]);
-            colDet_ = colAny_ ? maxf(colDet_, x) : x;
-            const float tg = maxf(lastTgt_[0], lastTgt_[1]);
-            colTgt_ = colAny_ ? maxf(colTgt_, tg) : tg;
-            colBits_ |= b & (kBitsAutoSlow | kBitsRangeLimited | kBitsS2Active);
-            colAny_ = true;
+            colGrMin = colAny ? minf(colGrMin, g) : g;
+            colIn = maxf(colIn, maxf(aIn0, aIn1));
+            colOut = maxf(colOut, maxf(aOut0, aOut1));
+            const float x = maxf(x0, x1);
+            colDet = colAny ? maxf(colDet, x) : x;
+            const float tg = maxf(simd::lane<0>(tgt), simd::lane<1>(tgt));
+            colTgt = colAny ? maxf(colTgt, tg) : tg;
+            colBits |= b & (kBitsAutoSlow | kBitsRangeLimited | kBitsS2Active);
+            colAny = true;
 
-            if (first + static_cast<uint64_t>(i) + 1u == nextCut_)
+            if (first + static_cast<uint64_t>(i) + 1u == cut)
             {
+                colIn_ = colIn;
+                colOut_ = colOut;
+                colDet_ = colDet;
+                colGrMax_ = colGrMax;
+                colGrMin_ = colGrMin;
+                colTgt_ = colTgt;
+                colBits_ = colBits;
+                colPhase_ = colPhase;
+                colAny_ = colAny;
                 ring.push(column(extraBits, internal0));
-                nextColumn();
+                nextColumn();                                   // resets the open column's members
+                colIn = colIn_;
+                colOut = colOut_;
+                colDet = colDet_;
+                colGrMax = colGrMax_;
+                colGrMin = colGrMin_;
+                colTgt = colTgt_;
+                colBits = colBits_;
+                colPhase = colPhase_;
+                colAny = colAny_;
+                cut = nextCut_;
             }
         }
+
+        inPeak_[0] = inPeak0;
+        inPeak_[1] = inPeak1;
+        outPeak_[0] = outPeak0;
+        outPeak_[1] = outPeak1;
+        inSq_[0] = inSq0;
+        inSq_[1] = inSq1;
+        outSq_[0] = outSq0;
+        outSq_[1] = outSq1;
+        colPeak_[0] = colPeak0;
+        colPeak_[1] = colPeak1;
+        scPeak_[0] = scPeak0;
+        scPeak_[1] = scPeak1;
+        blockMaxGr_[0] = blockMaxGr0;
+        blockMaxGr_[1] = blockMaxGr1;
+        blockBits_ = blockBits;
+        outOver_ = outOver;
+        colIn_ = colIn;
+        colOut_ = colOut;
+        colDet_ = colDet;
+        colGrMax_ = colGrMax;
+        colGrMin_ = colGrMin;
+        colTgt_ = colTgt;
+        colBits_ = colBits;
+        colPhase_ = colPhase;
+        colAny_ = colAny;
+
+        // the control path at the chunk's last sample (UiFrame words 20-35 are end-of-block values)
+        const std::size_t last = static_cast<std::size_t>(t.n - 1);
+        const float preLast = t.preGainDb[last];
+        lastGr_[0] = simd::lane<0>(t.grDb[last]);
+        lastGr_[1] = simd::lane<1>(t.grDb[last]);
+        lastX_[0] = simd::lane<0>(t.detDb[last]) - preLast;
+        lastX_[1] = simd::lane<1>(t.detDb[last]) - preLast;
+        lastTgt_[0] = simd::lane<0>(t.tgtDb[last]);
+        lastTgt_[1] = simd::lane<1>(t.tgtDb[last]);
+        lastS2_[0] = simd::lane<0>(t.s2GrDb[last]);
+        lastS2_[1] = simd::lane<1>(t.s2GrDb[last]);
+        lastPhase_ = t.bits[last] & kBitsPhase;
+        haveControl_ = true;
     }
 
     // Block end: meters (envelopes over this block of n samples) and the control-path words into f; returns the

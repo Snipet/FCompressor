@@ -83,6 +83,18 @@
 //     absolute multiple of kChunk (before that chunk's control()), so HistoryColumn::internal0 is block-size
 //     invariant; on an attach transition it is latched at once. Columns cut while a fade runs carry b6 (kColFading).
 //   - UiFrame::publishCount survives a reconfigure (the editor's staleness check sees it keep moving).
+//   - Telemetry cost (S13 H1b, lead revision 5d; fcmp_bench attached vs detached, one A/B run). The common attached
+//     cost is ~5 ns/sample/ch (Clean STD): TelemetryAccum::accumulate ~3.3, the colour-input peak ~0.7, the detail
+//     outputs of control() and the per-chunk internals latch the rest. accumulate keeps its accumulators in locals
+//     (TelemetryAccum.h) and the colour-input meter gets each chunk's peak at colIn[c][0] (the meter reads only the
+//     block's peak; colIn[c][1...] stay 0), 4 wide: both bit-identical. An FB kernel's static target (ControlIo::tgtDb,
+//     the FB curve solved at every sample by Newton) was most of Opto 2A's attached cost and a third of Mu 67's; it is
+//     cut where that is exact: FeedbackZdf stops at a Newton fixed point and ModeEngine reuses the last solve while x
+//     and the level controls are the same bits (both bit-identical). It stays a per-sample value: HistoryColumn::
+//     tgtMaxDb is the max over the column's samples (01 §6.3, ui.truth holds it to 0.1 dB against the tap), and a
+//     target evaluated only on a sample grid misses a periodic detector's peaks whenever they fall off the grid (a
+//     1 kHz tone repeats every 48 samples, so its peaks land on the same residues every period: ui.truth.diode-609
+//     read 0.17 dB low at every grid stride tried, 4 to 16).
 
 #include "fcdsp/engine/EngineHost.h"
 
@@ -576,17 +588,24 @@ struct EngineHost::Impl {
                 applyGain(w, linOs.data(), 0.0f, false, nOs4);
             }
             if (keepColourIn)
-                for (int i = 0; i < n; ++i)
+            {
+                // The colour-input meter reads only the block's peak (TelemetryAccum's colPeak_), so the chunk's peak
+                // over its OS samples is all it needs (file comment "Telemetry cost"): 4 wide, then the tail.
+                const int nOsFloor4 = nOs & ~3;
+                simd::f32x4 mv = simd::set1(0.0f);
+                for (int k = 0; k < nOsFloor4; k += 4)
+                    mv = simd::max(mv, simd::abs(simd::load(w + k)));
+                float m = simd::lane<0>(mv);
+                m = simd::lane<1>(mv) > m ? simd::lane<1>(mv) : m;
+                m = simd::lane<2>(mv) > m ? simd::lane<2>(mv) : m;
+                m = simd::lane<3>(mv) > m ? simd::lane<3>(mv) : m;
+                for (int k = nOsFloor4; k < nOs; ++k)
                 {
-                    float m = 0.0f;
-                    for (int j = 0; j < factor; ++j)
-                    {
-                        const float v = w[factor * i + j];
-                        const float a = v < 0.0f ? -v : v;
-                        m = a > m ? a : m;
-                    }
-                    colIn[c][static_cast<std::size_t>(i)] = m;
+                    const float a = w[k] < 0.0f ? -w[k] : w[k];
+                    m = a > m ? a : m;
                 }
+                colIn[c][0] = m;                                // colIn[c][1...] stay 0 (value-initialised)
+            }
         }
         float* wetPtr[2] = { w0, w1 };
         const float* grPtr[2] = { grOs[0].data(), grOs[1].data() };

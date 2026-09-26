@@ -1,18 +1,33 @@
-// Tools/bench/Bench.cpp: fcmp_bench, the CPU bench (F4, S3; C §5.8 "CPU bench"; E §3.7; 03 §3.9). Not a gate: CTest
-// runs it as bench.<key> (label `bench`, outside `verify`), and the lead runs it alone, never while agents build.
+// Tools/bench/Bench.cpp: fcmp_bench, the CPU bench (F4, S3; C §5.8 "CPU bench"; E §3.7; 03 §3.9; S13 H1b). Not a gate:
+// CTest runs it as bench.<key> (label `bench`, outside `verify`), and the lead runs it alone, never while agents build.
 //
-//   fcmp_bench [--mode <key>] [--budget] [--quick] [--seconds <s>]
+//   fcmp_bench [--mode <key>] [--quality eco|std|hq] [--rate <hz>] [--detached | --attached] [--budget] [--quick]
+//              [--seconds <s>] [--reps <n>]
 //
 // For each registered Mode (or --mode <key>), fcdsp::EngineHost runs the Mode's defaults on a fixed program (seeded
-// noise bursts over a sine, generated before timing starts) at {48 kHz / 128, 96 kHz / 64, 192 kHz / 32} (rate /
-// block), with the editor detached (the plugin's usual state) and attached (telemetry on). The time of the process()
-// calls alone is measured with steady_clock; the best of 5 repetitions after a warm-up is reported as
+// noise bursts over a triangle, generated before timing starts) at {48 kHz / 128, 96 kHz / 64, 192 kHz / 32} (rate /
+// block) and every Quality, with the editor detached (the plugin's usual state) and attached (telemetry on). --quality,
+// --rate, --detached and --attached narrow the grid (an A/B of two builds runs one row at a time). The time of the
+// process() calls alone is measured with steady_clock; the best of --reps repetitions (5) after a warm-up is reported as
 //   ns per base-rate sample per channel   (E §3.7's unit, the unit of ModeDescriptor::ctBudgetNsPerSample)
 //   % of one core                          (the whole stereo stream in real time)
-// and its ratio to ctBudgetNsPerSample. Quality: ECO, STD and HQ rows (S6 lead revision, after F7);
-// the budget is E §3.7's STD figure, so ECO is expected well below it.
+// and its ratio to the row's budget.
 //
-// Exit: 0; with --budget, 1 when a row exceeds 3 x ctBudgetNsPerSample (C §5.8); 2 for a usage error or an unknown
+// Budgets (S13 H1b: the HQ rule). ctBudgetNsPerSample is E §3.7's STD figure: the whole engine (host, oversampler,
+// control path, colour) per base-rate sample per channel at 2x. A row's budget is
+//   ECO, STD   ctBudgetNsPerSample                      (ECO runs no oversampler: expected well below it)
+//   HQ         ctBudgetNsPerSample + kHqAllowanceNs     (the 4x linear-phase FIR pair, and the gain, colour and mix at
+//                                                        twice STD's rate: +15...+26 ns over STD for every Mode, S12
+//                                                        and S13 benches; the allowance is Mode-independent because
+//                                                        the cost it pays for is)
+// for the editor detached AND attached: the attached cost (telemetry) is part of the budget.
+// The BUDGET ROWS are the 48 kHz / 128 rows (E §3.7's reference; C §5.8's "48k/128" row): each must be <= 1.0x its
+// budget. The 96 kHz / 64 and 192 kHz / 32 rows are reported with their ratio for information only: a 32-sample block
+// pays the per-block work (parameter targets, the UiFrame, the Mode's internals) over a quarter of the samples.
+// Every row must stay <= 3x its budget (C §5.8's loose ceiling).
+//
+// Output: one "bench ..." line per row, then per Mode "budget <key>: pass|OVER (worst budget row <r>x at <row>)".
+// Exit: 0; with --budget, 1 when a budget row exceeds 1.0x or any row 3x its budget; 2 for a usage error or an unknown
 // Mode. --quick (0.05 s, one repetition) is a smoke run: its numbers are not measurements.
 #include "fcdsp/engine/EngineHost.h"
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -29,6 +44,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -36,11 +52,20 @@
 
 namespace
 {
+    // The HQ rule (header comment): the allowance for the 4x FIR over a Mode's STD budget, ns per sample per channel.
+    constexpr double kHqAllowanceNs = 30.0;
+    constexpr double kBudgetRowRate = 48000.0;          // the budget rows: 48 kHz / 128
+    constexpr double kLooseCeiling = 3.0;               // C §5.8
+
     struct Options
     {
-        std::string mode;                   // empty: every registered Mode
+        std::string mode;                               // empty: every registered Mode
+        int quality = -1;                               // -1: every Quality
+        double rate = 0.0;                              // 0: every rate
+        int attached = -1;                              // -1: both; 0 detached; 1 attached
         bool budget = false, quick = false;
         double seconds = 2.0;
+        int reps = 5;
     };
 
     struct Config
@@ -51,9 +76,26 @@ namespace
 
     constexpr Config kConfigs[] = { { 48000.0, 128 }, { 96000.0, 64 }, { 192000.0, 32 } };
 
+    struct QualityRow
+    {
+        fcdsp::Quality q;
+        const char* name;
+    };
+
+    constexpr QualityRow kQualities[] = { { fcdsp::Quality::eco, "eco" }, { fcdsp::Quality::std, "std" },
+                                          { fcdsp::Quality::hq, "hq" } };
+
     void usage(std::FILE* f)
     {
-        std::fprintf(f, "usage: fcmp_bench [--mode <key>] [--budget] [--quick] [--seconds <s>]\n");
+        std::fprintf(f, "usage: fcmp_bench [--mode <key>] [--quality eco|std|hq] [--rate <hz>] [--detached | "
+                        "--attached] [--budget] [--quick] [--seconds <s>] [--reps <n>]\n");
+    }
+
+    // A row's budget, ns per base-rate sample per channel (header comment).
+    double budgetNs(const fcdsp::ModeDescriptor& d, fcdsp::Quality q) noexcept
+    {
+        const double b = static_cast<double>(d.ctBudgetNsPerSample);
+        return q == fcdsp::Quality::hq ? b + kHqAllowanceNs : b;
     }
 
     // A deterministic program (PCG32, no libm): a 110 Hz-ish triangle at -12 dBFS with noise bursts at -6 dBFS.
@@ -126,51 +168,88 @@ namespace
         return spent;
     }
 
-    // Benchmarks one Mode; returns false when a row exceeds 3 x its budget.
+    // Benchmarks one Mode; returns false when --budget would fail it (a budget row over 1.0x or any row over 3x).
     bool benchMode(const fcdsp::ModeSlot& ms, const Options& opt)
     {
         const fcdsp::ModeEntry& en = *ms.entry;
-        const double budget = static_cast<double>(en.desc->ctBudgetNsPerSample);
         const fcdsp::BlockParams bp = defaultsOf(en);
-        const int reps = opt.quick ? 1 : 5;
+        const int reps = opt.quick ? 1 : opt.reps;
         const double seconds = opt.quick ? 0.05 : opt.seconds;
+        const std::string key(ms.key);
         bool within = true;
-        struct Q { fcdsp::Quality q; const char* name; };
-        constexpr Q kQualities[] = { { fcdsp::Quality::eco, "eco" }, { fcdsp::Quality::std, "std" },
-                                     { fcdsp::Quality::hq, "hq" } };   // S6 lead revision: every quality (F7 landed)
-        for (const Q& qu : kQualities)
-        for (const Config& c : kConfigs)
+        bool anyBudgetRow = false;
+        double worst = 0.0;
+        std::string worstRow;
+        for (const QualityRow& qu : kQualities)
         {
-            const auto n = static_cast<std::size_t>(seconds * c.fs);
-            const Program in = program(n, c.fs);
-            std::vector<float> ol(n), orr(n);
-            for (const bool attached : { false, true })
+            if (opt.quality >= 0 && static_cast<int>(qu.q) != opt.quality)
+                continue;
+            const double budget = budgetNs(*en.desc, qu.q);
+            for (const Config& c : kConfigs)
             {
-                auto host = std::make_unique<fcdsp::EngineHost>();
-                fcdsp::HostConfig cfg;
-                cfg.fs = c.fs;
-                cfg.maxBlock = c.block;
-                cfg.quality = qu.q;
-                cfg.budget = fcdsp::LookaheadBudget::off;
-                host->configure(cfg, bp);
-                if (attached)
-                    host->setUiAttached(true);
-                if (!opt.quick)
-                    (void) timePass(*host, bp, in, ol, orr, c.block);          // warm-up
-                double best = 1e300;
-                for (int r = 0; r < reps; ++r)
-                    best = std::min(best, timePass(*host, bp, in, ol, orr, c.block));
-                const double nsPerSampleCh = best * 1e9 / (static_cast<double>(n) * 2.0);
-                const double core = 100.0 * best / seconds;
-                const double ratio = budget > 0.0 ? nsPerSampleCh / budget : 0.0;
-                std::printf("bench %-12s %-3s %6.0f/%-4d %-8s %8.3f ns/sample/ch  %6.3f %% of one core  budget %g ns: "
-                            "%.3fx%s\n",
-                            std::string(ms.key).c_str(), qu.name, c.fs, c.block, attached ? "attached" : "detached",
-                            nsPerSampleCh, core, budget, ratio, ratio > 3.0 ? "  OVER 3x" : "");
-                within = within && !(ratio > 3.0);
+                if (opt.rate > 0.0 && c.fs != opt.rate)
+                    continue;
+                const auto n = static_cast<std::size_t>(seconds * c.fs);
+                const Program in = program(n, c.fs);
+                std::vector<float> ol(n), orr(n);
+                for (const bool attached : { false, true })
+                {
+                    if (opt.attached >= 0 && attached != (opt.attached == 1))
+                        continue;
+                    auto host = std::make_unique<fcdsp::EngineHost>();
+                    fcdsp::HostConfig cfg;
+                    cfg.fs = c.fs;
+                    cfg.maxBlock = c.block;
+                    cfg.quality = qu.q;
+                    cfg.budget = fcdsp::LookaheadBudget::off;
+                    host->configure(cfg, bp);
+                    if (attached)
+                        host->setUiAttached(true);
+                    if (!opt.quick)
+                        (void) timePass(*host, bp, in, ol, orr, c.block);          // warm-up
+                    double best = 1e300;
+                    for (int r = 0; r < reps; ++r)
+                        best = std::min(best, timePass(*host, bp, in, ol, orr, c.block));
+                    const double nsPerSampleCh = best * 1e9 / (static_cast<double>(n) * 2.0);
+                    const double core = 100.0 * best / seconds;
+                    const double ratio = budget > 0.0 ? nsPerSampleCh / budget : 0.0;
+                    const bool budgetRow = c.fs == kBudgetRowRate;
+                    const char* verdict = ratio > kLooseCeiling ? "  OVER 3x"
+                                        : (budgetRow && ratio > 1.0 ? "  OVER" : "");
+                    std::printf("bench %-12s %-3s %6.0f/%-4d %-8s %8.3f ns/sample/ch  %6.3f %% of one core  budget "
+                                "%g ns: %.3fx%s\n",
+                                key.c_str(), qu.name, c.fs, c.block, attached ? "attached" : "detached",
+                                nsPerSampleCh, core, budget, ratio, verdict);
+                    std::fflush(stdout);
+                    within = within && !(ratio > kLooseCeiling);
+                    if (budgetRow)
+                    {
+                        anyBudgetRow = true;
+                        within = within && !(ratio > 1.0);
+                        if (ratio > worst)
+                        {
+                            worst = ratio;
+                            worstRow = std::string(qu.name) + " " + (attached ? "attached" : "detached");
+                        }
+                    }
+                }
             }
         }
+        if (anyBudgetRow)
+            std::printf("budget %-12s %s (worst budget row %.3fx at %s)\n", key.c_str(), within ? "pass" : "OVER",
+                        worst, worstRow.c_str());
         return within;
+    }
+
+    bool parseQuality(std::string_view s, int& out) noexcept
+    {
+        for (const QualityRow& q : kQualities)
+            if (s == q.name)
+            {
+                out = static_cast<int>(q.q);
+                return true;
+            }
+        return false;
     }
 } // namespace
 
@@ -180,14 +259,31 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
     {
         const std::string_view a = argv[i] != nullptr ? argv[i] : "";
-        if (a == "--mode" && i + 1 < argc)
+        const bool hasValue = i + 1 < argc && argv[i + 1] != nullptr;
+        if (a == "--mode" && hasValue)
             opt.mode = argv[++i];
+        else if (a == "--quality" && hasValue)
+        {
+            if (!parseQuality(argv[++i], opt.quality))
+            {
+                usage(stderr);
+                return 2;
+            }
+        }
+        else if (a == "--rate" && hasValue)
+            opt.rate = std::strtod(argv[++i], nullptr);
+        else if (a == "--detached")
+            opt.attached = 0;
+        else if (a == "--attached")
+            opt.attached = 1;
         else if (a == "--budget")
             opt.budget = true;
         else if (a == "--quick")
             opt.quick = true;
-        else if (a == "--seconds" && i + 1 < argc)
+        else if (a == "--seconds" && hasValue)
             opt.seconds = std::max(0.05, std::strtod(argv[++i], nullptr));
+        else if (a == "--reps" && hasValue)
+            opt.reps = std::max(1, std::atoi(argv[++i]));
         else if (a == "--help" || a == "-h")
         {
             usage(stdout);
@@ -198,6 +294,12 @@ int main(int argc, char** argv)
             usage(stderr);
             return 2;
         }
+    }
+    if (opt.rate > 0.0 && std::none_of(std::begin(kConfigs), std::end(kConfigs),
+                                       [&](const Config& c) { return c.fs == opt.rate; }))
+    {
+        std::fprintf(stderr, "fcmp_bench: --rate must be one of 48000, 96000, 192000\n");
+        return 2;
     }
     if (opt.quick)
         std::printf("bench: --quick smoke run (0.05 s, one repetition): the numbers are not measurements\n");

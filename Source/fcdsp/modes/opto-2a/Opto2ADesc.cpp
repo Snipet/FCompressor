@@ -117,6 +117,6 @@ extern constexpr ModeDescriptor kOpto2A {
     .rigor = Rigor::character, .family = CurveFamily::custom,
     .attackSpec = &attackFromView,       // {0.010 s, expDb, lo 0.005, hi 0.020, program}
     .releaseSpec = &releaseFromView,     // {0.060 s, t50,   lo 0.040, hi 0.080, program}
-    .tailSeconds = &optoTail, .ctBudgetNsPerSample = 50, .internals = kOptoInt };
+    .tailSeconds = &optoTail, .ctBudgetNsPerSample = 60, .internals = kOptoInt };   // S13 H1b (budgets.md)
 
 } // namespace fcdsp::modes

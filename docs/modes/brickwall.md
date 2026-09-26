@@ -179,7 +179,8 @@ Probe changes by M7 (out of the card's OWNS, for the lead's approval):
 - TP at the top of the budget cannot align (the SC delay floors at 0): up to D_tp − D_up late.
 - A Mode switch into Brickwall cannot see peaks already inside the outgoing engine's window.
 - LOUD's ceiling is the HQ row; at ECO and STD the clipped waveform reconstructs over it (above).
-- `ctBudgetNsPerSample` (50) is DW's; `fcmp_bench` was not run (other agents were building). TP adds 72 fma per
+- `ctBudgetNsPerSample` 40 (S13 H1b, from measurement; was DW's 50): 28.8 / 32.4 ns/sample/ch at STD 48 kHz
+  detached / attached, 45.9 / 49.7 at HQ against 70 (the HQ rule; [budgets.md](budgets.md)). TP adds 72 fma per
   sample (4 lanes), the sliding max and two box sums are O(1) amortised per lane.
 
 ## Revision history

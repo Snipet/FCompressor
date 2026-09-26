@@ -40,6 +40,11 @@
 
 namespace fcmp
 {
+    // The session's root type, the APVTS state type (v1-forever, 01 §9.1). saveState and loadState name it through this
+    // constant, never through apvts.state, so a save on one host thread never reads the tree a load on another thread
+    // replaces (S13 H1b).
+    inline constexpr char kStateType[] = "PARAMS";
+
     // The optional <PRESET> child of <PARAMS> (01 §9.1 save step 3, load step 7). Installed by Presets.cpp (P3) through
     // PresetContext::stateHooks; null until then, and State.cpp calls each only when it is set.
     struct StateHooks
@@ -52,7 +57,7 @@ namespace fcmp
     // StateContext never outlives the processor.
     struct StateContext
     {
-        juce::AudioProcessorValueTreeState& apvts;   // the 29 host parameters; state type "PARAMS" (01 §9.1)
+        juce::AudioProcessorValueTreeState& apvts;   // the 29 host parameters; state type kStateType (01 §9.1)
         ProcessorFacade& facade;                     // beginBatch()/endBatch() (K2 #23)
         UiState& ui;                                 // <UI charExpanded scTab/> (P2)
         StateNotice& notice;                         // footer notices after a load (P2); serial bumps on every load

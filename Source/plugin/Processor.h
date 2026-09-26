@@ -14,10 +14,20 @@
 //             change announcement. No parameter listeners and no AsyncUpdater anywhere (K2 #6).
 //   prepare   prepareToPlay reads quality/labudget, calls EngineHost::configure (the only allocation point), then
 //             setLatencySamples, on whatever thread the host calls it from.
-//   any       the host-text lambdas (HostText.cpp: currentRaw() + formatHost/parseHost), currentRaw(), telemetry reads.
+//   any       the host-text lambdas (HostText.cpp: currentRaw() + formatHost/parseHost), currentRaw(), telemetry reads,
+//             stateNotice(), and get/setStateInformation (a host may save or load a session off the message thread).
+//
+// The per-instance UI state and the state notice (S13 H1b, lead revision 5a; the S8 race): a load on any thread never
+// touches what the editor holds. uiState() returns the message thread's own UiState (ui_); loads hand theirs over
+// through one atomic word (uiShared_: charExpanded, scTab and a load generation), which the message thread adopts at
+// its next sync (every uiState() call, every SetupWatcher tick, a save or load on the message thread) and otherwise
+// refreshes from ui_, so a save on another thread reads a race-free UiState at most one sync (50 ms) old. The notice
+// is published through fcdsp::Seqlock (01 §6.1) once per accepted load and read by stateNotice() on any thread;
+// concurrent loads serialise only their publish (noticeWrite_), never a reader.
 //
 // Buses (proc.layout, B §7.4.7): main in -> out 1->1, 1->2 and 2->2 are accepted, 2->1 is rejected; the side-chain
-// input is optional (disabled, mono or stereo). Product constants come from FcmpProduct.h, never JucePlugin_*.
+// input is optional (disabled, mono or stereo; never disabled under an Audio Unit wrapper, which has no disabled buses:
+// S13 H1b). Product constants come from FcmpProduct.h, never JucePlugin_*.
 //
 // P2 and P3 never touch Processor.cpp (SPRINTS §7 D20): state goes through State.h's entry points, presets through
 // makePresetAccess (Presets.cpp), both with contexts this processor builds.
@@ -33,6 +43,7 @@
 #include "fcdsp/params/Resolve.h"
 #include "fcdsp/params/Setup.h"
 #include "fcdsp/telemetry/HistoryRing.h"
+#include "fcdsp/telemetry/Seqlock.h"
 #include "fcdsp/telemetry/UiFrame.h"
 
 #include <funkgui/params/JuceParamPort.h>
@@ -122,8 +133,8 @@ namespace fcmp
         bool readUiFrame(fcdsp::UiFrame&) const override;
         const fcdsp::HistoryRing& history() const override;
         void setUiAttached(bool) override;                       // EngineHost's attach count (01 §6.3)
-        UiState& uiState() override;
-        StateNotice stateNotice() const override;
+        UiState& uiState() override;                             // message thread: syncs, then the editor's own copy
+        StateNotice stateNotice() const override;                // any thread (Seqlock)
         void beginBatch() override;                              // nestable; the audio thread keeps the previous
         void endBatch() override;                                //   BlockParams; the outermost end raises the snap
         PresetAccess& presets() override;
@@ -151,6 +162,8 @@ namespace fcmp
         static void buildBlockParams(const fcdsp::RawParams&, const Globals&, fcdsp::Resolution& scratch,
                                      fcdsp::BlockParams& out) noexcept;
         void pullBlockParams() noexcept FCDSP_NONBLOCKING;       // audio thread: skipped while a batch is open
+        void syncUi() noexcept;                                  // message thread: adopt a loaded UiState, or mirror ui_
+        void publishLoadedUi(const UiState&) noexcept;           // any thread: a load's UiState, next generation
         void render(juce::AudioBuffer<float>&, bool hostBypassed) noexcept FCDSP_NONBLOCKING;
         // setupMutex_ held, the audio thread not running (prepareToPlay, or SetupWatcher under suspendProcessing):
         // publishes the configured setup, rebuilds block_ (unless a batch is open) and configures the engine.
@@ -184,8 +197,14 @@ namespace fcmp
         std::atomic<int> latency_{0};
         std::atomic<double> sampleRate_{0.0};
 
+        // UI state and notices (the header comment): ui_ and uiGeneration_ belong to the message thread; uiShared_ is
+        // the handoff word; noticeSerial_ is guarded by noticeWrite_, which only publishers take.
         UiState ui_{};
-        StateNotice notice_{};
+        std::uint32_t uiGeneration_ = 0;
+        std::atomic<std::uint32_t> uiShared_{ 0 };
+        fcdsp::Seqlock<StateNotice> notice_{};
+        std::mutex noticeWrite_;
+        std::uint32_t noticeSerial_ = 0;
         StateHooks stateHooks_{};
         std::unique_ptr<PresetAccess> presets_;
         SetupWatcher setup_{ *this };

@@ -105,7 +105,7 @@ extern constexpr ModeDescriptor kBrickwall {
     .hasColour = true, .colourStatic = true, .wantsLookahead = true,
     .rigor = Rigor::character, .family = CurveFamily::textbook,
     .attackSpec = &attackFromView, .releaseSpec = &releaseFromView, .tailSeconds = &tailFromRelease,
-    .ctBudgetNsPerSample = 50, .internals = kBrickwallInt };
+    .ctBudgetNsPerSample = 40, .internals = kBrickwallInt };   // S13 H1b: measured (docs/modes/budgets.md)
 
 } // namespace fcdsp::modes
 

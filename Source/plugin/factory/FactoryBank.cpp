@@ -149,7 +149,7 @@ namespace fcmp::factory
     {
         funkgui::presets::ProductConfig c;
         c.productName = product::kName;                            // "FCompressor"
-        c.fileExtension = ".fcmppreset";
+        c.fileExtension = product::kPresetExtension;               // ".fcmppreset" (S13 lead revision 5e)
         c.xmlRoot = juce::String(product::kName) + "Preset";       // "FCompressorPreset"
         c.dbEnvVar = juce::String(product::kEnvPrefix) + "PRESETS_DB";   // "FCMP_PRESETS_DB"
         return c;

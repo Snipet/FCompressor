@@ -2,8 +2,8 @@
 // the process-wide preset store, and the factory bank compiled into this build.
 //
 // - presetConfig(): ProductConfig {"FCompressor", ".fcmppreset", "FCompressorPreset", "FCMP_PRESETS_DB"}, spelled from
-//   FcmpProduct.h (product name, environment prefix), so a store, an exported file and the database location all name
-//   the same product.
+//   FcmpProduct.h (product name, kPresetExtension, environment prefix), so a store, an exported file and the database
+//   location all name the same product.
 // - SharedPresetStore: the one PresetStore per process (funkgui::presets::PresetStore's own advice), held through
 //   juce::SharedResourcePointer<SharedPresetStore> by every instance's PresetAccess once its editor first asks for the
 //   list, so a plugin instance without an editor never opens the database. Opening it syncs the factory rows

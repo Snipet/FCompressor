@@ -12,6 +12,8 @@
 //      latency change (there is no engine to configure yet).
 //   2. mode: when the effective Mode slot changes, updateHostDisplay(ChangeDetails().withParameterInfoChanged(true)),
 //      so hosts fetch the new Mode's value texts (<= 50 ms after the change; nothing on the audio thread calls it).
+//   3. the UI-state handoff (Processor.h; S13 H1b): a UiState loaded on another thread reaches the editor's copy, and
+//      the editor's writes reach the word a save on another thread reads, within one tick.
 //
 // Lock order (no deadlock with a wrapper that calls prepareToPlay under the processor's callback lock, as the AU wrapper
 // does on an offline-render switch): suspendProcessing takes and releases the callback lock BEFORE the processor's
