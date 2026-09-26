@@ -11,6 +11,7 @@
 //   Bus G       a console bus compressor's black meter, white print, COMPRESSION 20 … 0 with the needle resting right
 //   Bus 25      a modern console bus compressor's cream meter, black print, GAIN REDUCTION 20 … 0 resting right
 //   Brickwall   a digital limiter's LED ladder: amber segments with a red top, fast (no needle)
+//   Octo        the hybrid VCA's red gain-reduction LEDs: the ladder in red throughout (v1.2)
 // Every face keeps the ADR-72 needle (mass-spring, 99 % in 300 ms, 1.25 % overshoot, the display clock), except the
 // LED ladder, which shows the GR at once and falls at kLedFallDbPerS. The hardware plates keep their own fixed colours
 // in both themes, as hardware does; a small lamp in the Mode colour (ADR-75) sits in each plate's corner. Everything
@@ -53,7 +54,8 @@ namespace fcmp::ui
         bool      restRight = true;                               // grLinear: 0 dB GR on the right end
         float     lowDb = -20.0f, highDb = 3.0f;                  // the readings at the scale's ends (vuGain)
         std::span<const FaceMark> marks;                          // labelled and unlabelled ticks, labels in order
-        float     zoneFromDb = 1.0f;                              // vuGain: a red zone from here to highDb (> hi: none)
+        float     zoneFromDb = 1.0f;                              // vuGain: a red zone from here to highDb (> hi: none);
+                                                                  // led: segments from here (GR dB) up are red (> kLedMaxDb: none)
         funkgui::Col bezel, ring, face, print, zone, needle, glow, dim;   // dim: an unlit LED segment
         const char* legend = "";                                  // large, above the pivot
         const char* legend2 = "";                                 // small, under the legend
@@ -63,7 +65,7 @@ namespace fcmp::ui
     {
         inline constexpr float kLedMaxDb = 24.0f;                 // the ladder: 24 segments of 1 dB
         inline constexpr int   kLedSegments = 24;
-        inline constexpr float kLedRedFromDb = 12.0f;             // segments from here up are red
+        inline constexpr float kLedRedFromDb = 12.0f;             // Brickwall's ladder: red from here up
         inline constexpr double kLedFallDbPerS = 20.0;            // the ladder falls this fast (attack is instant)
 
         // A VU face prints its numbers without signs, as the hardware does: 20 … 1 0 in the print ink, 1 2 3 above 0
@@ -101,7 +103,7 @@ namespace fcmp::ui
 
         inline constexpr MeterFace kPanel {};                     // the panel face: GrVuMeter draws it from layout::vu
 
-        inline constexpr std::array<MeterFace, 7> kFaces { {
+        inline constexpr std::array<MeterFace, 8> kFaces { {
             { "fet-76", FacePlate::light, FaceLaw::vuGain, true, -20.0f, 3.0f, kVuMarks, 0.0f,
               rgb(0x141414), rgb(0x141414), rgb(0xF2EEE3), rgb(0x1B1B1B), rgb(0xC62F24), rgb(0x111111), rgb(0xFFFFFF),
               rgb(0x000000), "VU", "GAIN REDUCTION" },
@@ -120,9 +122,12 @@ namespace fcmp::ui
             { "bus-25", FacePlate::light, FaceLaw::grLinear, true, -20.0f, 0.0f, kGr2Marks, 99.0f,
               rgb(0x2F3A45), rgb(0x2F3A45), rgb(0xECE4CE), rgb(0x1E1E1E), rgb(0x000000), rgb(0x1A1A1A), rgb(0xFFFFFF),
               rgb(0x000000), "GAIN REDUCTION", "DB" },
-            { "brickwall", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, 99.0f,
+            { "brickwall", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, meterface::kLedRedFromDb,
               rgb(0x2B2B2E), rgb(0x2B2B2E), rgb(0x0E0E10), rgb(0xC8C2B0), rgb(0xFF3B30), rgb(0xFFB000), rgb(0x000000),
               rgb(0x2E2410), "ATTENUATION", "DB" },
+            { "octo", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, 99.0f,
+              rgb(0x1C1C1E), rgb(0x1C1C1E), rgb(0x0B0B0C), rgb(0xC9C4B8), rgb(0xFF3B30), rgb(0xFF3B30), rgb(0x000000),
+              rgb(0x2E1210), "GAIN REDUCTION", "DB" },
         } };
     }
 

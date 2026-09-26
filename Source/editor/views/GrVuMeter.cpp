@@ -402,8 +402,9 @@ namespace fcmp::ui
         }
     }
 
-    // The LED ladder (ADR-76): 24 segments of 1 dB, lit from the left up to the GR shown (amber, red from
-    // kLedRedFromDb), the legend over them and the dB labels under them at the segment edges.
+    // The LED ladder (ADR-76): 24 segments of 1 dB, lit from the left up to the GR shown (the needle ink, the zone ink
+    // from the face's zoneFromDb: Brickwall amber, red from 12 dB; Octo all red), the legend over them and the dB labels
+    // under them at the segment edges.
     void GrVuMeter::drawLed(funkgui::Canvas& c, const funkgui::Theme& /*th*/) const
     {
         const MeterFace& f = *face_;
@@ -420,7 +421,7 @@ namespace fcmp::ui
         for (int i = 0; i < meterface::kLedSegments; ++i)
         {
             const float x = V::kLedLeft + static_cast<float>(i) * V::kLedPitch;
-            const bool red = static_cast<float>(i) >= meterface::kLedRedFromDb;
+            const bool red = static_cast<float>(i) >= f.zoneFromDb;
             if (i < lit)
             {
                 const funkgui::Canvas::Scope scope(c, tag::grNeedle, true);

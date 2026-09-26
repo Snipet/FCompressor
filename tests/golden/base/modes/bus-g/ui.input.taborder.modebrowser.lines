@@ -1,8 +1,9 @@
 1 modeBrowser:257 listItem BUS G
 2 modeBrowser:262 listItem BUS 25
-3 modeBrowser:258 listItem FET 76
-4 modeBrowser:259 listItem OPTO 2A
-5 modeBrowser:260 listItem MU 67
-6 modeBrowser:261 listItem DIODE 609
-7 modeBrowser:256 listItem CLEAN
-8 modeBrowser:263 listItem BRICKWALL
+3 modeBrowser:264 listItem OCTO
+4 modeBrowser:258 listItem FET 76
+5 modeBrowser:259 listItem OPTO 2A
+6 modeBrowser:260 listItem MU 67
+7 modeBrowser:261 listItem DIODE 609
+8 modeBrowser:256 listItem CLEAN
+9 modeBrowser:263 listItem BRICKWALL

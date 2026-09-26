@@ -27,7 +27,7 @@
  5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
  2 Next preset              528,14,24,32
  2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
- 7 Status                   40,324,532,16        value=34 PRESETS [ro]
+ 7 Status                   40,324,532,16        value=41 PRESETS [ro]
  3 Show                     32,88,144,224        value=ALL
  4 All                      32,88,144,18         checked
  4 Factory                  32,106,144,18        unchecked

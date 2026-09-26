@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.link  scope=modes/octo
+# key	value	tolerance
+link.ff.k0.gr_l_db	9	abs:0.01
+link.ff.k0.gr_r_db	0	abs:0.01
+link.ff.k100.gr_l_db	4.5	abs:0.01
+link.ff.k100.gr_r_db	4.5	abs:0.01
