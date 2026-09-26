@@ -116,7 +116,12 @@ namespace fcmp::ui::tag
     inline constexpr Tag browserCurrent = 328;  // BROWSER_CURRENT the current row's bar
     inline constexpr Tag browserPager  = 329;   // BROWSER_PAGER   ‹ 1/2 ›
 
-    inline constexpr Tag last          = 329;
+    // ---- v1.1 (ADR-74, ADR-75) -------------------------------------------------------------------------------------------
+    inline constexpr Tag linkedBox     = 330;   // LINKED_BOX      the box around a linked (derived) slot
+    inline constexpr Tag modeRule      = 331;   // MODE_RULE       the Mode-coloured rule under the Mode name
+    inline constexpr Tag modeSwatch    = 332;   // MODE_SWATCH     a Mode browser row's colour swatch
+
+    inline constexpr Tag last          = 332;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -148,6 +153,7 @@ namespace fcmp::ui::tag
         { detTick, "DET_TICK" },             { rangeBar, "RANGE_BAR" },
         { browserBg, "BROWSER_BG" },         { browserHeading, "BROWSER_HEADING" }, { browserRow, "BROWSER_ROW" },
         { browserCurrent, "BROWSER_CURRENT" }, { browserPager, "BROWSER_PAGER" },
+        { linkedBox, "LINKED_BOX" },         { modeRule, "MODE_RULE" },          { modeSwatch, "MODE_SWATCH" },
     } };
 
     namespace detail

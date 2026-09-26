@@ -566,6 +566,29 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     `textGamma` is re-tuned so thin dark text does not read lighter than its ink.
   - Card H1a (S13), first deliverable. It adds a `ui.contrast` probe and PAPER PNGs of every view.
 
+## After v1 (user requests, 2026-09-26)
+
+- **ADR-74 Linked slots sit in a box (v1.1).** The user asked that a parameter that depends on another one, and so
+  cannot be edited on its own, be visibly marked. Every slot in the derived state (for example Bus G's KNEE "= RATIO",
+  Mu 67's RATIO "PROGRESSIVE" and ATTACK "= TIME", and Brickwall's ATTACK "= LOOKAHEAD") is drawn inside a box.
+  - The box is the slot's hit rectangle, radius 4, with a 1 px ink32 border and an ink16 fill at 35 %, drawn under the
+    slot (`SlotGrid::draw`, tag `LINKED_BOX`).
+  - The tag that names what it follows, the "FOLLOWS …" sub-line and the footer spec stay as they were.
+  - Locked slots (fixed by the Mode) keep their dotted track and are not boxed; they depend on no other control.
+- **ADR-75 Each Mode has its own colour (v1.1).** The user asked for each compressor type to have its own colour
+  theming, or at least a creative distinction between Modes.
+  - Each Mode has one colour per theme (`ProductTheme.h` `kModeColours`), and it replaces the `signal` ink.
+    Everything live about gain reduction therefore takes the Mode's colour, with no conditional in the views: the GR
+    readout and live bar, the VU needle, the GR meter, the history's GR trace, the operating dot and RANGE's bar.
+  - The rule under the Mode name in the header, now 2 px, is the Mode's colour, and each Mode browser row carries a
+    swatch after its name, so the colour and the Mode are learnt together.
+  - A Mode change eases the colour over 0.25 s (smootherstep).
+  - The hues sit around the wheel, away from the accent's vermilion: FET 76 amber, Opto 2A lime, Mu 67 green, Clean
+    cyan (the former signal), Bus G azure, Bus 25 periwinkle, Diode 609 violet, Brickwall magenta. Each is at least
+    8:1 on GRAPHITE and 5.8:1 on PAPER (`ui.contrast` rows `contrast.mode.*`, targets 7 and 5.5).
+  - A Mode not in the table draws Clean's colour.
+  - The accent (the control under the hand) is unchanged.
+
 ## HardwareReverb migration
 
 - **ADR-71 HR's preset schema moves to v2 (lead, 2026-09-24).** FunkPresets (FunkGui v0.8.0) writes schema v2: a

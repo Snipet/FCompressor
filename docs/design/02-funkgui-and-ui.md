@@ -1722,6 +1722,11 @@ state and marker occurs on this one layout:
 
 ### 6.6 Display row and footer
 
+> **v1.1 revision (ADR-74, ADR-75).** A linked (derived) slot is drawn inside a box (its hit rectangle, ink32 border,
+> ink16 fill at 35 %). The `signal` ink is the current Mode's colour (`ProductTheme.h`), eased over 0.25 s across a Mode
+> change; the header's rule under the Mode name is that colour and 2 px thick, and the Mode browser shows a swatch
+> after each Mode's name.
+
 > **S12 revision (UF1b, ADR-68/68a).** The footer carries ZOOM cells beside THEME: a caption at (606, 605) and cells
 > 100/125/150/175 at x 638/674/710/746 (32 × 16, y 601, 4 px apart). A step that does not fit the display is drawn
 > in ink16 and refuses clicks, and its hover hint reads "<n> % NEEDS A LARGER DISPLAY". The footer spec line narrows

@@ -96,6 +96,19 @@ namespace fcmp::ui::layout
         inline constexpr float kGrShownDb = 0.05f;              // GAIN REDUCTION in `signal` when live and above this
     }
 
+    // ---- v1.1 (ADR-74, ADR-75) ------------------------------------------------------------------------------------------
+    // ADR-75: a Mode change eases the Mode colour (the signal ink) over this long (smootherstep).
+    inline constexpr float kModeColourS = 0.25f;
+    // ADR-74: a linked (derived) slot sits in a box: the slot's hit rectangle (SlotGeom::hit, x−6 … x+w+6) with this
+    // corner radius, a 1 px ink32 border and an ink16 fill at kLinkedFillAlpha, drawn under the slot.
+    inline constexpr float kLinkedRadius = 4.0f;
+    inline constexpr float kLinkedFillAlpha = 0.35f;
+    // ADR-75: the header's rule under the Mode name is the Mode colour, this thick; the Mode browser's swatch per row
+    // is a disc of this radius, centred kSwatchInset px after the end of the row's name.
+    inline constexpr float kModeRuleH = 2.0f;
+    inline constexpr float kSwatchR = 3.0f;
+    inline constexpr float kSwatchInset = 11.0f;
+
     // ---- footer (02 §6.3, §6.6) ---------------------------------------------------------------------------------------
     namespace footer
     {

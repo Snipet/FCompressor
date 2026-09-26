@@ -30,9 +30,30 @@
 // than their ink; tuned by eye on the PNGs, 0.8 fills them out towards the ink without blooming (GRAPHITE fattens its
 // light text with 1/1.4). The host records its own theme's textGamma into the frame (EditorHost, HeadlessHost), so
 // Panel::draw begins the still-empty frame again with this value (Canvas::begin; Panel.cpp) whenever it draws PAPER.
+//
+// Mode colours (ADR-75, v1.1; the user asked for each compressor type to have its own colour). Every Mode has one
+// colour per theme, and it replaces the theme's `signal` token, the ink of live gain-reduction data (the GR readout
+// and its live bar, the VU needle, the GR meter, the history's GR trace, the operating dot, RANGE's bar), so a
+// Mode's live picture takes its colour with no conditional anywhere in the views. The header's rule under the Mode name
+// and a swatch per row of the Mode browser draw the same colour, so the colour and the Mode are learnt together. The hues
+// sit around the wheel away from the accent's vermilion (the control under the hand), so the two never read alike.
+// WCAG ratio against the ground (targets: GRAPHITE >= 7, PAPER >= 5.5, ADR-73's signal target; ui.contrast checks):
+//   Mode        hue    GRAPHITE           PAPER
+//   fet-76       45°   FFC857  11.65      7A4E00  6.04     amber
+//   opto-2a      80°   C6E86B  12.94      4A6200  5.80     lime
+//   mu-67       135°   7EE08F  11.05      17662F  5.92     green
+//   clean       190°   7FD4E8  10.66      0A5668  6.93     cyan (FunkGui's GRAPHITE signal; ADR-73's PAPER signal)
+//   bus-g       215°   8CB8FF   8.89      1C4A9E  6.99     azure
+//   bus-25      245°   A9A5FF   8.12      4238A8  7.46     periwinkle
+//   diode-609   275°   D69EFF   8.70      6E2FA3  6.78     violet
+//   brickwall   320°   FF92D4   8.80      962470  6.33     magenta
+// A Mode not in the table (a later wave before it gets its own) draws Clean's colour.
 #pragma once
 
 #include <funkgui/core/Theme.h>
+
+#include <array>
+#include <string_view>
 
 namespace fcmp::ui
 {
@@ -52,6 +73,39 @@ namespace fcmp::ui
                  { 0xD4, 0x7E, 0x60 },                           // accentDim
                  { 0x0A, 0x56, 0x68 },                           // signal
                  0.8f };                                          // textGamma
+    }
+
+    // ADR-75: each Mode's colour in GRAPHITE and in PAPER (see above).
+    struct ModeColour
+    {
+        std::string_view key;
+        funkgui::Col     graphite, paper;
+    };
+    inline constexpr std::array<ModeColour, 8> kModeColours { {
+        { "clean",     { 0x7F, 0xD4, 0xE8 }, { 0x0A, 0x56, 0x68 } },
+        { "bus-g",     { 0x8C, 0xB8, 0xFF }, { 0x1C, 0x4A, 0x9E } },
+        { "fet-76",    { 0xFF, 0xC8, 0x57 }, { 0x7A, 0x4E, 0x00 } },
+        { "opto-2a",   { 0xC6, 0xE8, 0x6B }, { 0x4A, 0x62, 0x00 } },
+        { "mu-67",     { 0x7E, 0xE0, 0x8F }, { 0x17, 0x66, 0x2F } },
+        { "diode-609", { 0xD6, 0x9E, 0xFF }, { 0x6E, 0x2F, 0xA3 } },
+        { "bus-25",    { 0xA9, 0xA5, 0xFF }, { 0x42, 0x38, 0xA8 } },
+        { "brickwall", { 0xFF, 0x92, 0xD4 }, { 0x96, 0x24, 0x70 } },
+    } };
+
+    // A light-ground theme (PAPER) takes a Mode colour's dark variant.
+    constexpr bool isLightTheme(const funkgui::Theme& th) noexcept
+    {
+        return static_cast<int>(th.ground.r) + th.ground.g + th.ground.b > 3 * 128;
+    }
+
+    // The colour of Mode `key` on theme `th`; Clean's for a key the table does not name.
+    constexpr funkgui::Col modeColour(std::string_view key, const funkgui::Theme& th) noexcept
+    {
+        const ModeColour* found = &kModeColours[0];
+        for (const ModeColour& m : kModeColours)
+            if (m.key == key)
+                found = &m;
+        return isLightTheme(th) ? found->paper : found->graphite;
     }
 
     // The palette FCompressor draws theme index `index` with: its own PAPER for 1, FunkGui's theme otherwise
