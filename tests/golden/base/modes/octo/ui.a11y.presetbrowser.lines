@@ -1,24 +1,23 @@
- 5 Mode                     656,14,264,32        value=BUS 25 help=VCA · NEW FEED-FORWARD / OLD FEEDBACK · RMS
- 0 THRESHOLD                34,356,124,80        value=4.0 d B u
- 0 RATIO                    162,356,124,80       value=4:1 help=7 steps: 1.5, 2, 3, 4, 6, 10, ∞
- 0 KNEE                     290,356,124,80       value=MEDIUM help=3 steps: HARD, MED, SOFT
- 0 ATTACK                   418,356,124,80       value=10 MS help=7 steps: .03, .1, .3, 1, 3, 10, 30
- 0 RELEASE                  546,356,124,80       value=0.2 S help=6 steps: .05, .1, .2, .5, 1, 2
- 0 MAKEUP                   674,356,124,80       value=0.0 decibels
- 1 AUTO                     758,357,38,18        unchecked
+ 5 Mode                     656,14,264,32        value=OCTO help=HYBRID VCA · FEED-FORWARD · PEAK
+ 0 INPUT                    34,356,124,80        value=5.0
+ 0 RATIO                    162,356,124,80       value=4:1 help=8 steps: 1, 2, 3, 4, 6, 10, 20, NUKE
+ 0 KNEE                     290,356,124,80       value=10.0 decibels [ro] help=EACH RATIO HAS ITS OWN CURVE: WIDE AT 2 AND 3, HARD AT 20 AND NUKE
+ 0 ATTACK                   418,356,124,80       value=10 milliseconds
+ 0 RELEASE                  546,356,124,80       value=200 milliseconds
+ 0 OUTPUT                   674,356,124,80       value=5.0
  0 MIX                      802,356,124,80       value=100 percent
  0 RANGE                    34,444,124,66        value=off
- 0 DETECT                   162,444,124,66       value=RMS, fixed [ro] [off] help=RMS DETECTOR (THAT 2252), FIXED IN THIS CIRCUIT
+ 0 DETECT                   162,444,124,66       value=VCA DETECTOR (PEAK), fixed [ro] [off] help=THE VCA'S OWN PEAK DETECTOR
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 0 TIME MODE                546,444,124,66       value=FIXED help=2 steps: FIXED, VAR
+ 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=10:1 IS THE OPTO RELEASE; THERE IS NO TIME MODE
  0 DRIVE                    674,444,124,66       value=0.0 decibels
- 0 VOICE                    802,444,124,66       value=NEW (FEEDFORWARD) help=2 steps: NEW, OLD
- 0 SC HPF                   34,516,124,66        value=off
+ 0 AUDIO                    802,444,124,66       value=CLEAN help=6 steps: CLEAN, HP, D2, D2 HP, D3, D3 HP
+ 0 SC HPF                   34,516,124,66        value=OFF help=2 steps: OFF, HP
  1 LISTEN                   118,517,38,18        unchecked
- 0 THRUST                   162,516,124,66       value=NORMAL help=3 steps: NORM, MED, LOUD
- 0 LINK                     290,516,124,66       value=100 percent help=7 steps: IND, 50, 60, 70, 80, 90, 100
+ 0 BAND EMPH                162,516,124,66       value=OFF help=2 steps: OFF, BE
+ 0 LINK                     290,516,124,66       value=LINKED help=2 steps: DUAL, LINK
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
  7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
