@@ -9,6 +9,15 @@
 //                                           rejected), any side chain
 //   layout.bus.rejected.<case>              a quad main, a quad side chain, a disabled main, a third input bus: 0
 //   layout.bus.apply_failures               setBusesLayout of every accepted layout succeeds and reads back: 0
+//   layout.bus.<wrapper>.sc.<sc>.supported  (S13 H1b, lead revision 5b) an instance made the way JUCE's AU, AUv3, VST3
+//                                           and Standalone wrappers make it (setTypeOfNextNewPlugin), stereo main, side
+//                                           chain {off, mono, stereo}: mono and stereo always; off everywhere but the
+//                                           Audio Units, which have no disabled buses (their wrapper enables every bus)
+//   layout.bus.au.enable_all                the AU instance after enableAllBuses() (what JUCE's AU wrapper does first):
+//                                           a stereo side chain, and that layout supported: 1
+//   layout.bus.au.discrete_tags             the side chain's DiscreteInOrder channel counts the AU wrapper advertises
+//                                           (Bus::isLayoutSupported(discreteChannels(n)), n = 0..8) that are 0: a
+//                                           0-channel tag is the disabled set, which no AU host can set: 0
 //   layout.params.count                     29
 //   layout.params.order_mismatches          getParameters()[i] is kHostParams[kApvtsOrder[i]] by ID: 0 (K2 #9)
 //   layout.params.name_mismatches           the universal names (K2 #25b): 0
@@ -182,6 +191,49 @@ FCMP_PROBE(proc, layout)
         P.eq("layout.bus.rejected.third_input", proc->checkBusesLayoutSupported(three) ? 1 : 0, 0);
     }
     proc->setBusesLayout(layoutOf(Set::stereo(), Set::stereo(), Set::disabled()));
+
+    // ---- the side chain per wrapper (lead revision 5b): an Audio Unit has no disabled buses ----------------------------
+    {
+        struct Wrapper
+        {
+            juce::AudioProcessor::WrapperType type;
+            const char* name;
+            bool audioUnit;
+        };
+        const Wrapper wrappers[] = { { juce::AudioProcessor::wrapperType_AudioUnit, "au", true },
+                                     { juce::AudioProcessor::wrapperType_AudioUnitv3, "auv3", true },
+                                     { juce::AudioProcessor::wrapperType_VST3, "vst3", false },
+                                     { juce::AudioProcessor::wrapperType_Standalone, "standalone", false } };
+        for (const Wrapper& w : wrappers)
+        {
+            juce::AudioProcessor::setTypeOfNextNewPlugin(w.type);      // as juce::createPluginFilterOfType does
+            auto wp = std::make_unique<fcmp::Processor>();
+            juce::AudioProcessor::setTypeOfNextNewPlugin(juce::AudioProcessor::wrapperType_Undefined);
+            for (const Set& sc : scs)
+            {
+                const bool want = !(w.audioUnit && sc.isDisabled());
+                const bool got = wp->checkBusesLayoutSupported(layoutOf(Set::stereo(), Set::stereo(), sc));
+                P.eq(std::string("layout.bus.") + w.name + ".sc." + setName(sc) + ".supported", got ? 1 : 0,
+                     want ? 1 : 0);
+            }
+            if (w.type != juce::AudioProcessor::wrapperType_AudioUnit)
+                continue;
+            wp->enableAllBuses();                                      // JUCE's AU wrapper, before anything else
+            const juce::AudioProcessor::Bus* sc = wp->getBus(true, 1);
+            P.eq("layout.bus.au.enable_all", sc != nullptr && sc->getCurrentLayout() == Set::stereo()
+                                                 && wp->checkBusesLayoutSupported(wp->getBusesLayout()) ? 1 : 0, 1);
+            std::int64_t zeroTags = 0, tags = 0;
+            for (int ch = 0; sc != nullptr && ch <= 8; ++ch)
+                if (sc->isLayoutSupported(Set::discreteChannels(ch)))
+                {
+                    ++tags;
+                    zeroTags += ch == 0 ? 1 : 0;
+                }
+            P.eq("layout.bus.au.discrete_tags", zeroTags, 0);
+            std::printf("NOTE     layout.bus.au: the side chain advertises %lld DiscreteInOrder channel counts\n",
+                        static_cast<long long>(tags));
+        }
+    }
 
     // ---- parameters -----------------------------------------------------------------------------------------------
     const juce::Array<juce::AudioProcessorParameter*>& all = proc->getParameters();

@@ -226,7 +226,7 @@ namespace fcmp
     void saveState(const StateContext& ctx, juce::MemoryBlock& destData)
     {
         juce::AudioProcessorValueTreeState& apvts = ctx.apvts;
-        juce::ValueTree tree(apvts.state.getType());
+        juce::ValueTree tree(kStateType);
 
         // 2. identity: the effective slot's Mode (a retired or unassigned raw slot saves the Mode it plays)
         const fcdsp::ModeSlot& ms = fcdsp::resolveSlot(slotOf(rawOf(apvts, fcdsp::kHostParams[fcdsp::idx(Pid::mode)])
@@ -274,7 +274,7 @@ namespace fcmp
         if (data == nullptr || sizeInBytes <= 0)
             return;
         const std::unique_ptr<juce::XmlElement> xml = juce::AudioProcessor::getXmlFromBinary(data, sizeInBytes);
-        if (xml == nullptr || !xml->hasTagName(apvts.state.getType().toString()))
+        if (xml == nullptr || !xml->hasTagName(kStateType))
             return;
         juce::ValueTree tree = juce::ValueTree::fromXml(*xml);
         if (!tree.isValid())
@@ -353,7 +353,7 @@ namespace fcmp
         }
 
         // The APVTS tree: exactly the targets, in host order (the saved tree's unknown ids, <PRESET> and <UI> stay out).
-        juce::ValueTree params(apvts.state.getType());
+        juce::ValueTree params(kStateType);
         for (const Pid pid : fcdsp::kApvtsOrder)
         {
             juce::ValueTree param(paramType);

@@ -123,7 +123,7 @@ extern constexpr ModeDescriptor kBus25 {
     .hasColour = true, .colourStatic = true, .wantsLookahead = false,
     .rigor = Rigor::modelled, .family = CurveFamily::textbook,
     .attackSpec = &attackFromView, .releaseSpec = &releaseFromView, .tailSeconds = &tailFromRelease,
-    .ctBudgetNsPerSample = 45, .internals = kBus25Int };
+    .ctBudgetNsPerSample = 40, .internals = kBus25Int };   // S13 H1b: measured (docs/modes/budgets.md)
 
 } // namespace fcdsp::modes
 

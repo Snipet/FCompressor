@@ -180,7 +180,8 @@ Probe changes by M5 (out of the card's OWNS, for the lead's approval):
 - The attack is not program-dependent in A1 / A2 (2254: "attack adjusted automatically"); the limiter's knee and ratio,
   the switch steps of THRESHOLD / LIMIT THRESHOLD / GAIN and LIMIT RELEASE are [U] (D §8.6).
 - The colour is memoryless: the transformers' LF saturation and the bridge's frequency dependence are not modelled.
-- `ctBudgetNsPerSample` (70) is DW's; `fcmp_bench` was not run (other agents were building).
+- `ctBudgetNsPerSample` (70) is DW's, kept: S13 H1b measured 37.2 / 39.6 ns/sample/ch at STD 48 kHz detached /
+  attached (0.57×) and 59.3 / 61.9 at HQ against 100 ([budgets.md](budgets.md)).
 
 ## Revision history
 
