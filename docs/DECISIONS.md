@@ -623,6 +623,20 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   `modes-ever.tsv`, `modeparam.tsv` and the state fixtures when a release first ships it; until then it is
   revision 1. Its colour is rose, and its meter is a red LED ladder. Adding it touched 10 source files (808 lines,
   including the probe) plus its sheet, and no CMake or shared engine code.
+- **ADR-78 Console E, and a Mode-local AUTO makeup (v1.2).** The second Wave 2 Mode is the SSL E/G channel dynamics
+  (D §2.4, M10). It adds one stage, `ballistics/VcaChannel.h`: a program-dependent AUTO attack of 3–30 ms, and a LOG
+  or LIN release, on SmoothBranching's step, with 20 ms rate blends on each switch. Decisions:
+  - **AUTO makeup is referenced to 0 VU, not to 0 dBFS.** The unit's makeup keeps the output constant as the
+    threshold falls. The engine's r^(0 dBFS) law would lift a 0 VU signal by up to 18 (1 − 1/R) dB, +12.6 dB at the
+    defaults. So `physical()` clears `kEngAutoMakeup` and adds the static curve's GR at −18 dBFS to `makeupDb`. That
+    is Brickwall's pattern, with no engine change.
+  - **No colour stage.** The channel VCA is clean. VcaBus at 0 dB drive adds H3 near −105 dB at 0 VU. A live DRIVE
+    exposed `VoiceDrive`'s per-tick steps against this Mode's clean RMS output (dsp.zipper 4.5 dB, limit 3). That is
+    a shared smoothing change for every Mode with DRIVE, left for later.
+  - **Two probe rows were made robust, not loosened.** `dsp.srsweep`'s long-release reference now follows the tapped
+    target, so an RMS detector's settling is not charged to the ballistics. `dsp.time`'s GR OFF renders clear AUTO
+    makeup, because the Rig applies makeup unsmoothed while the host ramps it. For every earlier Mode both give the
+    same results as before.
 
 ## HardwareReverb migration
 
