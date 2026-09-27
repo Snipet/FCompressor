@@ -8,11 +8,11 @@
  1 AUTO                     758,357,38,18        checked [off] help=THE CHANNEL'S MAKEUP IS ALWAYS AUTOMATIC
  0 MIX                      802,356,124,80       value=100 percent
  0 RANGE                    34,444,124,66        value=off
- 0 DETECT                   162,444,124,66       value=RMS DETECTOR help=2 steps: RMS, PEAK
+ 0 DETECT                   162,444,124,66       value=RMS help=2 steps: RMS, PEAK
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 0 REL CURVE                546,444,124,66       value=LOG RELEASE help=2 steps: LOG, LIN
+ 0 REL CURVE                546,444,124,66       value=LOG help=2 steps: LOG, LIN
  7 DRIVE, not applicable    674,444,124,66       [ro] [off] help=THE CHANNEL HAS NO DRIVE CONTROL
  7 VOICE, not applicable    802,444,124,66       [ro] [off] help=THE CHANNEL VCA IS CLEAN
  0 SC HPF                   34,516,124,66        value=off
