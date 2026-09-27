@@ -682,5 +682,53 @@ namespace fcmp::ui::layout
         inline constexpr float kLedLegendY  = 202.0f;              // cap centres
         inline constexpr float kLedLabelY   = 258.0f;
         inline constexpr Point kLedLamp     { 118.0f, 202.0f };
+
+        // ---- v1.2 plate detail (ADR-81; METER_DETAIL, drawn over the ADR-76 faces, never read by the probes' needle,
+        // tick, label or segment finders) -------------------------------------------------------------------------------
+        // Bezel screws: one in each corner of the bezel rim (inset so the head stays inside the corner's radius and off
+        // the window), a slot at a different angle on each.
+        inline constexpr float kScrewInset  = 5.5f;
+        inline constexpr float kScrewR      = 2.4f;
+        // The window's recess: three stacked translucent bands under its top edge (a stepped shadow), and the glass: a
+        // faint light wedge from the top-left corner (two layers, brighter near the corner).
+        inline constexpr std::array<float, 3> kRecessH { 9.0f, 5.0f, 2.0f };
+        inline constexpr float kRecessAlpha = 0.05f;
+        inline constexpr float kSheenAlphaLight = 0.10f;           // on a light face: the corner's total, over ...
+        inline constexpr float kSheenAlphaDark  = 0.06f;           // ... a dark face's
+        inline constexpr int   kSheenLayers = 5;                   // nested wedges, each 1/kSheenLayers of it: it fades
+        inline constexpr float kSheenW = 0.66f, kSheenH = 0.74f;   // the largest wedge (fractions of the window) ...
+        inline constexpr float kSheenStep = 0.12f;                 // ... and each smaller one's
+        // The needle: a soft shadow on the face (offset down-right) and a thicker base above the shroud.
+        inline constexpr Point kNeedleShadow { 2.5f, 3.0f };
+        inline constexpr float kNeedleShadowAlpha = 0.22f;
+        inline constexpr float kNeedleShadowSoft  = 1.2f;
+        inline constexpr float kNeedleShadowR0 = 30.0f;            // from above the shroud (its top is 22 px up)
+        inline constexpr float kNeedleBaseR = 38.0f;               // pivot to the base's end
+        inline constexpr float kNeedleBaseW = 2.4f;
+        // The shroud: a highlight along its top and a zero-adjust screw.
+        inline constexpr float kZeroScrewR  = 3.2f;
+        inline constexpr float kZeroScrewDy = 13.0f;               // below the shroud's top
+        // The Mode lamp as a jewel: a halo of its light, a metal rim and a specular point.
+        inline constexpr float kLampHalo    = 3.0f;
+        inline constexpr float kLampHaloAlpha = 0.30f;
+        inline constexpr float kLampRimW    = 1.0f;
+        // A VU face's secondary scale, 0–100 % of 0 VU's voltage (the classic lower scale): ticks inwards from
+        // kPctTickR at 20 … 100 % (minor at 10 … 90 %), labels at kPctLabelR, "%" at the right end.
+        inline constexpr float kPctTickR    = 113.0f;
+        inline constexpr float kPctTickLong = 5.0f;
+        inline constexpr float kPctTickShort = 2.5f;
+        inline constexpr float kPctLabelR   = 101.0f;
+        inline constexpr float kPctArcW     = 0.8f;                // the scale's own arc at kPctTickR, 10 % … the end
+        // A GR scale's fine ruler: a short tick at every whole dB its marks leave out.
+        inline constexpr float kFineTick    = 3.0f;
+        // The LED ladder: a lit segment's bloom and every segment's lens highlight (the top of the segment).
+        inline constexpr float kLedHalo     = 3.0f;
+        inline constexpr float kLedHaloSoft = 5.0f;
+        inline constexpr float kLedHaloAlpha = 0.30f;
+        inline constexpr float kLedLensFrac = 0.32f;
+        inline constexpr float kLedLensAlphaLit = 0.30f;
+        inline constexpr float kLedLensAlphaDim = 0.06f;
+        inline constexpr float kLedTickY    = 247.0f;              // scale ticks between the ladder and its labels
+        inline constexpr float kLedTickH    = 4.0f;
     }
 }

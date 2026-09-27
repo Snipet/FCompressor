@@ -662,6 +662,27 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     does.
 
   `ui.chars` and `ui.charscreen` caught both. No other Mode's output changed.
+- **ADR-81 More detail on the hardware meter faces (v1.2).** The user asked for another pass on the analog GR meters
+  to add more detail. Every hardware plate (ADR-76) now carries, under a new tag `METER_DETAIL` (334):
+  - **Bezel and window:** a slotted screw in each corner of the bezel, each slot at its own angle. The window gets a
+    recess (a stepped shadow under its top edge) and a glass sheen: five nested wedges from the top-left corner, so it
+    fades with no hard edge.
+  - **Lamp:** the Mode lamp (ADR-75) becomes a jewel, with a halo of its light, a metal rim and a specular point.
+  - **Needle and shroud:** the needle casts a soft shadow onto the face and has a thicker base above the shroud. The
+    shroud's top catches the light, and it carries a zero-adjust screw.
+  - **VU faces (FET 76, Opto 2A, Opto 3A):** the classic lower scale, 0–100 % of 0 VU's voltage, on its own arc: ticks
+    at 10 %, labels at 20–100 %, and "%" at the end.
+  - **GR faces:** a 1 dB fine ruler where their marks are coarser (Mu 67, Bus G, Bus 25).
+  - **LED ladders:** a bloom under the lit segments, a lens highlight on every segment (brighter when lit), smoked glass
+    and a tick over each label.
+
+  Rules for the detail:
+  - Every detail derives from the face's own colours, so the MeterFace table did not change.
+  - The panel face (Clean) stays flat and modern.
+  - `METER_DETAIL` keeps the detail out of `ui.vu`'s needle, tick, label and LED-segment finders, so the law and
+    ballistics rows are unchanged, while its "inside the plot" and "outside" raster rows still bound it. All 11 faces
+    pass `ui.vu`.
+  - No golden holds the VU view, so no golden moved.
 
 ## HardwareReverb migration
 

@@ -15,6 +15,11 @@
 //   Console E   the channel strip's dynamics LEDs: green, amber from 12 dB, on a console-grey plate (v1.2)
 //   Opto 3A     the solid-state leveler's backlit VU, lit cool white on a black panel (v1.2; Opto 2A's glows warm)
 //   Diode 54    the module's cream gain-reduction meter in the console's blue-grey bezel (v1.2; Diode 609's is dark)
+// v1.2 (ADR-81): every hardware plate also carries its detail (GrVuMeter.cpp, METER_DETAIL): screws in the bezel's
+// corners, the window's recess and a glass sheen, the lamp as a jewel, the needle's shadow and thicker base, the
+// shroud's highlight and zero-adjust screw; a VU face adds the classic lower 0–100 % scale, a GR face a 1 dB fine ruler
+// where its marks are coarser, an LED ladder its lit segments' bloom, every segment's lens highlight and scale ticks.
+// The panel face (Clean) stays modern and flat. All of it derives from the face's own colours: no new table fields.
 // Every face keeps the ADR-72 needle (mass-spring, 99 % in 300 ms, 1.25 % overshoot, the display clock), except the
 // LED ladder, which shows the GR at once and falls at kLedFallDbPerS. The hardware plates keep their own fixed colours
 // in both themes, as hardware does; a small lamp in the Mode colour (ADR-75) sits in each plate's corner. Everything

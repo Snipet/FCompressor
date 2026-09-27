@@ -9,6 +9,10 @@
 // - the legend "GR · VU" (kMicro ink32) under the arc, the needle (1.5 px, signal: the one ink for live GR, 02 §8.10)
 //   and its pivot (a small ink70 disc).
 // Tags: GRID (arc, ticks), AXIS_LABEL (labels), CAPTION (legend), GR_NEEDLE (the needle, live; the pivot, static).
+// The hardware plates (ADR-76) add METER_FACE (plate, shroud, unlit LEDs) and, since v1.2 (ADR-81), METER_DETAIL:
+// bezel screws, the window's recess and glass, the lamp's jewel, a VU face's 0–100 % scale, a GR face's 1 dB fine ruler,
+// the needle's shadow and thicker base, the shroud's highlight and zero-adjust screw, and an LED ladder's bloom, lens
+// highlights and scale ticks. The probes' needle, tick, label and segment finders never read METER_DETAIL.
 //
 // The law (the classic GR-on-a-VU): the needle's deflection is proportional to the linear gain, d = 10^(−GR / 20)
 // scaled so that 0 dB sits on the VU "0" mark at 10^(−3/20) of full scale (+3 dB is full scale); the angle is linear in
