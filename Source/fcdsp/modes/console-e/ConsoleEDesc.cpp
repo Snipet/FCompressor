@@ -61,8 +61,8 @@ float thrPlain(float d) noexcept { return d + kDialZeroDbfs; }
 constexpr Step kKnee[]    = { { 0, "HARD", "HARD KNEE" }, { kOverEasyDb, "EASY", "OVEREASY", 0, "over easy" } };
 constexpr Step kAtk[]     = { { kFastMs, "FAST", "FAST 1 MS" },
                               { kAutoNominalMs, "AUTO", "AUTO 3–30 MS", kTagAuto | kTagProgram, "auto" } };
-constexpr Step kRelLaw[]  = { { 0, "LOG", "LOG RELEASE" }, { 1, "LIN", "LINEAR RELEASE" } };
-constexpr Step kDet[]     = { { 0, "RMS", "RMS DETECTOR" }, { 1, "PEAK", "PEAK DETECTOR" } };
+constexpr Step kRelLaw[]  = { { 0, "LOG" }, { 1, "LIN", "LINEAR" } };
+constexpr Step kDet[]     = { { 0, "RMS" }, { 1, "PEAK" } };
 constexpr Step kAutoOn[]  = { { 1, "AUTO", "AUTO MAKEUP" } };
 
 bool isAuto(const ParamView& v) noexcept { return (v[Pid::atk].tag & kTagAuto) != 0; }
