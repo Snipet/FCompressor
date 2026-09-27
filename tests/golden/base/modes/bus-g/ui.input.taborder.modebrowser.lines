@@ -6,7 +6,8 @@
 6 modeBrowser:259 listItem OPTO 2A
 7 modeBrowser:266 listItem OPTO 3A
 8 modeBrowser:260 listItem MU 67
-9 modeBrowser:261 listItem DIODE 609
-10 modeBrowser:267 listItem DIODE 54
-11 modeBrowser:256 listItem CLEAN
-12 modeBrowser:263 listItem BRICKWALL
+9 modeBrowser:268 listItem MU MASTERING
+10 modeBrowser:261 listItem DIODE 609
+11 modeBrowser:267 listItem DIODE 54
+12 modeBrowser:256 listItem CLEAN
+13 modeBrowser:263 listItem BRICKWALL

@@ -1,27 +1,27 @@
- 5 Mode                     656,14,264,32        value=DIODE 54 help=DIODE BRIDGE · FEEDBACK · COMPRESSOR + LIMITER
- 0 THRESHOLD                34,356,124,80        value=4 d B u help=16 steps: −20, −18, −16, −14, −12, −10, −8, −6, −4, −2, 0, 2, 4, 6, 8, 10
- 0 RATIO                    162,356,124,80       value=4:1 help=5 steps: 1.5, 2, 3, 4, 6
- 0 KNEE                     290,356,124,80       value=4.0 decibels [ro] help=FAIRLY SOFT: A 10 DB KNEE AT EVERY RATIO
- 0 ATTACK                   418,356,124,80       value=5 MS help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS
- 0 RECOVERY                 546,356,124,80       value=0.2 S help=4 steps: .1, .2, .8, AUTO
- 0 MAKEUP                   674,356,124,80       value=0.0 decibels help=11 steps: 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20
+ 5 Mode                     656,14,264,32        value=MU MASTERING help=VARIABLE MU · FEEDBACK · COMPRESS/LIMIT
+ 0 THRESHOLD                34,356,124,80        value=10 help=21 steps: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+ 0 RATIO                    162,356,124,80       value=LIMIT 4:1, TO 20:1 help=2 steps: COMP, LIMIT
+ 0 KNEE                     290,356,124,80       value=3.0 decibels [ro] help=SOFT IN COMPRESS; IN LIMIT THE KNEE SOFTENS INTO 20:1 PAST 12 DB
+ 0 ATTACK                   418,356,124,80       value=20 milliseconds help=11 steps: 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80
+ 0 RECOVERY                 546,356,124,80       value=0.2 S help=5 steps: .2, .4, .6, 4, 8
+ 0 OUTPUT                   674,356,124,80       value=minus 11.5
  0 MIX                      802,356,124,80       value=100 percent
- 7 RANGE, not applicable    34,444,124,66        [ro] [off] help=NOT ON THIS CIRCUIT
- 0 DETECT                   162,444,124,66       value=PEAK · FEEDBACK, fixed [ro] [off] help=PEAK SENSING AFTER THE GAIN ELEMENT (FEEDBACK)
+ 7 RANGE, not applicable    34,444,124,66        [ro] [off] help=NO GAIN-REDUCTION LIMIT INSIDE THIS FEEDBACK LOOP
+ 0 DETECT                   162,444,124,66       value=TUBE SIDE CHAIN, fixed [ro] [off] help=TUBE SIDE CHAIN, SENSING THE OUTPUT (FEEDBACK)
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=AUTO IS A RECOVERY POSITION
- 0 DRIVE                    674,444,124,66       value=0.0 decibels
- 0 VOICE                    802,444,124,66       value=DIODE BRIDGE + TRANSFORMERS, fixed [ro] [off] help=DIODE-BRIDGE GAIN ELEMENT AND TRANSFORMERS
- 0 SC HPF                   34,516,124,66        value=off
+ 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=NO TIME MODE ON THIS CIRCUIT
+ 0 INPUT                    674,444,124,66       value=0.0 decibels
+ 0 VOICE                    802,444,124,66       value=5670 TUBES + TRANSFORMERS, fixed [ro] [off] help=REMOTE-CUTOFF TUBES AND TRANSFORMERS
+ 0 SC HPF                   34,516,124,66        value=OFF help=2 steps: OFF, 100
  1 LISTEN                   118,517,38,18        unchecked
  7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 0 LINK                     290,516,124,66       value=STEREO (SIDE CHAINS COMBINED) help=2 steps: DUAL, STEREO
+ 0 LINK                     290,516,124,66       value=LINKED help=2 steps: SEP, LINK
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
- 0 S2 THRESH                546,516,124,66       value=LIMITER OUT help=10 steps: 4, 6, 8, 10, 12, 14, 16, 18, 20, OFF
- 0 S2 ATTACK                674,516,124,66       value=1 milliseconds help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS
- 0 LIM RECOV                802,516,124,66       value=0.1 S help=4 steps: .1, .2, .8, AUTO
+ 7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=THE LIMIT CURVE'S RISE TO 20:1 IS PART OF THE LIMIT SWITCH
+ 7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=THE RISE RUNS ON THE SAME SIDE CHAIN'S ATTACK
+ 7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=THE RISE RUNS ON THE SAME SIDE CHAIN'S RECOVERY
  2 Previous preset          228,14,24,32
  5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
  2 Next preset              528,14,24,32
