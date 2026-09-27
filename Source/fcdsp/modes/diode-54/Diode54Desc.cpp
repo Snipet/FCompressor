@@ -53,7 +53,7 @@ constexpr Step kRatio[] = { { 1.0f - 1.0f / 1.5f, "1.5", "1.5:1" }, { 0.5f, "2",
                             { 1.0f - 1.0f / 6.0f, "6", "6:1" } };
 // ATTACK: the FAST pot's 0.1 ... 2 ms is the hybrid's range; the fixed 5 ms is its one step outside it.
 constexpr float kFastLoMs = 0.1f, kFastHiMs = 2.0f, kFixedMs = 5.0f;
-constexpr Step kAtkFixed[] = { { kFixedMs, "5", "5 MS (FIXED)" } };
+constexpr Step kAtkFixed[] = { { kFixedMs, "5", "5 MS" } };
 constexpr float kAutoPlainMs = 1500.f;          // AUTO's nominal (its published slow end), above the manual positions
 constexpr Step kRel[]   = { { 100, ".1", "0.1 S" }, { 200, ".2", "0.2 S" }, { 800, ".8", "0.8 S" },
                             { kAutoPlainMs, "AUTO", "AUTO 100 MS/1.5 S", kTagAuto | kTagProgram } };
