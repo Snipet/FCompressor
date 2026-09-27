@@ -30,8 +30,9 @@
  6 CONSOLE E                40,148,106,20        unchecked help=CONSOLE E   VCA CHANNEL · 1–∞ · AUTO/1 MS · .1–4 S LOG/LIN · RMS/PEAK
  7 FET  1                   150,69,106,16        [ro]
  6 FET 76                   150,88,106,20        unchecked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
- 7 OPTO  1                  260,69,106,16        [ro]
+ 7 OPTO  2                  260,69,106,16        [ro]
  6 OPTO 2A                  260,88,106,20        unchecked help=OPTO 2A   T4 CELL · COMP/LIMIT · ~10 MS · 60 MS→50 %, THEN 1–15 S
+ 6 OPTO 3A                  260,108,106,20       unchecked help=OPTO 3A   T4 CELL · COMP/LIMIT · ≤1.5 MS · 60 MS→50 %, THEN BY PROGRAM · HF SENS
  7 VARI-MU  1               370,69,106,16        [ro]
  6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
  7 DIODE  1                 480,69,106,16        [ro]

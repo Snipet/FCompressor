@@ -1,0 +1,24 @@
+# funkgui-golden 2  probe=dsp.analysis  scope=modes/opto-3a
+# key	value	tolerance
+analysis.sc.def.f20_db	0	abs:0.01
+analysis.sc.def.f100_db	0	abs:0.01
+analysis.sc.def.f1000_db	0	abs:0.01
+analysis.sc.def.f10000_db	0	abs:0.01
+analysis.sc.hpf.f20_db	-27.9659824	abs:0.01
+analysis.sc.hpf.f100_db	-3.01029944	abs:0.01
+analysis.sc.hpf.f1000_db	-0.000431799359	abs:0.01
+analysis.sc.hpf.f10000_db	5.17719229e-07	abs:0.01
+analysis.sc.sce.f20_db	-4.99625826	abs:0.01
+analysis.sc.sce.f100_db	-4.90825987	abs:0.01
+analysis.sc.sce.f1000_db	-1.81698978	abs:0.01
+analysis.sc.sce.f10000_db	-0.0215633865	abs:0.01
+analysis.harm.def.h2_db	-76.1237793	abs:0.5
+analysis.harm.def.h3_db	-105.86161	abs:0.5
+analysis.harm.def.thd_db	-76.1191685	abs:0.5
+analysis.gain.x-10_db	-0.708000183	abs:0.001
+analysis.gain.x0_db	-3.31994486	abs:0.001
+analysis.gain.x10_db	-8.11224365	abs:0.001
+analysis.gain.x20_db	-13.9799557	abs:0.001
+analysis.invratio.x20	0.384577241	abs:0.0001
+analysis.step.attack_s	0.00175387983	rel:0.01
+analysis.step.release_s	0.0561083853	rel:0.01

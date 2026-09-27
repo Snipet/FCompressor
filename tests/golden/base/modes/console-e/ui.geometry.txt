@@ -1,7 +1,7 @@
 # funkgui-golden 2  probe=ui.geometry  scope=modes/console-e
 # key	value	tolerance
 panel.dpi1.geometry	f9178c1ff13f0528	exact
-panel.dpi1.text	dc7e8069c6369e22	exact
+panel.dpi1.text	0884c99588f14e7d	exact
 panel.dpi1.statics	931	exact
 panel.dpi1.live	3	exact
 panel.dpi1.texts	535	exact
@@ -44,7 +44,7 @@ panel.dpi1.tag.display_value	2	exact
 panel.dpi1.tag.display_sub	8	exact
 panel.dpi1.tag.mode_rule	1	exact
 panel.dpi2.geometry	4ec37dab9b1b1e60	exact
-panel.dpi2.text	3b9b88134b3eefa9	exact
+panel.dpi2.text	c4cd6ce39769559a	exact
 panel.dpi2.statics	931	exact
 panel.dpi2.live	3	exact
 panel.dpi2.texts	535	exact
@@ -87,7 +87,7 @@ panel.dpi2.tag.display_value	2	exact
 panel.dpi2.tag.display_sub	8	exact
 panel.dpi2.tag.mode_rule	1	exact
 chars.sidechain.dpi1.geometry	dbb0f1fcf2983207	exact
-chars.sidechain.dpi1.text	af343a94f119a077	exact
+chars.sidechain.dpi1.text	9c3f526bfa29dae4	exact
 chars.sidechain.dpi1.statics	1700	exact
 chars.sidechain.dpi1.live	12	exact
 chars.sidechain.dpi1.texts	518	exact
@@ -129,7 +129,7 @@ chars.sidechain.dpi1.tag.display_value	2	exact
 chars.sidechain.dpi1.tag.display_sub	8	exact
 chars.sidechain.dpi1.tag.mode_rule	1	exact
 chars.sidechain.dpi2.geometry	ae8dea3768a7fbf2	exact
-chars.sidechain.dpi2.text	123d04a1204c80c3	exact
+chars.sidechain.dpi2.text	19ac9b99e3ffdf8c	exact
 chars.sidechain.dpi2.statics	1700	exact
 chars.sidechain.dpi2.live	12	exact
 chars.sidechain.dpi2.texts	518	exact
@@ -171,7 +171,7 @@ chars.sidechain.dpi2.tag.display_value	2	exact
 chars.sidechain.dpi2.tag.display_sub	8	exact
 chars.sidechain.dpi2.tag.mode_rule	1	exact
 chars.colour.dpi1.geometry	80c40b1a7dd3a00a	exact
-chars.colour.dpi1.text	25b6ca628efddc2f	exact
+chars.colour.dpi1.text	0d1934c2f8faa668	exact
 chars.colour.dpi1.statics	1541	exact
 chars.colour.dpi1.live	12	exact
 chars.colour.dpi1.texts	518	exact
@@ -211,7 +211,7 @@ chars.colour.dpi1.tag.display_value	2	exact
 chars.colour.dpi1.tag.display_sub	8	exact
 chars.colour.dpi1.tag.mode_rule	1	exact
 chars.colour.dpi2.geometry	ff325ad554f4ad56	exact
-chars.colour.dpi2.text	f749aa50fa7971bf	exact
+chars.colour.dpi2.text	53baafd5befe7eec	exact
 chars.colour.dpi2.statics	1541	exact
 chars.colour.dpi2.live	12	exact
 chars.colour.dpi2.texts	518	exact
@@ -250,12 +250,12 @@ chars.colour.dpi2.tag.display_caption	13	exact
 chars.colour.dpi2.tag.display_value	2	exact
 chars.colour.dpi2.tag.display_sub	8	exact
 chars.colour.dpi2.tag.mode_rule	1	exact
-modebrowser.dpi1.geometry	8a1f07922c53455d	exact
-modebrowser.dpi1.text	0c87f56184674398	exact
-modebrowser.dpi1.statics	1049	exact
+modebrowser.dpi1.geometry	c60c6b71db0e5d08	exact
+modebrowser.dpi1.text	1549ff6959230dff	exact
+modebrowser.dpi1.statics	1056	exact
 modebrowser.dpi1.live	3	exact
-modebrowser.dpi1.texts	639	exact
-modebrowser.dpi1.rrects	116	exact
+modebrowser.dpi1.texts	645	exact
+modebrowser.dpi1.rrects	117	exact
 modebrowser.dpi1.segments	265	exact
 modebrowser.dpi1.areas	29	exact
 modebrowser.dpi1.max_x	929.5	abs:0.01
@@ -294,20 +294,20 @@ modebrowser.dpi1.tag.display_value	2	exact
 modebrowser.dpi1.tag.display_sub	8	exact
 modebrowser.dpi1.tag.browser_bg	3	exact
 modebrowser.dpi1.tag.browser_heading	46	exact
-modebrowser.dpi1.tag.browser_row	58	exact
+modebrowser.dpi1.tag.browser_row	64	exact
 modebrowser.dpi1.tag.browser_current	1	exact
 modebrowser.dpi1.tag.mode_rule	1	exact
-modebrowser.dpi1.tag.mode_swatch	10	exact
+modebrowser.dpi1.tag.mode_swatch	11	exact
 modebrowser.row.x	40	abs:0.01
 modebrowser.row.y	148	abs:0.01
 modebrowser.row.w	106	abs:0.01
 modebrowser.row.h	20	abs:0.01
-modebrowser.dpi2.geometry	6c5c81c9c3118a45	exact
-modebrowser.dpi2.text	566f902b9aa578eb	exact
-modebrowser.dpi2.statics	1049	exact
+modebrowser.dpi2.geometry	f41923205ea963a0	exact
+modebrowser.dpi2.text	5a0cbdf905c41878	exact
+modebrowser.dpi2.statics	1056	exact
 modebrowser.dpi2.live	3	exact
-modebrowser.dpi2.texts	639	exact
-modebrowser.dpi2.rrects	116	exact
+modebrowser.dpi2.texts	645	exact
+modebrowser.dpi2.rrects	117	exact
 modebrowser.dpi2.segments	265	exact
 modebrowser.dpi2.areas	29	exact
 modebrowser.dpi2.max_x	929.5	abs:0.01
@@ -346,12 +346,12 @@ modebrowser.dpi2.tag.display_value	2	exact
 modebrowser.dpi2.tag.display_sub	8	exact
 modebrowser.dpi2.tag.browser_bg	3	exact
 modebrowser.dpi2.tag.browser_heading	46	exact
-modebrowser.dpi2.tag.browser_row	58	exact
+modebrowser.dpi2.tag.browser_row	64	exact
 modebrowser.dpi2.tag.browser_current	1	exact
 modebrowser.dpi2.tag.mode_rule	1	exact
-modebrowser.dpi2.tag.mode_swatch	10	exact
-presetbrowser.dpi1.geometry	db17b69b68d19d82	exact
-presetbrowser.dpi1.text	c9ad9b1ae7b16a20	exact
+modebrowser.dpi2.tag.mode_swatch	11	exact
+presetbrowser.dpi1.geometry	189fe36e498f6dc0	exact
+presetbrowser.dpi1.text	b65454b86571c163	exact
 presetbrowser.dpi1.statics	1390	exact
 presetbrowser.dpi1.live	3	exact
 presetbrowser.dpi1.texts	985	exact
@@ -398,8 +398,8 @@ presetbrowser.dpi1.tag.browser_row	306	exact
 presetbrowser.dpi1.tag.browser_current	1	exact
 presetbrowser.dpi1.tag.browser_pager	1	exact
 presetbrowser.dpi1.tag.mode_rule	1	exact
-presetbrowser.dpi2.geometry	9729f9393861cb26	exact
-presetbrowser.dpi2.text	197fddeecf48a38b	exact
+presetbrowser.dpi2.geometry	7edf4d4285bd5f8c	exact
+presetbrowser.dpi2.text	1d544fcc27268efc	exact
 presetbrowser.dpi2.statics	1390	exact
 presetbrowser.dpi2.live	3	exact
 presetbrowser.dpi2.texts	985	exact
