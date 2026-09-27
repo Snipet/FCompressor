@@ -637,6 +637,16 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     target, so an RMS detector's settling is not charged to the ballistics. `dsp.time`'s GR OFF renders clear AUTO
     makeup, because the Rig applies makeup unsmoothed while the host ramps it. For every earlier Mode both give the
     same results as before.
+- **ADR-79 Opto 3A is Opto 2A's cell with the LA-3A's constants (v1.2).** The third Wave 2 Mode is the UREI LA-3A
+  (D §2.2, M03). It adds no new stage.
+  - It runs Opto 2A's OptoSense, FeedbackDelayed<OptoCellCurve> and OptoCell. The differences are constants in `m[]`
+    and the descriptor: attack 1.5 ms, and a memory that charges and releases in 2 s instead of 5 s.
+  - LIMIT is 4:1, not 10:1, so COMP and LIMIT stay within 0.5 dB until heavy GR, as the LA-3A's manual says. The cell's
+    law ties the knee to the exponent, so a milder exponent is the only way to keep the two close.
+  - The rear HF pot is the R37 shelf.
+  - The voice is a new instance of a now-templated TubeTransformer: `TubeTransformerT<kEvenPermille>`, 40 for Opto 3A.
+    `TubeTransformer` stays 100 for Opto 2A, held bit-identical by a `static_assert`; no Opto 2A golden moved.
+  - The cost was 3 source files, a template parameter, a probe, a preset file and two table rows.
 
 ## HardwareReverb migration
 
