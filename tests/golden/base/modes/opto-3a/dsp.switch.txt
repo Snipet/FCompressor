@@ -1,0 +1,22 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/opto-3a
+# key	value	tolerance
+switch.opto-3a-clean.settle_ms	175	rel:0.1
+switch.clean-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-bus-g.settle_ms	205	rel:0.1
+switch.bus-g-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-fet-76.settle_ms	35	rel:0.1
+switch.fet-76-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-opto-2a.settle_ms	140	rel:0.1
+switch.opto-2a-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-diode-609.settle_ms	105	rel:0.1
+switch.diode-609-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-bus-25.settle_ms	445	rel:0.1
+switch.bus-25-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-opto-3a.settle_ms	715	rel:0.1
+switch.opto-3a-octo.settle_ms	175	rel:0.1
+switch.octo-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-console-e.settle_ms	705	rel:0.1
+switch.console-e-opto-3a.settle_ms	20	rel:0.1

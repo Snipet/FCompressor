@@ -1,0 +1,18 @@
+# funkgui-golden 2  probe=dsp.static  scope=modes/opto-3a
+# key	value	tolerance
+static.r3.t-30.k6.x-10.out_db	-34.7079904	abs:0.01
+static.r3.t-30.k6.x0.out_db	-27.3199432	abs:0.01
+static.r3.t-30.k6.x10.out_db	-22.1121745	abs:0.01
+static.r3.t-30.k6.x20.out_db	-17.9799392	abs:0.01
+static.r3.t-10.k6.x-10.out_db	-14.7079946	abs:0.01
+static.r3.t-10.k6.x0.out_db	-7.3199676	abs:0.01
+static.r3.t-10.k6.x10.out_db	-2.11225605	abs:0.01
+static.r3.t-10.k6.x20.out_db	2.01985427	abs:0.01
+static.r4.t-30.k6.x-10.out_db	-34.2484907	abs:0.01
+static.r4.t-30.k6.x0.out_db	-26.7993291	abs:0.01
+static.r4.t-30.k6.x10.out_db	-22.5203925	abs:0.01
+static.r4.t-30.k6.x20.out_db	-19.4038737	abs:0.01
+static.r4.t-10.k6.x-10.out_db	-14.2484968	abs:0.01
+static.r4.t-10.k6.x0.out_db	-6.79935516	abs:0.01
+static.r4.t-10.k6.x10.out_db	-2.52046571	abs:0.01
+static.r4.t-10.k6.x20.out_db	0.595976232	abs:0.01
