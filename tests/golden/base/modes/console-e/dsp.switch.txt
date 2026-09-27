@@ -1,0 +1,20 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/console-e
+# key	value	tolerance
+switch.console-e-clean.settle_ms	165	rel:0.1
+switch.clean-console-e.settle_ms	520	rel:0.1
+switch.console-e-bus-g.settle_ms	165	rel:0.1
+switch.bus-g-console-e.settle_ms	765	rel:0.1
+switch.console-e-fet-76.settle_ms	25	rel:0.1
+switch.fet-76-console-e.settle_ms	880	rel:0.1
+switch.console-e-opto-2a.settle_ms	70	rel:0.1
+switch.opto-2a-console-e.settle_ms	640	rel:0.1
+switch.console-e-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-console-e.settle_ms	630	rel:0.1
+switch.console-e-diode-609.settle_ms	85	rel:0.1
+switch.diode-609-console-e.settle_ms	825	rel:0.1
+switch.console-e-bus-25.settle_ms	110	rel:0.1
+switch.bus-25-console-e.settle_ms	20	rel:0.1
+switch.console-e-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-console-e.settle_ms	455	rel:0.1
+switch.console-e-octo.settle_ms	165	rel:0.1
+switch.octo-console-e.settle_ms	999.916667	rel:0.1

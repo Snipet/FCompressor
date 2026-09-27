@@ -12,6 +12,7 @@
 //   Bus 25      a modern console bus compressor's cream meter, black print, GAIN REDUCTION 20 … 0 resting right
 //   Brickwall   a digital limiter's LED ladder: amber segments with a red top, fast (no needle)
 //   Octo        the hybrid VCA's red gain-reduction LEDs: the ladder in red throughout (v1.2)
+//   Console E   the channel strip's dynamics LEDs: green, amber from 12 dB, on a console-grey plate (v1.2)
 // Every face keeps the ADR-72 needle (mass-spring, 99 % in 300 ms, 1.25 % overshoot, the display clock), except the
 // LED ladder, which shows the GR at once and falls at kLedFallDbPerS. The hardware plates keep their own fixed colours
 // in both themes, as hardware does; a small lamp in the Mode colour (ADR-75) sits in each plate's corner. Everything
@@ -103,7 +104,7 @@ namespace fcmp::ui
 
         inline constexpr MeterFace kPanel {};                     // the panel face: GrVuMeter draws it from layout::vu
 
-        inline constexpr std::array<MeterFace, 8> kFaces { {
+        inline constexpr std::array<MeterFace, 9> kFaces { {
             { "fet-76", FacePlate::light, FaceLaw::vuGain, true, -20.0f, 3.0f, kVuMarks, 0.0f,
               rgb(0x141414), rgb(0x141414), rgb(0xF2EEE3), rgb(0x1B1B1B), rgb(0xC62F24), rgb(0x111111), rgb(0xFFFFFF),
               rgb(0x000000), "VU", "GAIN REDUCTION" },
@@ -128,6 +129,9 @@ namespace fcmp::ui
             { "octo", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, 99.0f,
               rgb(0x1C1C1E), rgb(0x1C1C1E), rgb(0x0B0B0C), rgb(0xC9C4B8), rgb(0xFF3B30), rgb(0xFF3B30), rgb(0x000000),
               rgb(0x2E1210), "GAIN REDUCTION", "DB" },
+            { "console-e", FacePlate::led, FaceLaw::led, true, -24.0f, 0.0f, kLedMarks, meterface::kLedRedFromDb,
+              rgb(0x33363B), rgb(0x33363B), rgb(0x0C0E0F), rgb(0xD0D4D6), rgb(0xFFB000), rgb(0x34D058), rgb(0x000000),
+              rgb(0x0F2A17), "GAIN REDUCTION", "DB" },
         } };
     }
 

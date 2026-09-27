@@ -27,7 +27,9 @@
 //                                        peak-to-peak over the last 50 ms: no oscillation)
 //   at 48 and 384 kHz, the long-release precision (S3 lead revision 3; SmoothBranching.h "float precision"):
 //     srsweep.<fs>.long_release.max_dev_db   the Mode's slowest release from 20 dB to 10 dB of GR (4 tau): the GR
-//                                        against the exact exponential of its own one-pole, <= 1e-3 dB (the plain
+//                                        against the exact recurrence of its own one-pole in double, driven by the
+//                                        tapped target (a peak detector steps it once: the exact exponential; an RMS
+//                                        detector lowers it over its window, v1.2 Console E), <= 1e-3 dB (the plain
 //                                        float recurrence stalled 0.11 dB short at 48 kHz and 0.9 dB at 384 kHz); run
 //                                        when the Mode's release is live and its slowest release resolves to a
 //                                        feed-forward kernel. A feedback kernel's release is not its one-pole's
@@ -161,8 +163,9 @@ namespace
         return s;
     }
 
-    // The slowest release from 20 dB to 10 dB of GR (square levels from staticGr), against the exact exponential of
-    // the one-pole r[n] = t + (r0 - t)(1 - c)^n, c = oneMinusAlpha(tau, fs); max deviation over 4 tau (dB).
+    // The slowest release from 20 dB to 10 dB of GR (square levels from staticGr), against the exact one-pole in
+    // double, e[n] = e[n-1] + c (t[n] - e[n-1]), c = oneMinusAlpha(tau, fs), t the tapped target (a stepped target:
+    // e[n] = t + (r0 - t)(1 - c)^n); max deviation over 4 tau (dB).
     double longReleaseDev(const ModeEntry& en, EngineParams e, float fs, double& stallBefore)
     {
         // levels giving 20 and 10 dB of static GR (bisection on staticGr: the curve is monotone)
@@ -197,7 +200,7 @@ namespace
         const auto alo = static_cast<float>(fcmp::probe::measure::amplitudeFromDb(loLevel));
         constexpr std::size_t kBlock = 8192;
         std::vector<float> in(kBlock), yl(kBlock), yr(kBlock);
-        double r0 = 0.0, dev = 0.0, pow1c = 1.0;
+        double exact = 0.0, dev = 0.0;
         rig.setTapping(true);
         for (std::size_t off = 0; off < pre + post; off += kBlock)
         {
@@ -209,16 +212,17 @@ namespace
             }
             rig.process(in.data(), in.data(), yl.data(), yr.data(), m);
             const std::vector<float> g = rig.tap().lane(rig.tap().grDb, 0);
+            const std::vector<float> t = rig.tap().lane(rig.tap().tgtDb, 0);
             rig.tap().clear();
             for (std::size_t k = 0; k < m; ++k)
             {
                 const std::size_t i = off + k;
                 if (i + 1 == pre)
-                    r0 = g[k];
+                    exact = g[k];
                 if (i < pre)
                     continue;
-                pow1c *= 1.0 - c;                       // the exact curve at sample n + 1 after the drop
-                dev = std::max(dev, std::fabs(static_cast<double>(g[k]) - (tgt + (r0 - tgt) * pow1c)));
+                exact += c * (static_cast<double>(t[k]) - exact);   // the exact one-pole toward this sample's target
+                dev = std::max(dev, std::fabs(static_cast<double>(g[k]) - exact));
             }
         }
         // for the NOTE: where the plain recurrence would have stalled, ulp(r) / (2c) at the 10 dB target
