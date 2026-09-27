@@ -1,22 +1,22 @@
- 5 Mode                     656,14,264,32        value=OPTO 3A help=OPTICAL · FEEDBACK · SOLID STATE
- 0 PEAK RED.                34,356,124,80        value=54
- 0 RATIO                    162,356,124,80       value=LIMIT help=2 steps: COMP, LIMIT
- 7 KNEE, not applicable     290,356,124,80       [ro] [off] help=THE KNEE IS THE T4 CELL'S; SEE THE CURVE
- 0 ATTACK                   418,356,124,80       value=about 1.5 milliseconds, fixed [ro] [off] help=T4 CELL: 1.5 MS OR LESS, PROGRAM-DEPENDENT
- 0 RELEASE                  546,356,124,80       value=about 60 milliseconds, fixed [ro] [off] help=T4 CELL: 60 MS TO 50 %, THEN QUICK OR SLOW BY PROGRAM
- 0 GAIN                     674,356,124,80       value=25
+ 5 Mode                     656,14,264,32        value=OPTO TUBE 1B help=OPTICAL · TUBE · FEED-FORWARD
+ 0 THRESHOLD                34,356,124,80        value=0.0 help=+20 … −40 DB, OR OFF; end steps: OFF (NO COMPRESSION)
+ 0 RATIO                    162,356,124,80       value=4.0 to 1
+ 0 KNEE                     290,356,124,80       value=10.0 decibels, fixed [ro] [off] help=THE OPTICAL CELL'S SOFT KNEE
+ 0 ATTACK                   418,356,124,80       value=10 milliseconds
+ 0 RELEASE                  546,356,124,80       value=200 milliseconds
+ 0 GAIN                     674,356,124,80       value=0.0 decibels
  0 MIX                      802,356,124,80       value=100 percent
- 7 RANGE, not applicable    34,444,124,66        [ro] [off] help=NO GAIN-REDUCTION LIMIT INSIDE THIS FEEDBACK LOOP
- 0 DETECT                   162,444,124,66       value=T4 CELL, fixed [ro] [off] help=THE OPTICAL CELL SENSES THE OUTPUT (FEEDBACK)
+ 0 RANGE                    34,444,124,66        value=off
+ 0 DETECT                   162,444,124,66       value=OPTICAL CELL, fixed [ro] [off] help=THE OPTICAL CELL'S LIGHT
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=NO TIME CONTROLS ON THIS CIRCUIT
+ 0 A/R SELECT               546,444,124,66       value=MANUAL help=3 steps: MAN, FIX, F/M
  0 DRIVE                    674,444,124,66       value=0.0 decibels
- 0 VOICE                    802,444,124,66       value=CLASS A + TRANSFORMERS, fixed [ro] [off] help=CLASS A SOLID STATE AND TRANSFORMERS
- 0 SC HPF                   34,516,124,66        value=off
+ 0 VOICE                    802,444,124,66       value=TUBE + TRANSFORMERS, fixed [ro] [off] help=TUBE AMPLIFIER AND TRANSFORMERS
+ 0 SC LOW CUT               34,516,124,66        value=off
  1 LISTEN                   118,517,38,18        unchecked
- 0 HF SENS                  162,516,124,66       value=0.0
+ 7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  0 LINK                     290,516,124,66       value=LINKED help=2 steps: DUAL, LINK
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
  7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
@@ -31,8 +31,8 @@
  6 FET 76                   150,88,106,20        unchecked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
  7 OPTO  3                  260,69,106,16        [ro]
  6 OPTO 2A                  260,88,106,20        unchecked help=OPTO 2A   T4 CELL · COMP/LIMIT · ~10 MS · 60 MS→50 %, THEN 1–15 S
- 6 OPTO 3A                  260,108,106,20       checked help=OPTO 3A   T4 CELL · COMP/LIMIT · ≤1.5 MS · 60 MS→50 %, THEN BY PROGRAM · HF SENS
- 6 OPTO TUBE 1B             260,128,106,20       unchecked help=OPTO TUBE 1B   OPTO + TUBE · 2–10:1 · .5–300 MS · .05–10 S · FIXED/MANUAL/FIX-MAN
+ 6 OPTO 3A                  260,108,106,20       unchecked help=OPTO 3A   T4 CELL · COMP/LIMIT · ≤1.5 MS · 60 MS→50 %, THEN BY PROGRAM · HF SENS
+ 6 OPTO TUBE 1B             260,128,106,20       checked help=OPTO TUBE 1B   OPTO + TUBE · 2–10:1 · .5–300 MS · .05–10 S · FIXED/MANUAL/FIX-MAN
  7 VARI-MU  2               370,69,106,16        [ro]
  6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
  6 MU MASTERING             370,108,106,20       unchecked help=MU MASTERING   VARI-MU · 1.5:1 / 4:1→20:1 · 20–80 MS · .2–8 S · M/S
