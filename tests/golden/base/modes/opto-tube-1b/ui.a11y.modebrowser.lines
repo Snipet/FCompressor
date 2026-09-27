@@ -1,0 +1,59 @@
+ 5 Mode                     656,14,264,32        value=OPTO TUBE 1B help=OPTICAL · TUBE · FEED-FORWARD
+ 0 THRESHOLD                34,356,124,80        value=0.0 help=+20 … −40 DB, OR OFF; end steps: OFF (NO COMPRESSION)
+ 0 RATIO                    162,356,124,80       value=4.0 to 1
+ 0 KNEE                     290,356,124,80       value=10.0 decibels, fixed [ro] [off] help=THE OPTICAL CELL'S SOFT KNEE
+ 0 ATTACK                   418,356,124,80       value=10 milliseconds
+ 0 RELEASE                  546,356,124,80       value=200 milliseconds
+ 0 GAIN                     674,356,124,80       value=0.0 decibels
+ 0 MIX                      802,356,124,80       value=100 percent
+ 0 RANGE                    34,444,124,66        value=off
+ 0 DETECT                   162,444,124,66       value=OPTICAL CELL, fixed [ro] [off] help=THE OPTICAL CELL'S LIGHT
+ 1 EXT                      246,445,38,18        unchecked
+ 7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 A/R SELECT               546,444,124,66       value=MANUAL help=3 steps: MAN, FIX, F/M
+ 0 DRIVE                    674,444,124,66       value=0.0 decibels
+ 0 VOICE                    802,444,124,66       value=TUBE + TRANSFORMERS, fixed [ro] [off] help=TUBE AMPLIFIER AND TRANSFORMERS
+ 0 SC LOW CUT               34,516,124,66        value=off
+ 1 LISTEN                   118,517,38,18        unchecked
+ 7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 LINK                     290,516,124,66       value=LINKED help=2 steps: DUAL, LINK
+ 0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
+ 7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 VCA  4                   40,69,106,16         [ro]
+ 6 BUS G                    40,88,106,20         unchecked help=BUS G   VCA BUS · 2/4/10 · .1–30 MS · .1–1.2 S + AUTO
+ 6 BUS 25                   40,108,106,20        unchecked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
+ 6 OCTO                     40,128,106,20        unchecked help=OCTO   HYBRID VCA · 1–NUKE · .05–30 MS · .05–3.5 S (OPTO 20 S) · DIST 2/3
+ 6 CONSOLE E                40,148,106,20        unchecked help=CONSOLE E   VCA CHANNEL · 1–∞ · AUTO/1 MS · .1–4 S LOG/LIN · RMS/PEAK
+ 7 FET  1                   150,69,106,16        [ro]
+ 6 FET 76                   150,88,106,20        unchecked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
+ 7 OPTO  3                  260,69,106,16        [ro]
+ 6 OPTO 2A                  260,88,106,20        unchecked help=OPTO 2A   T4 CELL · COMP/LIMIT · ~10 MS · 60 MS→50 %, THEN 1–15 S
+ 6 OPTO 3A                  260,108,106,20       unchecked help=OPTO 3A   T4 CELL · COMP/LIMIT · ≤1.5 MS · 60 MS→50 %, THEN BY PROGRAM · HF SENS
+ 6 OPTO TUBE 1B             260,128,106,20       checked help=OPTO TUBE 1B   OPTO + TUBE · 2–10:1 · .5–300 MS · .05–10 S · FIXED/MANUAL/FIX-MAN
+ 7 VARI-MU  2               370,69,106,16        [ro]
+ 6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
+ 6 MU MASTERING             370,108,106,20       unchecked help=MU MASTERING   VARI-MU · 1.5:1 / 4:1→20:1 · 20–80 MS · .2–8 S · M/S
+ 7 DIODE  2                 480,69,106,16        [ro]
+ 6 DIODE 609                480,88,106,20        unchecked help=DIODE 609   DIODE BRIDGE · 1.5–6 · FAST/SLOW · .1–1.5 S + A1/A2 · LIMITER +4…+15 DBU
+ 6 DIODE 54                 480,108,106,20       unchecked help=DIODE 54   DIODE BRIDGE · 1.5–6 · 5 MS / .1–2 MS · .1/.2/.8 S + AUTO · LIMITER +4…+20 DBU
+ 7 MODERN  1                590,69,106,16        [ro]
+ 6 CLEAN                    590,88,106,20        unchecked help=CLEAN   FEED-FORWARD · PEAK/RMS · 5 µS–250 MS · 1:1–∞ · 0–200 % MIX
+ 7 LIMIT  1                 700,69,106,16        [ro]
+ 6 BRICKWALL                700,88,106,20        unchecked help=BRICKWALL   LOOKAHEAD LIMITER · ∞:1 · 0.5–20 MS LOOKAHEAD · 1–1000 MS · CEILING −12…0
+ 7 OTHER  0                 810,69,106,16        [ro]
+ 2 Previous preset          228,14,24,32
+ 5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
+ 2 Next preset              528,14,24,32
+ 2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 7 Footer                   40,600,554,20        [ro]
+ 3 Zoom                     638,601,140,16       value=ZOOM 100 %
+ 4 ZOOM 100 %               638,601,32,16        checked
+ 4 ZOOM 125 %               674,601,32,16        unchecked
+ 4 ZOOM 150 %               710,601,32,16        unchecked
+ 4 ZOOM 175 %               746,601,32,16        unchecked
+ 3 Theme                    790,601,130,16       value=Graphite theme
+ 4 Graphite theme           790,601,72,16        checked
+ 4 Paper theme              866,601,54,16        unchecked

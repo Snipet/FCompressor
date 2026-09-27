@@ -1,0 +1,34 @@
+# funkgui-golden 2  probe=dsp.static  scope=modes/opto-tube-1b
+# key	value	tolerance
+static.r2.t-30.k10.x-10.out_db	-40	abs:0.01
+static.r2.t-30.k10.x0.out_db	-30.6250007	abs:0.01
+static.r2.t-30.k10.x10.out_db	-25.0000007	abs:0.01
+static.r2.t-30.k10.x20.out_db	-19.9999996	abs:0.01
+static.r2.t-10.k10.x-10.out_db	-20.0000002	abs:0.01
+static.r2.t-10.k10.x0.out_db	-10.6250031	abs:0.01
+static.r2.t-10.k10.x10.out_db	-5.00001115	abs:0.01
+static.r2.t-10.k10.x20.out_db	-3.23717102e-05	abs:0.01
+static.r4.t-30.k10.x-10.out_db	-40	abs:0.01
+static.r4.t-30.k10.x0.out_db	-30.9375013	abs:0.01
+static.r4.t-30.k10.x10.out_db	-27.5000004	abs:0.01
+static.r4.t-30.k10.x20.out_db	-25.0000001	abs:0.01
+static.r4.t-10.k10.x-10.out_db	-20.0000002	abs:0.01
+static.r4.t-10.k10.x0.out_db	-10.9375036	abs:0.01
+static.r4.t-10.k10.x10.out_db	-7.50000617	abs:0.01
+static.r4.t-10.k10.x20.out_db	-5.00001033	abs:0.01
+static.r10.t-30.k10.x-10.out_db	-40	abs:0.01
+static.r10.t-30.k10.x0.out_db	-31.1250018	abs:0.01
+static.r10.t-30.k10.x10.out_db	-29.0000015	abs:0.01
+static.r10.t-30.k10.x20.out_db	-28.0000004	abs:0.01
+static.r10.t-10.k10.x-10.out_db	-20.0000002	abs:0.01
+static.r10.t-10.k10.x0.out_db	-11.1250035	abs:0.01
+static.r10.t-10.k10.x10.out_db	-9.0000054	abs:0.01
+static.r10.t-10.k10.x20.out_db	-8.00000573	abs:0.01
+static.tmode.fix.r4.t-30.k10.x-10.out_db	-40	abs:0.01
+static.tmode.fix.r4.t-30.k10.x0.out_db	-30.9375013	abs:0.01
+static.tmode.fix.r4.t-30.k10.x10.out_db	-27.5000004	abs:0.01
+static.tmode.fix.r4.t-30.k10.x20.out_db	-25.0000001	abs:0.01
+static.tmode.fm.r4.t-30.k10.x-10.out_db	-40	abs:0.01
+static.tmode.fm.r4.t-30.k10.x0.out_db	-30.9375013	abs:0.01
+static.tmode.fm.r4.t-30.k10.x10.out_db	-27.5000004	abs:0.01
+static.tmode.fm.r4.t-30.k10.x20.out_db	-25.0000001	abs:0.01

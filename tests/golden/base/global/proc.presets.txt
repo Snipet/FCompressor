@@ -1,4 +1,4 @@
 # funkgui-golden 2  probe=proc.presets  scope=global
 # key	value	tolerance
-presets.bank.size	69	exact
-presets.bank.hash	ab03e432064ec24e	exact
+presets.bank.size	76	exact
+presets.bank.hash	5c4bf2929b02127b	exact

@@ -82,7 +82,7 @@ namespace fcmp::ui
         std::string_view key;
         funkgui::Col     graphite, paper;
     };
-    inline constexpr std::array<ModeColour, 13> kModeColours { {
+    inline constexpr std::array<ModeColour, 14> kModeColours { {
         { "clean",     { 0x7F, 0xD4, 0xE8 }, { 0x0A, 0x56, 0x68 } },
         { "bus-g",     { 0x8C, 0xB8, 0xFF }, { 0x1C, 0x4A, 0x9E } },
         { "fet-76",    { 0xFF, 0xC8, 0x57 }, { 0x7A, 0x4E, 0x00 } },
@@ -96,6 +96,7 @@ namespace fcmp::ui
         { "opto-3a",   { 0xA6, 0xF0, 0x7A }, { 0x35, 0x66, 0x0C } },
         { "diode-54",  { 0xEE, 0x9C, 0xF2 }, { 0x7E, 0x22, 0x86 } },
         { "mu-mastering", { 0x6E, 0xE8, 0xA8 }, { 0x0F, 0x6B, 0x40 } },
+        { "opto-tube-1b", { 0xFF, 0xA0, 0x70 }, { 0x9A, 0x40, 0x10 } },
     } };
 
     // A light-ground theme (PAPER) takes a Mode colour's dark variant.

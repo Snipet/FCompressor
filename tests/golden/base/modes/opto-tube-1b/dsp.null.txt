@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=dsp.null  scope=modes/opto-tube-1b
+# key	value	tolerance
+null.eco.thd_db	-90.1458808	abs:0.5

@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.time  scope=modes/opto-tube-1b
+# key	value	tolerance
+time.rel.after_1s.t50_ms	357.452004	rel:0.1
+time.rel.after_1s.t90_ms	1162.171	rel:0.1
+time.rel.after_10s.t50_ms	357.452004	rel:0.1
+time.rel.after_10s.t90_ms	1162.171	rel:0.1
