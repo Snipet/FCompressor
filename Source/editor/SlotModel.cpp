@@ -709,9 +709,11 @@ namespace fcmp::ui
                 return true;
             case fcdsp::Pid::atk:
             case fcdsp::Pid::rel:
-                if (s->kind != fcdsp::Kind::continuous)
+                if (s->kind != fcdsp::Kind::continuous && s->kind != fcdsp::Kind::hybrid)
                     return false;                                // stepped markers snap to detents
-                host01 = fcdsp::toNorm(pid_, inRange(plotValue * 1000.0f));   // the marker sits at seconds = plain/1000
+                // the marker sits at seconds = plain/1000; a hybrid's drag stays in its range (its steps are the
+                // slot's end cells: Diode 54's 5 MS attack, v1.2)
+                host01 = fcdsp::toNorm(pid_, inRange(plotValue * 1000.0f));
                 return true;
             case fcdsp::Pid::schpf:
                 host01 = fcdsp::toNorm(pid_, plotValue < layout::chars::kScOffHz ? 0.0f : inRange(plotValue));
