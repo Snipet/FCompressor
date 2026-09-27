@@ -1,0 +1,10 @@
+# funkgui-golden 2  probe=dsp.print  scope=modes/diode-54
+# key	value	tolerance
+print.default.l.hash	2540876734f0b00d	exact
+print.default.r.hash	5809756f51d438b2	exact
+print.lo.l.hash	a58b9fb9c9e71b40	exact
+print.lo.r.hash	bf4926629603ba3e	exact
+print.hi.l.hash	fc94ce3b6dc52e3b	exact
+print.hi.r.hash	4845db5d9697814a	exact
+print.mid.l.hash	51ec97a85ede6cfa	exact
+print.mid.r.hash	ffcd153cae9581d4	exact

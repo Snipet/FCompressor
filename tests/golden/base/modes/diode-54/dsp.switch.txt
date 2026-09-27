@@ -1,0 +1,24 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/diode-54
+# key	value	tolerance
+switch.diode-54-clean.settle_ms	60	rel:0.1
+switch.clean-diode-54.settle_ms	30	rel:0.1
+switch.diode-54-bus-g.settle_ms	55	rel:0.1
+switch.bus-g-diode-54.settle_ms	35	rel:0.1
+switch.diode-54-fet-76.settle_ms	20	rel:0.1
+switch.fet-76-diode-54.settle_ms	20	rel:0.1
+switch.diode-54-opto-2a.settle_ms	55	rel:0.1
+switch.opto-2a-diode-54.settle_ms	70	rel:0.1
+switch.diode-54-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-diode-54.settle_ms	115	rel:0.1
+switch.diode-54-diode-609.settle_ms	90	rel:0.1
+switch.diode-609-diode-54.settle_ms	20	rel:0.1
+switch.diode-54-bus-25.settle_ms	235	rel:0.1
+switch.bus-25-diode-54.settle_ms	35	rel:0.1
+switch.diode-54-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-diode-54.settle_ms	90	rel:0.1
+switch.diode-54-octo.settle_ms	60	rel:0.1
+switch.octo-diode-54.settle_ms	20	rel:0.1
+switch.diode-54-console-e.settle_ms	530	rel:0.1
+switch.console-e-diode-54.settle_ms	75	rel:0.1
+switch.diode-54-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-diode-54.settle_ms	90	rel:0.1

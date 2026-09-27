@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=dsp.null  scope=modes/diode-54
+# key	value	tolerance
+null.eco.thd_db	-60.2692793	abs:0.5
