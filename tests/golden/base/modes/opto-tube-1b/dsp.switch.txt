@@ -1,0 +1,28 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/opto-tube-1b
+# key	value	tolerance
+switch.opto-tube-1b-clean.settle_ms	405	rel:0.1
+switch.clean-opto-tube-1b.settle_ms	45	rel:0.1
+switch.opto-tube-1b-bus-g.settle_ms	425	rel:0.1
+switch.bus-g-opto-tube-1b.settle_ms	45	rel:0.1
+switch.opto-tube-1b-fet-76.settle_ms	20	rel:0.1
+switch.fet-76-opto-tube-1b.settle_ms	20	rel:0.1
+switch.opto-tube-1b-opto-2a.settle_ms	125	rel:0.1
+switch.opto-2a-opto-tube-1b.settle_ms	25	rel:0.1
+switch.opto-tube-1b-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-opto-tube-1b.settle_ms	55	rel:0.1
+switch.opto-tube-1b-diode-609.settle_ms	200	rel:0.1
+switch.diode-609-opto-tube-1b.settle_ms	20	rel:0.1
+switch.opto-tube-1b-bus-25.settle_ms	999.916667	rel:0.1
+switch.bus-25-opto-tube-1b.settle_ms	20	rel:0.1
+switch.opto-tube-1b-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-opto-tube-1b.settle_ms	290	rel:0.1
+switch.opto-tube-1b-octo.settle_ms	405	rel:0.1
+switch.octo-opto-tube-1b.settle_ms	20	rel:0.1
+switch.opto-tube-1b-console-e.settle_ms	999.916667	rel:0.1
+switch.console-e-opto-tube-1b.settle_ms	55	rel:0.1
+switch.opto-tube-1b-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-opto-tube-1b.settle_ms	875	rel:0.1
+switch.opto-tube-1b-diode-54.settle_ms	95	rel:0.1
+switch.diode-54-opto-tube-1b.settle_ms	25	rel:0.1
+switch.opto-tube-1b-mu-mastering.settle_ms	999.916667	rel:0.1
+switch.mu-mastering-opto-tube-1b.settle_ms	260	rel:0.1
