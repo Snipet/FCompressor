@@ -703,6 +703,25 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   Two items are not modelled:
   - The unit's narrower COMPRESS threshold span, because the input threshold must stay affine with slope 1 (K1 #9).
   - The T-Bar tube.
+- **ADR-83 Opto Tube 1B, and `tmode` 0 is manual timing everywhere (v1.2).** The sixth and last Wave 2 Mode is the
+  Tube-Tech CL 1B (D §2.2, M04): an optical sensor, a real threshold with an OFF step (a hybrid), and a continuous 2–10:1
+  ratio, feed-forward. Its ATTACK/RELEASE SELECT:
+  - FIXED locks the knobs at 1 / 50 ms.
+  - MANUAL uses the knobs.
+  - FIX/MAN is DualRelease: the fixed 50 ms fast path, and the ATTACK knob relabelled DELAY (a Variant) setting a slow
+    path that charges over 2 × DELAY. So a peak shorter than DELAY releases fast, and a longer one hands the GR to
+    RELEASE.
+
+  Decisions:
+  - **`tmode` 0 is every Mode's manual timing.** A switch keeps the raw `tmode`. MANUAL first sat at 1, which is Clean's
+    and Brickwall's AUTO, and their unseeded crest detectors made the hand-over click (`dsp.switch`). Future Modes put
+    their manual position at 0.
+  - **The tube stage runs 12 dB under Opto 2A's drive.** At Opto 2A's level its OS-rate gain moved a 0.5 s release by
+    2.2 samples across Qualities.
+  - **`ui.curve`'s span row skips a curve that only grazes the frame and draws nothing,** as its drawn row already
+    allows.
+
+  With this Mode, Wave 2 (SPRINTS §5) is complete: 14 Modes.
 
 ## HardwareReverb migration
 
