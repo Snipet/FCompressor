@@ -1,9 +1,9 @@
- 5 Mode                     656,14,264,32        value=DIODE 609 help=DIODE BRIDGE · FEEDBACK · COMPRESSOR + LIMITER
+ 5 Mode                     656,14,264,32        value=DIODE 54 help=DIODE BRIDGE · FEEDBACK · COMPRESSOR + LIMITER
  0 THRESHOLD                34,356,124,80        value=4 d B u help=16 steps: −20, −18, −16, −14, −12, −10, −8, −6, −4, −2, 0, 2, 4, 6, 8, 10
  0 RATIO                    162,356,124,80       value=4:1 help=5 steps: 1.5, 2, 3, 4, 6
- 0 KNEE                     290,356,124,80       value=4.0 decibels [ro] help=PROGRESSIVE: THE TRUE RATIO ONLY >5 DB OVER, A 10 DB KNEE AT EVERY RATIO
- 0 ATTACK                   418,356,124,80       value=SLOW ~6 MS help=2 steps: FAST, SLOW
- 0 RELEASE                  546,356,124,80       value=0.1 S help=6 steps: .1, .4, .8, 1.5, A1, A2
+ 0 KNEE                     290,356,124,80       value=4.0 decibels [ro] help=FAIRLY SOFT: A 10 DB KNEE AT EVERY RATIO
+ 0 ATTACK                   418,356,124,80       value=5 MS (FIXED) help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS (FIXED)
+ 0 RECOVERY                 546,356,124,80       value=0.2 S help=4 steps: .1, .2, .8, AUTO
  0 MAKEUP                   674,356,124,80       value=0.0 decibels help=11 steps: 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20
  0 MIX                      802,356,124,80       value=100 percent
  7 RANGE, not applicable    34,444,124,66        [ro] [off] help=NOT ON THIS CIRCUIT
@@ -11,17 +11,17 @@
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=A1 AND A2 ARE RELEASE POSITIONS
+ 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=AUTO IS A RECOVERY POSITION
  0 DRIVE                    674,444,124,66       value=0.0 decibels
  0 VOICE                    802,444,124,66       value=DIODE BRIDGE + TRANSFORMERS, fixed [ro] [off] help=DIODE-BRIDGE GAIN ELEMENT AND TRANSFORMERS
  0 SC HPF                   34,516,124,66        value=off
  1 LISTEN                   118,517,38,18        unchecked
  7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 0 LINK                     290,516,124,66       value=STEREO (SIDE CHAINS LINKED) help=2 steps: DUAL, STEREO
+ 0 LINK                     290,516,124,66       value=STEREO (SIDE CHAINS COMBINED) help=2 steps: DUAL, STEREO
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
- 0 S2 THRESH                546,516,124,66       value=LIMITER OUT help=13 steps: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, OFF
- 0 S2 ATTACK                674,516,124,66       value=FAST ~2 MS help=2 steps: FAST, SLOW
- 0 S2 RELEASE               802,516,124,66       value=0.1 S help=6 steps: .05, .1, .2, .8, A1, A2
+ 0 S2 THRESH                546,516,124,66       value=LIMITER OUT help=10 steps: 4, 6, 8, 10, 12, 14, 16, 18, 20, OFF
+ 0 S2 ATTACK                674,516,124,66       value=1 milliseconds help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS (FIXED)
+ 0 LIM RECOV                802,516,124,66       value=0.1 S help=4 steps: .1, .2, .8, AUTO
  7 VCA  4                   40,69,106,16         [ro]
  6 BUS G                    40,88,106,20         unchecked help=BUS G   VCA BUS · 2/4/10 · .1–30 MS · .1–1.2 S + AUTO
  6 BUS 25                   40,108,106,20        unchecked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
@@ -35,8 +35,8 @@
  7 VARI-MU  1               370,69,106,16        [ro]
  6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
  7 DIODE  2                 480,69,106,16        [ro]
- 6 DIODE 609                480,88,106,20        checked help=DIODE 609   DIODE BRIDGE · 1.5–6 · FAST/SLOW · .1–1.5 S + A1/A2 · LIMITER +4…+15 DBU
- 6 DIODE 54                 480,108,106,20       unchecked help=DIODE 54   DIODE BRIDGE · 1.5–6 · 5 MS / .1–2 MS · .1/.2/.8 S + AUTO · LIMITER +4…+20 DBU
+ 6 DIODE 609                480,88,106,20        unchecked help=DIODE 609   DIODE BRIDGE · 1.5–6 · FAST/SLOW · .1–1.5 S + A1/A2 · LIMITER +4…+15 DBU
+ 6 DIODE 54                 480,108,106,20       checked help=DIODE 54   DIODE BRIDGE · 1.5–6 · 5 MS / .1–2 MS · .1/.2/.8 S + AUTO · LIMITER +4…+20 DBU
  7 MODERN  1                590,69,106,16        [ro]
  6 CLEAN                    590,88,106,20        unchecked help=CLEAN   FEED-FORWARD · PEAK/RMS · 5 µS–250 MS · 1:1–∞ · 0–200 % MIX
  7 LIMIT  1                 700,69,106,16        [ro]
