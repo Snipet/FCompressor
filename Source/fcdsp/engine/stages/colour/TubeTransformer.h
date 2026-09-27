@@ -43,9 +43,14 @@
 
 namespace fcdsp::stage {
 
-struct TubeTransformer {
+// kEvenPermille: the even term in thousandths. TubeTransformer (Opto 2A) is 100 (0.1); ClassATransformer (Opto 3A,
+// v1.2: the LA-3A's class-A solid-state stages and transformers, D §2.2 [V S32]) is 40, its second harmonic 8 dB lower
+// at every level with the same odd term and the same meter-truth budget (docs/modes/opto-3a.md).
+template <int kEvenPermille>
+struct TubeTransformerT {
+    static_assert(kEvenPermille >= 0 && kEvenPermille < 500, "TubeTransformerT: f must stay monotone (kEven < 1/2)");
     static constexpr float kIn = 1.0f / 64.0f;      // [H] shaper input at 0 dB drive per unit of signal
-    static constexpr float kEven = 0.1f;            // [H] the tube stages' even term
+    static constexpr float kEven = static_cast<float>(kEvenPermille) / 1000.0f;   // [H] the stages' even term
 
     struct Coeffs { detail::VoiceDrive drive{}; };
     struct State {
@@ -106,6 +111,10 @@ private:
     }
 };
 
-static_assert(ColourPolicy<TubeTransformer>);
+using TubeTransformer = TubeTransformerT<100>;      // Opto 2A: kEven = 0.1
+using ClassATransformer = TubeTransformerT<40>;     // Opto 3A: kEven = 0.04
+
+static_assert(ColourPolicy<TubeTransformer> && ColourPolicy<ClassATransformer>);
+static_assert(TubeTransformer::kEven == 0.1f, "Opto 2A's even term is bit-identical to its pre-template 0.1f");
 
 } // namespace fcdsp::stage
