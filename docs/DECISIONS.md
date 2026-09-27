@@ -683,6 +683,26 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     ballistics rows are unchanged, while its "inside the plot" and "outside" raster rows still bound it. All 11 faces
     pass `ui.vu`.
   - No golden holds the VU view, so no golden moved.
+- **ADR-82 Mu Mastering: LIMIT as a compressor followed by a limiter (v1.2).** The fifth Wave 2 Mode is the Manley
+  Variable Mu, Mastering version (D §2.3, M06). Its LIMIT runs 4:1, rising toward 20:1 beyond about 12 dB of GR, which
+  the manual itself calls "like a compressor followed by a limiter". Neither of our gain computers makes that shape:
+  QuadKnee has one slope, and ProgressiveKnee rises smoothly with no 4:1 stretch. So it is built from what the diode
+  Modes already run:
+  - QuadKnee 4:1 in feedback, plus a 20:1 section on the same element: `SharedElementMaxT`, now templated on slope and
+    knee.
+  - The diode limiter stays `SharedElementMax` = 990 / 50, asserted bit-identical.
+  - The rise shares the side chain's open-loop times.
+  - Fitted: 4.00:1 at 6 dB of GR, 8:1 passed at 12.25 dB, 18.8:1 at 25 dB.
+
+  `dsp.static` now judges an always-in stage 2:
+  - The declared curve is `analysis::staticGr` with stage 2, the identity wherever stage 2 is off, so no other Mode
+    moved.
+  - Its per-sample FB rows step aside where stage 2 shares the element, as they already do for program-dependent
+    ballistics.
+
+  Two items are not modelled:
+  - The unit's narrower COMPRESS threshold span, because the input threshold must stay affine with slope 1 (K1 #9).
+  - The T-Bar tube.
 
 ## HardwareReverb migration
 

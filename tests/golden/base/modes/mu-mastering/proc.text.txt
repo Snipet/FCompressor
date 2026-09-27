@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=proc.text  scope=modes/mu-mastering
+# key	value	tolerance
+text.defaults.hash	44f031210b842fe6	exact

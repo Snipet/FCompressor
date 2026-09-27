@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=dsp.null  scope=modes/mu-mastering
+# key	value	tolerance
+null.eco.thd_db	-90.7773526	abs:0.5

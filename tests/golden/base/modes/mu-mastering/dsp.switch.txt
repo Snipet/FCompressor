@@ -1,0 +1,26 @@
+# funkgui-golden 2  probe=dsp.switch  scope=modes/mu-mastering
+# key	value	tolerance
+switch.mu-mastering-clean.settle_ms	485	rel:0.1
+switch.clean-mu-mastering.settle_ms	305	rel:0.1
+switch.mu-mastering-bus-g.settle_ms	380	rel:0.1
+switch.bus-g-mu-mastering.settle_ms	850	rel:0.1
+switch.mu-mastering-fet-76.settle_ms	25	rel:0.1
+switch.fet-76-mu-mastering.settle_ms	880	rel:0.1
+switch.mu-mastering-opto-2a.settle_ms	65	rel:0.1
+switch.opto-2a-mu-mastering.settle_ms	325	rel:0.1
+switch.mu-mastering-mu-67.settle_ms	20	rel:0.1
+switch.mu-67-mu-mastering.settle_ms	245	rel:0.1
+switch.mu-mastering-diode-609.settle_ms	175	rel:0.1
+switch.diode-609-mu-mastering.settle_ms	865	rel:0.1
+switch.mu-mastering-bus-25.settle_ms	755	rel:0.1
+switch.bus-25-mu-mastering.settle_ms	260	rel:0.1
+switch.mu-mastering-brickwall.settle_ms	15	rel:0.1
+switch.brickwall-mu-mastering.settle_ms	390	rel:0.1
+switch.mu-mastering-octo.settle_ms	380	rel:0.1
+switch.octo-mu-mastering.settle_ms	270	rel:0.1
+switch.mu-mastering-console-e.settle_ms	875	rel:0.1
+switch.console-e-mu-mastering.settle_ms	735	rel:0.1
+switch.mu-mastering-opto-3a.settle_ms	20	rel:0.1
+switch.opto-3a-mu-mastering.settle_ms	345	rel:0.1
+switch.mu-mastering-diode-54.settle_ms	110	rel:0.1
+switch.diode-54-mu-mastering.settle_ms	310	rel:0.1

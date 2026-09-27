@@ -1,0 +1,16 @@
+1 presetBrowser:32 radioGroup Show
+2 presetBrowser:4096 listItem Init
+3 presetBrowser:4097 listItem Gentle Glue
+4 presetBrowser:4098 listItem Vocal Leveler
+5 presetBrowser:4099 listItem Drum Punch
+6 presetBrowser:4100 listItem Parallel Smash
+7 presetBrowser:4101 listItem Broadband De-Ess
+8 presetBrowser:4102 listItem Mix Bus Glue
+9 presetBrowser:4103 listItem Drum Bus Snap
+10 presetBrowser:4104 listItem Master Polish
+11 presetBrowser:4105 listItem Crushed Parallel
+12 presetBrowser:4106 listItem Vocal Grab
+13 presetBrowser:21 button Save
+14 presetBrowser:16 button Save as
+15 presetBrowser:19 button Import
+16 presetBrowser:20 button Export

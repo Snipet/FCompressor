@@ -1,0 +1,68 @@
+ 5 Mode                     656,14,264,32        value=MU MASTERING help=VARIABLE MU · FEEDBACK · COMPRESS/LIMIT
+ 0 THRESHOLD                34,356,124,80        value=10 help=21 steps: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+ 0 RATIO                    162,356,124,80       value=LIMIT 4:1, TO 20:1 help=2 steps: COMP, LIMIT
+ 0 KNEE                     290,356,124,80       value=3.0 decibels [ro] help=SOFT IN COMPRESS; IN LIMIT THE KNEE SOFTENS INTO 20:1 PAST 12 DB
+ 0 ATTACK                   418,356,124,80       value=20 milliseconds help=11 steps: 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80
+ 0 RECOVERY                 546,356,124,80       value=0.2 S help=5 steps: .2, .4, .6, 4, 8
+ 0 OUTPUT                   674,356,124,80       value=minus 11.5
+ 0 MIX                      802,356,124,80       value=100 percent
+ 7 RANGE, not applicable    34,444,124,66        [ro] [off] help=NO GAIN-REDUCTION LIMIT INSIDE THIS FEEDBACK LOOP
+ 0 DETECT                   162,444,124,66       value=TUBE SIDE CHAIN, fixed [ro] [off] help=TUBE SIDE CHAIN, SENSING THE OUTPUT (FEEDBACK)
+ 1 EXT                      246,445,38,18        unchecked
+ 7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 7 TIME MODE, not applicable 546,444,124,66       [ro] [off] help=NO TIME MODE ON THIS CIRCUIT
+ 0 INPUT                    674,444,124,66       value=0.0 decibels
+ 0 VOICE                    802,444,124,66       value=5670 TUBES + TRANSFORMERS, fixed [ro] [off] help=REMOTE-CUTOFF TUBES AND TRANSFORMERS
+ 0 SC HPF                   34,516,124,66        value=OFF help=2 steps: OFF, 100
+ 1 LISTEN                   118,517,38,18        unchecked
+ 7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 LINK                     290,516,124,66       value=LINKED help=2 steps: SEP, LINK
+ 0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
+ 7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=THE LIMIT CURVE'S RISE TO 20:1 IS PART OF THE LIMIT SWITCH
+ 7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=THE RISE RUNS ON THE SAME SIDE CHAIN'S ATTACK
+ 7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=THE RISE RUNS ON THE SAME SIDE CHAIN'S RECOVERY
+ 2 Previous preset          228,14,24,32
+ 5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
+ 2 Next preset              528,14,24,32
+ 2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 7 Status                   40,324,532,16        value=69 PRESETS [ro]
+ 3 Show                     32,88,144,224        value=ALL
+ 4 All                      32,88,144,18         checked
+ 4 Factory                  32,106,144,18        unchecked
+ 4 User                     32,124,144,18        unchecked
+ 4 Bass                     32,148,144,18        unchecked
+ 4 Bus                      32,166,144,18        unchecked
+ 4 Drums                    32,184,144,18        unchecked
+ 4 Init                     32,202,144,18        unchecked
+ 4 Instrument               32,220,144,18        unchecked
+ 4 Limiter                  32,238,144,18        unchecked
+ 4 Master                   32,256,144,18        unchecked
+ 4 Parallel                 32,274,144,18        unchecked
+ 4 Vocal                    32,292,144,18        unchecked
+ 6 Init                     186,88,734,20        checked help=Click loads it, double-click loads it and closes
+ 6 Gentle Glue              186,108,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Vocal Leveler            186,128,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Drum Punch               186,148,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Parallel Smash           186,168,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Broadband De-Ess         186,188,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Mix Bus Glue             186,208,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Drum Bus Snap            186,228,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Master Polish            186,248,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Crushed Parallel         186,268,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 6 Vocal Grab               186,288,734,20       unchecked help=Click loads it, double-click loads it and closes
+ 2 Save                     588,324,40,16        help=Saves the current sound as a new preset
+ 2 Save as                  632,324,58,16
+ 2 Rename                   694,324,52,16        [off]
+ 2 Delete                   750,324,58,16        [off]
+ 2 Import                   812,324,52,16
+ 2 Export                   868,324,52,16
+ 7 Footer                   40,600,554,20        [ro]
+ 3 Zoom                     638,601,140,16       value=ZOOM 100 %
+ 4 ZOOM 100 %               638,601,32,16        checked
+ 4 ZOOM 125 %               674,601,32,16        unchecked
+ 4 ZOOM 150 %               710,601,32,16        unchecked
+ 4 ZOOM 175 %               746,601,32,16        unchecked
+ 3 Theme                    790,601,130,16       value=Graphite theme
+ 4 Graphite theme           790,601,72,16        checked
+ 4 Paper theme              866,601,54,16        unchecked

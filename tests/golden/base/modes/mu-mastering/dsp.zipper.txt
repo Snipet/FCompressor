@@ -1,0 +1,5 @@
+# funkgui-golden 2  probe=dsp.zipper  scope=modes/mu-mastering
+# key	value	tolerance
+zipper.ramp.drive.err_db	-40.8746988	abs:1
+zipper.ramp.makeup.err_db	-52.315831	abs:1
+zipper.ramp.mix.err_db	-81.5680569	abs:1
