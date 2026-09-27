@@ -121,8 +121,11 @@ namespace fcmp::ui::tag
     inline constexpr Tag modeRule      = 331;   // MODE_RULE       the Mode-coloured rule under the Mode name
     inline constexpr Tag modeSwatch    = 332;   // MODE_SWATCH     a Mode browser row's colour swatch
     inline constexpr Tag meterFace     = 333;   // METER_FACE      a GR meter's hardware plate, shroud, unlit LEDs (ADR-76)
+    // ---- v1.2 (ADR-81) ---------------------------------------------------------------------------------------------------
+    inline constexpr Tag meterDetail   = 334;   // METER_DETAIL    a meter plate's detail: screws, glass, shadows, the %
+                                                //                 scale, fine ticks, LED glow (live where it moves)
 
-    inline constexpr Tag last          = 333;
+    inline constexpr Tag last          = 334;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -155,7 +158,7 @@ namespace fcmp::ui::tag
         { browserBg, "BROWSER_BG" },         { browserHeading, "BROWSER_HEADING" }, { browserRow, "BROWSER_ROW" },
         { browserCurrent, "BROWSER_CURRENT" }, { browserPager, "BROWSER_PAGER" },
         { linkedBox, "LINKED_BOX" },         { modeRule, "MODE_RULE" },          { modeSwatch, "MODE_SWATCH" },
-        { meterFace, "METER_FACE" },
+        { meterFace, "METER_FACE" },         { meterDetail, "METER_DETAIL" },
     } };
 
     namespace detail

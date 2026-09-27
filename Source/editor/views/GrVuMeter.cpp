@@ -37,6 +37,62 @@ namespace fcmp::ui
         constexpr double kFloorReadingDb = -99.0;                  // the a11y reading's floor (d = 0 is −inf)
         constexpr double kPinLo = -0.03, kPinHi = 1.03;            // a hardware needle's stops (scale positions)
         constexpr double kLedFallPerStep = meterface::kLedFallDbPerS * kStepS;
+
+        // ---- v1.2 plate detail (ADR-81): METER_DETAIL, over the ADR-76 faces ------------------------------------------
+        constexpr funkgui::Col kWhite { 0xFF, 0xFF, 0xFF }, kBlack { 0x00, 0x00, 0x00 };
+
+        bool lightFace(funkgui::Col c) noexcept
+        {
+            return 0.299f * static_cast<float>(c.r) + 0.587f * static_cast<float>(c.g) + 0.114f * static_cast<float>(c.b)
+                 > 128.0f;
+        }
+
+        // A slotted screw head: a metal disc a shade off the plate, a dark rim, the slot at `slotDeg`, a glint.
+        void screw(funkgui::Canvas& c, float x, float y, float r, funkgui::Col plate, float slotDeg)
+        {
+            const funkgui::Col head = funkgui::mix(plate, lightFace(plate) ? kBlack : kWhite, 0.22f);
+            c.disc(x, y, r, head, 0.6f, funkgui::mix(plate, kBlack, 0.5f));
+            const double a = static_cast<double>(slotDeg) * std::numbers::pi / 180.0;
+            const auto dx = static_cast<float>(std::cos(a)) * r * 0.75f, dy = static_cast<float>(std::sin(a)) * r * 0.75f;
+            c.segment(x - dx, y - dy, x + dx, y + dy, 0.7f, funkgui::mix(plate, kBlack, 0.6f));
+            c.disc(x - 0.35f * r, y - 0.35f * r, 0.3f * r, kWhite.withAlpha(0.35f));
+        }
+
+        // Four screws in the bezel's corners, each slot at its own angle (as fitted by hand).
+        void bezelScrews(funkgui::Canvas& c, const funkgui::Rect& bz, funkgui::Col plate)
+        {
+            const float in = V::kScrewInset, r = V::kScrewR;
+            screw(c, bz.x + in, bz.y + in, r, plate, 25.0f);
+            screw(c, bz.right() - in, bz.y + in, r, plate, -40.0f);
+            screw(c, bz.x + in, bz.bottom() - in, r, plate, 70.0f);
+            screw(c, bz.right() - in, bz.bottom() - in, r, plate, 5.0f);
+        }
+
+        // The window's recess (a stepped shadow under its top edge) and its glass (a light wedge from the top-left).
+        void glass(funkgui::Canvas& c, const funkgui::Rect& win, funkgui::Col face)
+        {
+            const funkgui::Col shade = kBlack.withAlpha(V::kRecessAlpha);
+            for (const float h : V::kRecessH)
+                c.rrect4(win.x, win.y, win.w, h, V::kHwWindowR, V::kHwWindowR, 0.0f, 0.0f, shade);
+            const float total = lightFace(face) ? V::kSheenAlphaLight : V::kSheenAlphaDark;
+            const funkgui::Col sheen = kWhite.withAlpha(total / static_cast<float>(V::kSheenLayers));
+            const float x0 = win.x + V::kHwWindowR, y0 = win.y + V::kRecessH[0];
+            for (int i = 0; i < V::kSheenLayers; ++i)
+            {
+                const float k = static_cast<float>(i) * V::kSheenStep;
+                c.area(x0, win.x + (V::kSheenW - k) * win.w, y0, y0, win.y + (V::kSheenH - k) * win.h, y0, sheen);
+            }
+        }
+
+        // The Mode lamp as a jewel: a halo of its light, the lamp, a metal rim and a specular point.
+        void jewel(funkgui::Canvas& c, funkgui::Point p, funkgui::Col lamp, funkgui::Col plate)
+        {
+            const float r = V::kHwLampR, h = r + V::kLampHalo;
+            c.rrect(p.x - h, p.y - h, 2.0f * h, 2.0f * h, h, lamp.withAlpha(V::kLampHaloAlpha), 0.0f, {}, V::kLampHalo);
+            c.disc(p.x, p.y, r + V::kLampRimW, funkgui::Col{ 0, 0, 0, 0 }, V::kLampRimW,
+                   funkgui::mix(plate, lightFace(plate) ? kBlack : kWhite, 0.35f));
+            c.disc(p.x - 0.35f * r, p.y - 0.35f * r, 0.3f * r, kWhite.withAlpha(0.8f));
+        }
     }
 
     // ---- the law ----------------------------------------------------------------------------------------------------------
@@ -340,6 +396,12 @@ namespace fcmp::ui
             }
             c.disc(V::kHwLamp.x, V::kHwLamp.y, V::kHwLampR, modeColour(f.key, funkgui::Theme::graphite()));   // lit
         }
+        {
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, false);                // ADR-81
+            glass(c, win, f.face);
+            bezelScrews(c, bz, f.bezel);
+            jewel(c, V::kHwLamp, modeColour(f.key, funkgui::Theme::graphite()), f.face);
+        }
         const auto radial = [&](double readingDb, float from, float to, float w) {
             const double a = angleOfPos(facePos(f, readingDb));
             const funkgui::Point p0 = onScale(a, from), p1 = onScale(a, to);
@@ -381,6 +443,49 @@ namespace fcmp::ui
             }
         }
         {
+            // ADR-81: a VU face's lower 0–100 % scale; a GR face's fine ruler at the whole dB its marks leave out.
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, false);
+            if (f.law == FaceLaw::vuGain)
+            {
+                constexpr int n = 48;                               // the scale's own arc, 10 % (the left end) … the end
+                std::array<float, n + 1> ax{}, ay{};
+                const double a0 = angleOfPos(facePos(f, -20.0)), a1 = angleOfPos(1.0);
+                for (int i = 0; i <= n; ++i)
+                {
+                    const funkgui::Point p = onScale(a0 + (a1 - a0) * i / n, V::kPctTickR);
+                    ax[static_cast<std::size_t>(i)] = p.x;
+                    ay[static_cast<std::size_t>(i)] = p.y;
+                }
+                c.polyline(ax.data(), ay.data(), n + 1, V::kPctArcW, f.print);
+                for (int pct = 10; pct <= 100; pct += 10)
+                {
+                    const double db = 20.0 * std::log10(static_cast<double>(pct) / 100.0);
+                    const bool major = pct % 20 == 0;
+                    radial(db, V::kPctTickR, V::kPctTickR - (major ? V::kPctTickLong : V::kPctTickShort),
+                           major ? 1.0f : 0.8f);
+                    if (!major)
+                        continue;
+                    char t[8];
+                    std::snprintf(t, sizeof t, "%d", pct);
+                    const funkgui::Point p = onScale(angleOfPos(facePos(f, db)), V::kPctLabelR);
+                    c.text(t, p.x, c.capCentreTop(p.y, T::kMicro), T::kMicro, f.print, funkgui::Align::centre);
+                }
+                const funkgui::Point p = onScale(angleOfPos(1.0), V::kPctLabelR);
+                c.text("%", p.x, c.capCentreTop(p.y, T::kMicro), T::kMicro, f.print, funkgui::Align::centre);
+            }
+            else if (f.law == FaceLaw::grLinear)
+            {
+                for (int gr = 1; gr < 20; ++gr)
+                {
+                    const auto r = static_cast<float>(-gr);
+                    const bool marked = std::any_of(f.marks.begin(), f.marks.end(),
+                                                    [r](const FaceMark& m) { return m.readingDb == r; });
+                    if (!marked)
+                        radial(static_cast<double>(r), V::kScaleR, V::kScaleR - V::kFineTick, 0.7f);
+                }
+            }
+        }
+        {
             const funkgui::Canvas::Scope scope(c, tag::caption, false);
             const bool big = std::string_view(f.legend).size() <= 3;
             const funkgui::TextStyle& ls = big ? T::kValueS : T::kCaption;
@@ -390,15 +495,37 @@ namespace fcmp::ui
                 c.text(f.legend2, V::kPivot.x, c.capCentreTop(V::kPivot.y - V::kHwLegend2Dy, T::kMicro), T::kMicro,
                        f.print, funkgui::Align::centre);
         }
+        const double needleDeg = angleOfPos(shown_);
+        {
+            // ADR-81: the needle's shadow on the face (it rides above the print)
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, true);
+            const funkgui::Point from = onScale(needleDeg, V::kNeedleShadowR0), tip = onScale(needleDeg, V::kHwNeedleR);
+            const funkgui::Point o = V::kNeedleShadow;
+            c.segment(from.x + o.x, from.y + o.y, tip.x + o.x, tip.y + o.y, V::kHwNeedleW + 0.8f,
+                      kBlack.withAlpha(V::kNeedleShadowAlpha), V::kNeedleShadowSoft);
+        }
         {
             const funkgui::Canvas::Scope scope(c, tag::grNeedle, true);
-            const funkgui::Point tip = onScale(angleOfPos(shown_), V::kHwNeedleR);
+            const funkgui::Point tip = onScale(needleDeg, V::kHwNeedleR);
             c.segment(V::kPivot.x, V::kPivot.y, tip.x, tip.y, V::kHwNeedleW, f.needle);
         }
         {
+            // ADR-81: the needle's thicker base, above the shroud
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, true);
+            const funkgui::Point end = onScale(needleDeg, V::kNeedleBaseR);
+            c.segment(V::kPivot.x, V::kPivot.y, end.x, end.y, V::kNeedleBaseW, f.needle);
+        }
+        const funkgui::Rect& s = V::kHwShroud;
+        {
             const funkgui::Canvas::Scope scope(c, tag::meterFace, false);
-            const funkgui::Rect& s = V::kHwShroud;
             c.rrect4(s.x, s.y, s.w, s.h, 0.5f * s.h, 0.5f * s.h, 0.0f, 0.0f, f.bezel);
+        }
+        {
+            // ADR-81: the shroud's top catches the light; its zero-adjust screw
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, false);
+            const funkgui::Col edge = funkgui::mix(f.bezel, kWhite, lightFace(f.bezel) ? 0.35f : 0.16f);
+            c.segment(s.x + 0.5f * s.h, s.y + 0.8f, s.right() - 0.5f * s.h, s.y + 0.8f, 1.0f, edge);
+            screw(c, V::kPivot.x, s.y + V::kZeroScrewDy, V::kZeroScrewR, f.bezel, 80.0f);
         }
     }
 
@@ -417,7 +544,21 @@ namespace fcmp::ui
             c.rrect(win.x, win.y, win.w, win.h, V::kHwWindowR, f.face);
             c.disc(V::kLedLamp.x, V::kLedLamp.y, V::kHwLampR, modeColour(f.key, funkgui::Theme::graphite()));
         }
+        {
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, false);                // ADR-81
+            bezelScrews(c, bz, f.bezel);
+            jewel(c, V::kLedLamp, modeColour(f.key, funkgui::Theme::graphite()), f.face);
+        }
         const int lit = std::clamp(static_cast<int>(std::floor(shown_ + 0.5)), 0, meterface::kLedSegments);
+        for (int i = 0; i < lit; ++i)                              // ADR-81: the lit segments' bloom, under them all
+        {
+            const float x = V::kLedLeft + static_cast<float>(i) * V::kLedPitch;
+            const funkgui::Col on = static_cast<float>(i) >= f.zoneFromDb ? f.zone : f.needle;
+            const float h = V::kLedHalo;
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, true);
+            c.rrect(x - h, V::kLedSegY - h, V::kLedSegW + 2.0f * h, V::kLedSegH + 2.0f * h, V::kLedSegR + h,
+                    on.withAlpha(V::kLedHaloAlpha), 0.0f, {}, V::kLedHaloSoft);
+        }
         for (int i = 0; i < meterface::kLedSegments; ++i)
         {
             const float x = V::kLedLeft + static_cast<float>(i) * V::kLedPitch;
@@ -432,6 +573,21 @@ namespace fcmp::ui
                 const funkgui::Canvas::Scope scope(c, tag::meterFace, false);
                 c.rrect(x, V::kLedSegY, V::kLedSegW, V::kLedSegH, V::kLedSegR,
                         red ? funkgui::mix(f.dim, f.zone, 0.18f) : f.dim);
+            }
+            // ADR-81: the lens's highlight across the segment's top, brighter when lit
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, i < lit);
+            c.rrect(x + 1.5f, V::kLedSegY + 1.5f, V::kLedSegW - 3.0f, V::kLedLensFrac * V::kLedSegH, 1.5f,
+                    kWhite.withAlpha(i < lit ? V::kLedLensAlphaLit : V::kLedLensAlphaDim));
+        }
+        {
+            // ADR-81: the smoked glass over the ladder, and a tick over each label
+            const funkgui::Canvas::Scope scope(c, tag::meterDetail, false);
+            glass(c, win, f.face);
+            for (const FaceMark& m : f.marks)
+            {
+                const float x = V::kLedLeft + static_cast<float>(-m.readingDb) * V::kLedPitch
+                              - 0.5f * (V::kLedPitch - V::kLedSegW);
+                c.segment(x, V::kLedTickY, x, V::kLedTickY + V::kLedTickH, 0.8f, f.print.withAlpha(0.6f));
             }
         }
         {
