@@ -1,7 +1,8 @@
 #pragma once
 
-// stage::SharedElementMax<Det, Bal>: a limiter that shares the compressor's gain element (01 §5.2 stage2/ catalogue,
-// §10.7 Diode 609; E §3.3 "SharedElementMax (r = max(r1, r2): diode-bridge 33609/2254)"; D §2.5). M5 (S10).
+// stage::SharedElementMax<Det, Bal> (= SharedElementMaxT<Det, Bal, 990, 50>): a limiter that shares the compressor's
+// gain element (01 §5.2 stage2/ catalogue, §10.7 Diode 609; E §3.3 "SharedElementMax (r = max(r1, r2): diode-bridge
+// 33609/2254)"; D §2.5). M5 (S10).
 //
 // The 33609 and the 2254 have two side chains, a compressor's and a limiter's, and ONE diode-bridge gain element: "the
 // outputs of both side-chains are combined before feeding the gain-control element" (D §2.5 [V S11]), so the element
@@ -72,16 +73,21 @@
 
 namespace fcdsp::stage {
 
-template <class Det, class Bal>
-struct SharedElementMax {
+// kSlopePermille / kKneeCentiDb (v1.2, ADR-82): the second stage's slope S (thousandths) and its output knee
+// (hundredths of a dB). SharedElementMax is the diode bridge's limiter, 990 / 50 (100:1, 0.5 dB: Diode 609, Diode 54,
+// bit for bit); Mu Mastering's LIMIT runs 950 / 300, its 20:1 section with a 3 dB knee on the same tube element.
+template <class Det, class Bal, int kSlopePermille, int kKneeCentiDb>
+struct SharedElementMaxT {
     static_assert(DetectorPolicy<Det> && BallisticsPolicy<Bal>,
                   "SharedElementMax: Det must be a DetectorPolicy and Bal a BallisticsPolicy");
+    static_assert(kSlopePermille > 0 && kSlopePermille < 1000 && kKneeCentiDb > 0,
+                  "SharedElementMaxT: 0 < S < 1 and a positive knee");
     using Detector = Det;                       // the stage-2 detector: the Mode's own, on the aux lanes (header)
     using Ballistics = Bal;
     using Computer = QuadKnee;                  // the limiter's law, in feedback
 
-    static constexpr float kSlope = 0.99f;      // 100:1: QuadKnee's FB loop gain k = 99 (D §2.5: ">100:1" [U])
-    static constexpr float kKneeDb = 0.5f;      // [H] the limiter's knee at the output (dB)
+    static constexpr float kSlope = static_cast<float>(kSlopePermille) / 1000.0f;   // S (the diode's 0.99: 100:1)
+    static constexpr float kKneeDb = static_cast<float>(kKneeCentiDb) / 100.0f;     // [H] the knee at the output (dB)
 
     struct Coeffs {
         typename Bal::Coeffs bal{};             // the limiter's ballistics at the stage-2 times
@@ -184,5 +190,10 @@ struct SharedElementMax {
         return simd::fma(simd::mul(simd::set1(1.0f - link), r), simd::set1(link), simd::set1(m));
     }
 };
+
+// The diode bridge's limiter (header comment): 100:1 (QuadKnee's FB loop gain k = 99; D §2.5: ">100:1" [U]) with a
+// 0.5 dB knee at the output [H].
+template <class Det, class Bal>
+using SharedElementMax = SharedElementMaxT<Det, Bal, 990, 50>;
 
 } // namespace fcdsp::stage

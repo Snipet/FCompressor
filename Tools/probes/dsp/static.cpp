@@ -2,7 +2,8 @@
 //
 // dsp.static.<key> (F3, S2; F9, S3; D1: 03 §3.4, C §5.2; E §2.2, §2.6, §6.3, §6.5; K2 #1; Rig driver, K3 #10): the
 // static curve at 1 kHz, measured through the Mode's own engine (EngineRig) with a single-bin DFT, against the Mode's
-// DECLARED curve (its staticGr, the same policy code the audio thread runs) and, for family == textbook, against this
+// DECLARED curve (its staticGr, the same policy code the audio thread runs, with a settled stage 2 where one is in:
+// analysis::staticGr with CurveOpts::stage2, v1.2) and, for family == textbook, against this
 // probe's own independent textbook formula (Giannoulis et al. 2012), so a bug in the shared gain computer cannot pass
 // both.
 //
@@ -58,7 +59,8 @@
 //              branches (DualRelease's slow path, TcSelector) adds its branch maps here with its card. A configuration
 //              whose attack or release is program-dependent (TimeSpec::program: the one-poles are not the published
 //              times) prints a NOTE instead of the per-sample rows; its ballistics' probe holds its maps (Opto 2A's
-//              T4 cell and its one-sample-delay loop: dsp.optocell, S9 M3).
+//              T4 cell and its one-sample-delay loop: dsp.optocell, S9 M3). So does one whose stage 2 is in (v1.2, Mu
+//              Mastering's LIMIT: the element's GR is the max of two loops; dsp.sharedelement holds those maps).
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -187,11 +189,15 @@ namespace
         return t + (x - t) * invR;
     }
 
+    // The element's settled curve: the computer, then a stage 2 (ModeEntry::staticS2: the identity while it is off, so
+    // every Mode whose stage 2 rests OFF at the configuration reads its computer alone, bit for bit; Mu Mastering's LIMIT
+    // rise, v1.2, is always in).
     double declaredGr(const ModeEntry& en, const EngineParams& e, double levelDb)
     {
-        const float x = static_cast<float>(levelDb) + e.preGainDb;      // detector domain
+        const float x[1] = { static_cast<float>(levelDb) + e.preGainDb };   // detector domain
         float gr = 0.0f;
-        en.staticGr(e, &x, &gr, 1);
+        analysis::staticGr(en, e, std::span<const float>(x), std::span<float>(&gr, 1),
+                           analysis::CurveOpts{ .colour = false, .stage2 = true });
         const float range = e.rangeDb < kRangeOff ? e.rangeDb : kRangeOff;
         gr = std::min(gr, range);
         return (e.flags & kEngGrOff) != 0 ? 0.0 : static_cast<double>(gr);
@@ -459,6 +465,13 @@ namespace
         if (!perSample)
             return;
         const Resolution res = fcmp::probe::resolveRaw(en, raw);
+        if (e.s2ThrDb < kS2Off)
+        {
+            std::printf("NOTE     %s: stage 2 shares the element here (the GR is the max of two loops); the per-sample "
+                        "branch rows are the computer's alone: dsp.sharedelement holds the element's maps\n",
+                        cfg.c_str());
+            return;
+        }
         if (en.desc->attackSpec(res.view, e).program || en.desc->releaseSpec(res.view, e).program)
         {
             std::printf("NOTE     %s: program-dependent ballistics; the per-sample branch rows are the policy's probe's "

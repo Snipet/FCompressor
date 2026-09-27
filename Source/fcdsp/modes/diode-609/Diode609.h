@@ -108,6 +108,7 @@ struct Diode609 {
 // The limiter's detector lanes are the Mode detector's aux lanes (SharedElementMax.h): the same policy.
 static_assert(std::is_same_v<Diode609::Stage2::Detector, Diode609::Detector>);
 static_assert(Stage2Policy<Diode609::Stage2> && HasCombineStatic<Diode609::Stage2>);
+static_assert(Diode609::Stage2::kSlope == 0.99f && Diode609::Stage2::kKneeDb == 0.5f);   // the diode's limiter, bit for bit
 static_assert(BallisticsPolicy<Diode609::Ballistics> && HasCommitFbRhat<Diode609::Ballistics>);
 static_assert(HasCommitFbRhat<Diode609::LimitBallistics> && HasRhatFb<Diode609::Computer>);
 

@@ -39,4 +39,6 @@ FCMP_MODE(10, "opto-3a", Opto3A)
 
 FCMP_MODE(11, "diode-54", Diode54)
 
+FCMP_MODE(12, "mu-mastering", MuMastering)
+
 // Retired Modes keep their slot:  FCMP_RETIRED(slot, "key", "successor-key")

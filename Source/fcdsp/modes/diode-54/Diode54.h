@@ -98,6 +98,7 @@ struct Diode54 {
 
 static_assert(std::is_same_v<Diode54::Stage2::Detector, Diode54::Detector>);
 static_assert(Stage2Policy<Diode54::Stage2> && HasCombineStatic<Diode54::Stage2>);
+static_assert(Diode54::Stage2::kSlope == 0.99f && Diode54::Stage2::kKneeDb == 0.5f);   // the diode's limiter, bit for bit
 static_assert(BallisticsPolicy<Diode54::Ballistics> && HasCommitFbRhat<Diode54::Ballistics>);
 static_assert(HasCommitFbRhat<Diode54::LimitBallistics> && HasRhatFb<Diode54::Computer>);
 
