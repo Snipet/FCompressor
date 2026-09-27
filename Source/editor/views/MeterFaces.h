@@ -16,6 +16,7 @@
 //   Opto 3A     the solid-state leveler's backlit VU, lit cool white on a black panel (v1.2; Opto 2A's glows warm)
 //   Diode 54    the module's cream gain-reduction meter in the console's blue-grey bezel (v1.2; Diode 609's is dark)
 //   Mu Mastering the mastering vari-mu's white gain-reduction meter in a brushed-silver bezel (v1.2)
+//   Opto Tube 1B the tube opto's cream VU in a steel-blue bezel (v1.2)
 // v1.2 (ADR-81): every hardware plate also carries its detail (GrVuMeter.cpp, METER_DETAIL): screws in the bezel's
 // corners, the window's recess and a glass sheen, the lamp as a jewel, the needle's shadow and thicker base, the
 // shroud's highlight and zero-adjust screw; a VU face adds the classic lower 0–100 % scale, a GR face a 1 dB fine ruler
@@ -112,7 +113,7 @@ namespace fcmp::ui
 
         inline constexpr MeterFace kPanel {};                     // the panel face: GrVuMeter draws it from layout::vu
 
-        inline constexpr std::array<MeterFace, 12> kFaces { {
+        inline constexpr std::array<MeterFace, 13> kFaces { {
             { "fet-76", FacePlate::light, FaceLaw::vuGain, true, -20.0f, 3.0f, kVuMarks, 0.0f,
               rgb(0x141414), rgb(0x141414), rgb(0xF2EEE3), rgb(0x1B1B1B), rgb(0xC62F24), rgb(0x111111), rgb(0xFFFFFF),
               rgb(0x000000), "VU", "GAIN REDUCTION" },
@@ -149,6 +150,9 @@ namespace fcmp::ui
             { "mu-mastering", FacePlate::light, FaceLaw::grLinear, false, -20.0f, 0.0f, kGr4Marks, 99.0f,
               rgb(0xB9BDC3), rgb(0xB9BDC3), rgb(0xF7F5EF), rgb(0x1A1A1A), rgb(0x000000), rgb(0x161616), rgb(0xFFFFFF),
               rgb(0x000000), "GAIN REDUCTION", "DB" },
+            { "opto-tube-1b", FacePlate::light, FaceLaw::vuGain, true, -20.0f, 3.0f, kVuMarks, 0.0f,
+              rgb(0x3E4A56), rgb(0x3E4A56), rgb(0xF3EFE4), rgb(0x1C1C1C), rgb(0xB8322A), rgb(0x141414), rgb(0xFFFFFF),
+              rgb(0x000000), "VU", "GAIN REDUCTION" },
         } };
     }
 

@@ -285,9 +285,11 @@ namespace
         P.le(key + ".vertex_px", vertex, 0.5);
         P.le(key + ".chord_px", chord, 0.25);
         {
+            // A curve that only grazes the frame may draw nothing (the drawn row above); then there is no span to
+            // judge (v1.2 Opto Tube 1B: THRESHOLD's low end at 4:1 meets the plot's bottom exactly at its right edge).
             const bool leftIn = f(lo) >= lo - 1e-3f, rightIn = f(hi) >= lo - 1e-3f && f(hi) <= hi + 1e-3f;
-            const double gapL = leftIn ? std::max(0.0f, minX - plot.x) : 0.0;
-            const double gapR = rightIn ? std::max(0.0f, plot.right() - maxX) : 0.0;
+            const double gapL = leftIn && segs > 0 ? std::max(0.0f, minX - plot.x) : 0.0;
+            const double gapR = rightIn && segs > 0 ? std::max(0.0f, plot.right() - maxX) : 0.0;
             P.le(key + ".span_px", std::max(gapL, gapR), 0.5);
         }
 
