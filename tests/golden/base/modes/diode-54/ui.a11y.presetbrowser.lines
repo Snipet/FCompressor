@@ -2,7 +2,7 @@
  0 THRESHOLD                34,356,124,80        value=4 d B u help=16 steps: −20, −18, −16, −14, −12, −10, −8, −6, −4, −2, 0, 2, 4, 6, 8, 10
  0 RATIO                    162,356,124,80       value=4:1 help=5 steps: 1.5, 2, 3, 4, 6
  0 KNEE                     290,356,124,80       value=4.0 decibels [ro] help=FAIRLY SOFT: A 10 DB KNEE AT EVERY RATIO
- 0 ATTACK                   418,356,124,80       value=5 MS (FIXED) help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS (FIXED)
+ 0 ATTACK                   418,356,124,80       value=5 MS help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS
  0 RECOVERY                 546,356,124,80       value=0.2 S help=4 steps: .1, .2, .8, AUTO
  0 MAKEUP                   674,356,124,80       value=0.0 decibels help=11 steps: 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20
  0 MIX                      802,356,124,80       value=100 percent
@@ -20,7 +20,7 @@
  0 LINK                     290,516,124,66       value=STEREO (SIDE CHAINS COMBINED) help=2 steps: DUAL, STEREO
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
  0 S2 THRESH                546,516,124,66       value=LIMITER OUT help=10 steps: 4, 6, 8, 10, 12, 14, 16, 18, 20, OFF
- 0 S2 ATTACK                674,516,124,66       value=1 milliseconds help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS (FIXED)
+ 0 S2 ATTACK                674,516,124,66       value=1 milliseconds help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS
  0 LIM RECOV                802,516,124,66       value=0.1 S help=4 steps: .1, .2, .8, AUTO
  2 Previous preset          228,14,24,32
  5 Preset                   252,14,276,32        value=Init help=Opens the preset browser

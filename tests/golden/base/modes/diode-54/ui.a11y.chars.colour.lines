@@ -50,7 +50,7 @@
  7 LIMIT WINS               812,296,108,13       value=– [ro]
  8 Control path, last 5 seconds 40,422,420,160       [ro] help=Target and applied gain reduction, the envelope phase, the Mode's history internal and its events
  8 Attack response: 63 percent at 5.01 milliseconds, declared 5 476,422,116,160      [ro]
- 0 ATTACK                   541.6,422,8,160      value=5 MS (FIXED) help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS (FIXED)
+ 0 ATTACK                   541.6,422,8,160      value=5 MS help=5 MS FIXED, OR THE FAST POT: 0.1–2 MS; end steps: 5 MS
  8 Release response: 63 percent at 200 milliseconds, declared 200 600,422,116,160      [ro]
  0 RECOVERY                 662.72986,422,8,160  value=0.2 S help=4 steps: .1, .2, .8, AUTO
  8 Colour transfer at 0.0 dB gain reduction, static approximation: second harmonic −67 dB, third −86 dB, total harmonic distortion −67 dB 732,430,188,136      [ro]
