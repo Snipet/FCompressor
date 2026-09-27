@@ -647,6 +647,21 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - The voice is a new instance of a now-templated TubeTransformer: `TubeTransformerT<kEvenPermille>`, 40 for Opto 3A.
     `TubeTransformer` stays 100 for Opto 2A, held bit-identical by a `static_assert`; no Opto 2A golden moved.
   - The cost was 3 source files, a template parameter, a probe, a preset file and two table rows.
+- **ADR-80 Diode 54, and the first hybrid parameter on screen (v1.2).** The fourth Wave 2 Mode is the Neve 2254
+  (D §2.5, M17), on Diode 609's engine with the 2254's switches:
+  - RECOVERY .1/.2/.8 s + AUTO. AUTO's τ_Rs is fitted to 1.35 s so the measured 1/e lands inside the published 1.5 s.
+  - The limiter runs to +20 dBu in 2 dB steps.
+  - There is no SLOW high-pass.
+  - ATTACK is the 2254/R's fixed 5 ms or its FAST pot, 0.1–2 ms. That is `Kind::hybrid`, the first use of a kind the
+    contracts have had since Sprint 0.
+
+  Two editor paths had never seen a hybrid, and both now follow the slider's view, where a hybrid is continuous even
+  on its step:
+  - `SlotModel::plotToHost01` accepts a hybrid attack or release: the marker drags on the time axis within the range.
+  - `StepPlot::accessibility` rewrites the handle's value interface on the slider's view state, as SlotGrid already
+    does.
+
+  `ui.chars` and `ui.charscreen` caught both. No other Mode's output changed.
 
 ## HardwareReverb migration
 
