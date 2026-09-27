@@ -1,33 +1,33 @@
- 5 Mode                     656,14,264,32        value=BUS 25 help=VCA · NEW FEED-FORWARD / OLD FEEDBACK · RMS
- 0 THRESHOLD                34,356,124,80        value=4.0 d B u
- 0 RATIO                    162,356,124,80       value=4:1 help=7 steps: 1.5, 2, 3, 4, 6, 10, ∞
- 0 KNEE                     290,356,124,80       value=MEDIUM help=3 steps: HARD, MED, SOFT
- 0 ATTACK                   418,356,124,80       value=10 MS help=7 steps: .03, .1, .3, 1, 3, 10, 30
- 0 RELEASE                  546,356,124,80       value=0.2 S help=6 steps: .05, .1, .2, .5, 1, 2
+ 5 Mode                     656,14,264,32        value=CONSOLE E help=VCA CHANNEL · FEED-FORWARD · RMS/PEAK
+ 0 THRESHOLD                34,356,124,80        value=0.0
+ 0 RATIO                    162,356,124,80       value=4.0 to 1
+ 0 KNEE                     290,356,124,80       value=over easy help=2 steps: HARD, EASY
+ 0 ATTACK                   418,356,124,80       value=auto help=2 steps: FAST, AUTO
+ 0 RELEASE                  546,356,124,80       value=200 milliseconds
  0 MAKEUP                   674,356,124,80       value=0.0 decibels
- 1 AUTO                     758,357,38,18        unchecked
+ 1 AUTO                     758,357,38,18        checked [off] help=THE CHANNEL'S MAKEUP IS ALWAYS AUTOMATIC
  0 MIX                      802,356,124,80       value=100 percent
  0 RANGE                    34,444,124,66        value=off
- 0 DETECT                   162,444,124,66       value=RMS, fixed [ro] [off] help=RMS DETECTOR (THAT 2252), FIXED IN THIS CIRCUIT
+ 0 DETECT                   162,444,124,66       value=RMS DETECTOR help=2 steps: RMS, PEAK
  1 EXT                      246,445,38,18        unchecked
  7 HOLD, not applicable     290,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 LOOKAHEAD, not applicable 418,444,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 0 TIME MODE                546,444,124,66       value=FIXED help=2 steps: FIXED, VAR
- 0 DRIVE                    674,444,124,66       value=0.0 decibels
- 0 VOICE                    802,444,124,66       value=NEW (FEEDFORWARD) help=2 steps: NEW, OLD
+ 0 REL CURVE                546,444,124,66       value=LOG RELEASE help=2 steps: LOG, LIN
+ 7 DRIVE, not applicable    674,444,124,66       [ro] [off] help=THE CHANNEL HAS NO DRIVE CONTROL
+ 7 VOICE, not applicable    802,444,124,66       [ro] [off] help=THE CHANNEL VCA IS CLEAN
  0 SC HPF                   34,516,124,66        value=off
  1 LISTEN                   118,517,38,18        unchecked
- 0 THRUST                   162,516,124,66       value=NORMAL help=3 steps: NORM, MED, LOUD
- 0 LINK                     290,516,124,66       value=100 percent help=7 steps: IND, 50, 60, 70, 80, 90, 100
+ 7 SC EMPH, not applicable  162,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
+ 0 LINK                     290,516,124,66       value=LINKED help=2 steps: DUAL, LINK
  0 STEREO                   418,516,124,66       value=STEREO help=2 steps: ST, M/S
  7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 VCA  4                   40,69,106,16         [ro]
  6 BUS G                    40,88,106,20         unchecked help=BUS G   VCA BUS · 2/4/10 · .1–30 MS · .1–1.2 S + AUTO
- 6 BUS 25                   40,108,106,20        checked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
+ 6 BUS 25                   40,108,106,20        unchecked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
  6 OCTO                     40,128,106,20        unchecked help=OCTO   HYBRID VCA · 1–NUKE · .05–30 MS · .05–3.5 S (OPTO 20 S) · DIST 2/3
- 6 CONSOLE E                40,148,106,20        unchecked help=CONSOLE E   VCA CHANNEL · 1–∞ · AUTO/1 MS · .1–4 S LOG/LIN · RMS/PEAK
+ 6 CONSOLE E                40,148,106,20        checked help=CONSOLE E   VCA CHANNEL · 1–∞ · AUTO/1 MS · .1–4 S LOG/LIN · RMS/PEAK
  7 FET  1                   150,69,106,16        [ro]
  6 FET 76                   150,88,106,20        unchecked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
  7 OPTO  1                  260,69,106,16        [ro]

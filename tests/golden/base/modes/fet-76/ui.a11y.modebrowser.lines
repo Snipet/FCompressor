@@ -22,10 +22,11 @@
  7 S2 THRESH, not applicable 546,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 S2 ATTACK, not applicable 674,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
  7 S2 RELEASE, not applicable 802,516,124,66       [ro] [off] help=NOT ON THIS CIRCUIT
- 7 VCA  3                   40,69,106,16         [ro]
+ 7 VCA  4                   40,69,106,16         [ro]
  6 BUS G                    40,88,106,20         unchecked help=BUS G   VCA BUS · 2/4/10 · .1–30 MS · .1–1.2 S + AUTO
  6 BUS 25                   40,108,106,20        unchecked help=BUS 25   VCA · RMS · 1.5–∞ · .03–30 MS · .05–2 S + VAR · THRUST · CV-SUM LINK
  6 OCTO                     40,128,106,20        unchecked help=OCTO   HYBRID VCA · 1–NUKE · .05–30 MS · .05–3.5 S (OPTO 20 S) · DIST 2/3
+ 6 CONSOLE E                40,148,106,20        unchecked help=CONSOLE E   VCA CHANNEL · 1–∞ · AUTO/1 MS · .1–4 S LOG/LIN · RMS/PEAK
  7 FET  1                   150,69,106,16        [ro]
  6 FET 76                   150,88,106,20        checked help=FET 76   FEEDBACK FET · PEAK · 20–800 µS · 4/8/12/20/ALL · INPUT DRIVES A FIXED THRESHOLD
  7 OPTO  1                  260,69,106,16        [ro]
