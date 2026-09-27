@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.link  scope=modes/diode-54
+# key	value	tolerance
+link.fb.k0.gr_l_db	7.99999952	abs:0.01
+link.fb.k0.gr_r_db	0	abs:0.01
+link.fb.k100.gr_l_db	7.99999952	abs:0.01
+link.fb.k100.gr_r_db	7.99999952	abs:0.01

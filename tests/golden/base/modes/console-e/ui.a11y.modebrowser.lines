@@ -35,8 +35,9 @@
  6 OPTO 3A                  260,108,106,20       unchecked help=OPTO 3A   T4 CELL · COMP/LIMIT · ≤1.5 MS · 60 MS→50 %, THEN BY PROGRAM · HF SENS
  7 VARI-MU  1               370,69,106,16        [ro]
  6 MU 67                    370,88,106,20        unchecked help=MU 67   VARIABLE-MU · PROGRESSIVE RATIO · TC 1–6: 0.3–25 S · LAT/VERT
- 7 DIODE  1                 480,69,106,16        [ro]
+ 7 DIODE  2                 480,69,106,16        [ro]
  6 DIODE 609                480,88,106,20        unchecked help=DIODE 609   DIODE BRIDGE · 1.5–6 · FAST/SLOW · .1–1.5 S + A1/A2 · LIMITER +4…+15 DBU
+ 6 DIODE 54                 480,108,106,20       unchecked help=DIODE 54   DIODE BRIDGE · 1.5–6 · 5 MS / .1–2 MS · .1/.2/.8 S + AUTO · LIMITER +4…+20 DBU
  7 MODERN  1                590,69,106,16        [ro]
  6 CLEAN                    590,88,106,20        unchecked help=CLEAN   FEED-FORWARD · PEAK/RMS · 5 µS–250 MS · 1:1–∞ · 0–200 % MIX
  7 LIMIT  1                 700,69,106,16        [ro]

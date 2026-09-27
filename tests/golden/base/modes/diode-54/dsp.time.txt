@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.time  scope=modes/diode-54
+# key	value	tolerance
+time.rel.after_1s.t50_ms	138.629536	rel:0.1
+time.rel.after_1s.t90_ms	460.517192	rel:0.1
+time.rel.after_10s.t50_ms	138.629536	rel:0.1
+time.rel.after_10s.t90_ms	460.517192	rel:0.1

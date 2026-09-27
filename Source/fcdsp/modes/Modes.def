@@ -37,4 +37,6 @@ FCMP_MODE(9, "console-e", ConsoleE)
 
 FCMP_MODE(10, "opto-3a", Opto3A)
 
+FCMP_MODE(11, "diode-54", Diode54)
+
 // Retired Modes keep their slot:  FCMP_RETIRED(slot, "key", "successor-key")

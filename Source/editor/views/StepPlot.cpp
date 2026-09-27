@@ -823,9 +823,12 @@ namespace fcmp::ui
         h.bounds = s.specShown ? funkgui::Rect{ s.specX - r, geom_.plot.y, 2.0f * r, geom_.plot.h } : geom_.plot;
         const SlotModel& m = ctx_.slot(s.pid);
         const fcdsp::ParamSpec* sp = m.spec();
-        if (sp != nullptr && h.role == funkgui::A11yRole::slider && s.state != funkgui::ValueState::stepped)
+        const funkgui::ValueState vs = s.slider.view().state;
+        if (sp != nullptr && h.role == funkgui::A11yRole::slider && vs != funkgui::ValueState::stepped)
         {
-            // The slot's value interface in display units (SlotGrid's rewrite of RuleSlider's track space).
+            // The slot's value interface in display units (SlotGrid's rewrite of RuleSlider's track space), on the
+            // slider's state as SlotGrid reads it: a hybrid on one of its steps is continuous there (Diode 54's 5 MS
+            // attack, v1.2), where the resolved SlotState says stepped.
             const PlainRange span = trackSpan(s.pid, *sp);
             const double a = toDisplayUnits(*sp, span.a), b = toDisplayUnits(*sp, span.b);
             h.lo = std::min(a, b);
