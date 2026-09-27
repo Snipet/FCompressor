@@ -1,0 +1,6 @@
+# funkgui-golden 2  probe=dsp.time  scope=modes/mu-mastering
+# key	value	tolerance
+time.rel.after_1s.t50_ms	415.888316	rel:0.1
+time.rel.after_1s.t90_ms	1381.55108	rel:0.1
+time.rel.after_10s.t50_ms	415.888316	rel:0.1
+time.rel.after_10s.t90_ms	1381.55108	rel:0.1
