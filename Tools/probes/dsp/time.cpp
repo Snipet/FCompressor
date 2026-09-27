@@ -354,7 +354,11 @@ FCMP_PROBE(dsp, time)
                                                              - static_cast<double>(analysis::inputThresholdDb(e0))),
                                           ts->lo, ts->hi);
         }
+        // AUTO makeup is cleared for these renders (a probe-level choice): it follows the GR, so it drops to 0 with
+        // GR OFF (ModeEngine::autoMakeupDb), and the host ramps that change with its gain smoother while the Rig
+        // applies it unsmoothed (EngineRig.h); the row judges the engine's own ramp (v1.2 Console E: AUTO locked on).
         EngineParams on = fcmp::probe::resolveRaw(en, toggle).eng;
+        on.flags = static_cast<uint8_t>(on.flags & ~kEngAutoMakeup);
         EngineParams off = on;
         off.flags = static_cast<uint8_t>(off.flags | kEngGrOff);
         const Rendered ctlOn = renderToggle(en, on, on), ctlOff = renderToggle(en, off, off);

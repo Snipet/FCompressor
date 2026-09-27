@@ -33,4 +33,6 @@ FCMP_MODE(7, "brickwall", Brickwall)
 // Wave 2 (post-v1, 2026-09-26; SPRINTS §5): the lead adds each Mode's line with the Mode itself.
 FCMP_MODE(8, "octo", Octo)
 
+FCMP_MODE(9, "console-e", ConsoleE)
+
 // Retired Modes keep their slot:  FCMP_RETIRED(slot, "key", "successor-key")
