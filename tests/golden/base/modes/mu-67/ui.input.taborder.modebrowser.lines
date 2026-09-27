@@ -4,7 +4,8 @@
 4 modeBrowser:265 listItem CONSOLE E
 5 modeBrowser:258 listItem FET 76
 6 modeBrowser:259 listItem OPTO 2A
-7 modeBrowser:260 listItem MU 67
-8 modeBrowser:261 listItem DIODE 609
-9 modeBrowser:256 listItem CLEAN
-10 modeBrowser:263 listItem BRICKWALL
+7 modeBrowser:266 listItem OPTO 3A
+8 modeBrowser:260 listItem MU 67
+9 modeBrowser:261 listItem DIODE 609
+10 modeBrowser:256 listItem CLEAN
+11 modeBrowser:263 listItem BRICKWALL
