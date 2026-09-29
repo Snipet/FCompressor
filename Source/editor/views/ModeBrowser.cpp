@@ -731,21 +731,30 @@ namespace fcmp::ui
             return true;                                         // over the overlay nothing underneath scrolls
         const double now = ctx_.host != nullptr ? ctx_.host->nowSeconds() : ctx_.seconds;
         if (wheelLast_ < 0.0 || now - wheelLast_ >= funkgui::GestureController::kWheelIdle)
+        {
             wheelAcc_ = 0.0f;
+            wheelPaged_ = false;
+        }
         wheelLast_ = now;
-        const float delta = e.dy != 0.0f ? e.dy : e.dx;
-        const float v = (e.reversed ? -1.0f : 1.0f) * delta;
+        // ADR-84: pages move with the content, so the delta keeps the system's direction (natural scrolling included);
+        // `reversed` is only for value controls. A smooth burst (a swipe and its momentum) turns one page at most.
+        const float v = e.dy != 0.0f ? e.dy : e.dx;
         int k = 0;
         if (std::isfinite(v))
         {
             if (!e.smooth)
                 k = v > 0.0f ? 1 : (v < 0.0f ? -1 : 0);
-            else
+            else if (!wheelPaged_)
             {
                 constexpr float notch = funkgui::RuleSlider::kWheelNotch;
                 wheelAcc_ = std::clamp(wheelAcc_ + v, -64.0f * notch, 64.0f * notch);
                 k = static_cast<int>(wheelAcc_ / notch);
-                wheelAcc_ -= static_cast<float>(k) * notch;
+                k = std::clamp(k, -1, 1);
+                if (k != 0)
+                {
+                    wheelAcc_ = 0.0f;
+                    wheelPaged_ = true;
+                }
             }
         }
         if (k != 0)

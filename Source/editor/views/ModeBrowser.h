@@ -32,7 +32,8 @@
 //   GestureController::tapMany of `mode` then every live or stepped parameter whose Mode default (fcdsp::modeDefaults)
 //   differs from its value, inside one beginBatch()/endBatch() (02 §8.4.4, K2 #23). A row commits on release inside
 //   it (dragging off cancels); a popup click writes nothing. The pager steps on the press; the wheel pages (one notch
-//   per page, a burst closes after 0.5 s).
+//   per page, a burst closes after 0.5 s; ADR-84: in the system's direction, and a trackpad swipe with its momentum
+//   turns one page).
 // - Keys the browser does not use (Tab, Esc) are the Panel's; Backspace and Delete edit the type-ahead buffer and never
 //   reach a slot under the overlay; characters with Cmd or Ctrl go to the host.
 // - Keyboard focus (S13 H1a): while the browser is open it is the Panel's whole Tab order (its rows on the shown
@@ -207,6 +208,7 @@ namespace fcmp::ui
         double typedAt_ = -1.0;                                  // panel time of the last type-ahead key
         float  wheelAcc_ = 0.0f;
         double wheelLast_ = -1.0;
+        bool   wheelPaged_ = false;                              // ADR-84: this smooth burst has turned its page
         uint32_t revision_ = 0;                                  // bumps when the shown page changes
         int  specItem_ = -1;                                     // the item spec_ was built for
         char spec_[256]{};

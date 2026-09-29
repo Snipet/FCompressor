@@ -8,11 +8,16 @@
 // inks, so the two overlays read as one design.
 // - Left, x 40–170: the filter column "SHOW": ALL, FACTORY, USER, then every category of the list (case-insensitive,
 //   sorted), each with its count, kCaption on an 18 px pitch (6 px more after USER); the chosen one ink100 with a 2×8 bar
-//   at x 34. It stays chosen while the editor is open. More categories than fit (9) scroll with the wheel over the column.
+//   at x 34. It stays chosen while the editor is open. More categories than fit (9) scroll with the wheel over the column,
+//   a row per 18 px of trackpad travel or 3 rows a wheel notch.
 // - Right, x 186–920 (a hairline at x 180 between): the rows of the chosen filter in PresetAccess order (the factory bank,
 //   then the user presets by name: the order ‹ › step through), 11 at a time, with the name (kLabel, ellipsised to
 //   300 px), the category and the Mode's name (kMicro ink52 at x 520 and x 640) and FACTORY / USER (kMicro ink32,
-//   right-aligned to x 908); a 2 px ink32 scroll thumb at x 916 when the rows do not fit. The selected row (the one Return
+//   right-aligned to x 908); a 2 px ink32 scroll thumb at x 916 when the rows do not fit. The list scrolls by the pixel
+//   (ADR-84): a trackpad moves it 1:1 with the fingers (at the UI zoom) in the system's direction, natural scrolling
+//   included, with the system's momentum; a wheel notch glides it 3 rows (τ 0.05 s); keys and the selection bring a row
+//   into view at once. A row cut by the list's edge (y 88–308) is drawn clipped (Canvas::pushClip, FunkGui v0.9.0) and
+//   listed, hit and focused like the others. The selected row (the one Return
 //   and the actions take) has an ink16 fill; the current preset has the bar and its name in ink100; a hovered name is
 //   ink100, a pressed one accent.
 // - Bottom, y 324–340 (a hairline at y 316 above): the status line at x 40 (the count, "33 PRESETS · 9 SHOWN", ink32; a
@@ -138,6 +143,7 @@ namespace fcmp::ui
         funkgui::Cursor cursor(funkgui::Point) const override;
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
+        bool wantsFullRate() const override;                     // ADR-84: while a wheel notch glides
 
         // A preset file's extension: FunkPresets' ProductConfig of the processor (".fcmppreset"), taken from the
         // generated FcmpProduct.h, the product's one source of constants (S13 H1a; it was a literal here).
@@ -221,10 +227,16 @@ namespace fcmp::ui
         int  indexOf(std::string_view uuid);                     // the PresetAccess index now (re-read); -1
         const Entry* selectedEntry() const noexcept;
         int  shownOf(int entry) const noexcept;                  // into shown_; -1
-        void select(int entry, bool scrollTo);
+        void select(int entry, bool scrollTo);                   // scrollTo: brought into view at once
         void setFilter(int filter);
-        void scrollBy(int rows);
         void scrollFilters(int rows);
+
+        // ADR-84: the list's offset in logical px (0 … maxScroll()); rows s with any part in view are firstShown() …
+        // lastShown() (-1 … -2 when none).
+        float maxScroll() const noexcept;
+        void  scrollToPx(float px, bool glide);                  // glide: eased by tick(); else at once
+        int   firstShown() const noexcept;
+        int   lastShown() const noexcept;
 
         // actions
         void load(int entry, bool closeAfter);                   // one apply, unless current and unmodified
@@ -279,11 +291,12 @@ namespace fcmp::ui
         int  filterScroll_ = 0;                                  // the first category shown
         std::string selectedUuid_;
         int  selected_ = -1;                                     // into entries_
-        int  scroll_ = 0;                                        // the first row of shown_ drawn
+        float scrollPx_ = 0.0f;                                  // ADR-84: the list's offset drawn, logical px
+        float scrollTo_ = 0.0f;                                  // ... and where a notch glides it (== when at rest)
         Hit  hover_;
         Hit  pressed_;
         bool armed_ = false;                                     // the pressed row or cell fires on a release inside
-        float wheelAcc_ = 0.0f;
+        float wheelAcc_ = 0.0f;                                  // the filter column's trackpad travel, px
         std::array<char, 32> typed_{};                           // type-ahead (ASCII, upper case)
         std::size_t typedLen_ = 0;
         double typedAt_ = -1.0;

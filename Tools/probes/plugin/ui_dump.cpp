@@ -3,13 +3,15 @@
 // subcommand:
 //
 //   fcmp_probe_plugin ui.dump --mode <key> --golden-root <dir> --arch <arch> -- --view <id> --out <x.dump> [--png <x.png>]
-//                                  [--dpi 1|2] [--theme 0|1]   (flags after "--" are ui.dump's own; S5 lead revision)
+//                                  [--dpi 1|2] [--theme 0|1] [--wheel <points>]
+//                                  (flags after "--" are ui.dump's own; S5 lead revision)
 //
 // It renders one view of fcmp::ui::views() for one Mode exactly as ui.geometry does (a FakeFacade, Panel{skipHint,
 // syncPreview}, HeadlessHost, setView(instant), settle at 1/60 s), then writes the settled frame as dump v2 and, with
 // --png, rasterises it with FunkGui's SoftRaster (2× supersampling). Defaults: --view panel, --mode clean, --dpi 2,
 // --theme 0. `funkgui_framerender x.dump x.png 2` renders any dump the same way. Missing parent directories of the
-// outputs are created.
+// outputs are created. --wheel (ADR-84) sends one trackpad scroll of that many points (> 0: the content moves up) at the
+// overlay's centre after the view is set, to look at a list scrolled by the pixel.
 //
 // Exit: 0 written; 1 a usage error, an unknown view or Mode, an unsettled panel or a write error. ui.dump reads its
 // own flags from the process arguments, which ProbeMain (frozen at FZ0) also hands to the harness: the harness prints
@@ -20,6 +22,7 @@
 
 #include "FakeFacade.h"
 
+#include "editor/Layout.h"
 #include "editor/Panel.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
@@ -33,6 +36,7 @@
 
 #include <crt_externs.h>                                         // _NSGetArgc / _NSGetArgv (macOS)
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -55,6 +59,7 @@ namespace
         std::string png;
         float       dpi = 2.0f;
         int         theme = 0;
+        float       wheelPoints = 0.0f;                          // --wheel: one smooth wheel event, points
         std::string error;                                       // non-empty: a usage error
     };
 
@@ -70,7 +75,8 @@ namespace
             const std::string_view flag = argv[i] != nullptr ? argv[i] : "";
             const bool hasValue = i + 1 < argc && argv[i + 1] != nullptr;
             const std::string value = hasValue ? argv[i + 1] : "";
-            if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme")
+            if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme"
+                || flag == "--wheel")
             {
                 if (!hasValue || value.empty() || value.starts_with("--"))
                 {
@@ -86,6 +92,8 @@ namespace
                     a.png = value;
                 else if (flag == "--dpi")
                     a.dpi = value == "1" ? 1.0f : value == "2" ? 2.0f : 0.0f;
+                else if (flag == "--wheel")
+                    a.wheelPoints = std::strtof(value.c_str(), nullptr);
                 else
                     a.theme = value == "0" ? 0 : value == "1" ? 1 : -1;
             }
@@ -114,7 +122,7 @@ namespace
         if (!a.error.empty())
         {
             std::fprintf(stderr, "ui.dump: %s\nusage: fcmp_probe_plugin ui.dump --view <id> --mode <key> --out <x.dump> "
-                                 "[--png <x.png>] [--dpi 1|2] [--theme 0|1]\n", a.error.c_str());
+                                 "[--png <x.png>] [--dpi 1|2] [--theme 0|1] [--wheel <points>]\n", a.error.c_str());
             return 1;
         }
         const ui::ViewSpec* view = ui::findView(a.view);
@@ -138,6 +146,16 @@ namespace
         ui::Panel panel(facade, { true, true, false });
         funkgui::HeadlessHost host(panel, a.theme, a.dpi);
         panel.setView(*view, true);
+        if (a.wheelPoints != 0.0f && std::isfinite(a.wheelPoints))
+        {
+            host.settle(kMaxSettle, kDt);                        // opened (a browser resets on its first tick)
+            funkgui::WheelEvent w;
+            w.x = ui::layout::kOverlay.centreX();
+            w.y = ui::layout::kOverlay.centreY();
+            w.dy = -a.wheelPoints / 512.0f;                      // JUCE on macOS: scrollingDeltaY / 512
+            w.smooth = true;
+            panel.wheel(w);
+        }
         const int frames = host.settle(kMaxSettle, kDt);
         if (frames > kMaxSettle)
         {

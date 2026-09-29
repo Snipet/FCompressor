@@ -14,6 +14,7 @@
 
 #include <funkgui/canvas/Canvas.h>
 #include <funkgui/core/Col.h>
+#include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
 #include <funkgui/juce/MenuLook.h>
@@ -94,12 +95,17 @@ namespace fcmp::ui
         constexpr double kMessageS = 3.0;
         constexpr double kArmS = 3.0;
         constexpr double kTypeAheadS = static_cast<double>(layout::browser::kTypeAheadS);
-        constexpr float  kWheelRowsDiscrete = 3.0f;             // HR PresetPanel::mouseWheel
-        constexpr float  kWheelRowsSmooth = 12.0f;
+        constexpr float  kWheelRowsDiscrete = 3.0f;             // a wheel notch (HR PresetPanel::mouseWheel)
+        // ADR-84: JUCE's macOS deltas. A precise (trackpad) delta is scrollingDelta / 512 in points, so the list follows
+        // the fingers at kPointsPerSmoothDelta px per unit of delta divided by the UI zoom.
+        constexpr float  kPointsPerSmoothDelta = 512.0f;
+        constexpr float  kNotchTau = 0.05f;                     // a notch's glide
+        constexpr float  kGlideSnapPx = 0.25f;                  // ... ends this close
 
         constexpr const char* kSep = " \xC2\xB7 ";              // " · "
 
-        float rowY(int visibleRow) noexcept { return kRowY0 + kRowPitch * static_cast<float>(visibleRow); }
+        // Row s's text top with the list at offset `off` (its hit rectangle starts kRowHitDy above).
+        float rowTop(int s, float off) noexcept { return kRowY0 + kRowPitch * static_cast<float>(s) - off; }
 
         char upperAscii(char ch) noexcept { return ch >= 'a' && ch <= 'z' ? static_cast<char>(ch - 'a' + 'A') : ch; }
         char lowerAscii(char ch) noexcept { return ch >= 'A' && ch <= 'Z' ? static_cast<char>(ch - 'A' + 'a') : ch; }
@@ -281,6 +287,7 @@ namespace fcmp::ui
         armed_ = false;
         typedLen_ = 0;
         wheelAcc_ = 0.0f;
+        scrollTo_ = scrollPx_;                                   // a glide left over from the last opening stops
         refresh(true);
         const int cur = entryOf(currentUuid_);
         select(cur >= 0 && shownOf(cur) >= 0 ? cur : -1, true);
@@ -480,7 +487,8 @@ namespace fcmp::ui
         for (std::size_t i = 0; i < entries_.size(); ++i)
             if (inFilter(entries_[i], f))
                 shown_.push_back(static_cast<int>(i));
-        scroll_ = std::clamp(scroll_, 0, std::max(0, static_cast<int>(shown_.size()) - kRows));
+        scrollPx_ = std::clamp(scrollPx_, 0.0f, maxScroll());
+        scrollTo_ = std::clamp(scrollTo_, 0.0f, maxScroll());
     }
 
     int PresetBrowser::entryOf(std::string_view uuid) const noexcept
@@ -523,10 +531,11 @@ namespace fcmp::ui
         if (scrollTo)
             if (const int s = shownOf(selected_); s >= 0)
             {
-                if (s < scroll_)
-                    scroll_ = s;
-                else if (s >= scroll_ + kRows)
-                    scroll_ = s - kRows + 1;
+                const float top = kRowPitch * static_cast<float>(s);
+                if (top < scrollPx_)
+                    scrollToPx(top, false);
+                else if (top + kRowPitch > scrollPx_ + kTrackH)
+                    scrollToPx(top + kRowPitch - kTrackH, false);
             }
         ++revision_;
     }
@@ -539,7 +548,8 @@ namespace fcmp::ui
         filter_ = filter;
         filterKind_ = filters_[static_cast<std::size_t>(filter)].kind;
         filterKey_ = filters_[static_cast<std::size_t>(filter)].key;
-        scroll_ = 0;
+        scrollPx_ = 0.0f;
+        scrollTo_ = 0.0f;
         rebuildShown();
         if (shownOf(selected_) >= 0)
             select(selected_, true);
@@ -556,14 +566,34 @@ namespace fcmp::ui
         ++revision_;
     }
 
-    void PresetBrowser::scrollBy(int rows)
+    float PresetBrowser::maxScroll() const noexcept
     {
-        const int to = std::clamp(scroll_ + rows, 0, std::max(0, static_cast<int>(shown_.size()) - kRows));
-        if (to != scroll_)
-        {
-            scroll_ = to;
-            ++revision_;
-        }
+        return std::max(0.0f, kRowPitch * static_cast<float>(shown_.size()) - kTrackH);
+    }
+
+    void PresetBrowser::scrollToPx(float px, bool glide)
+    {
+        const float to = std::clamp(px, 0.0f, maxScroll());
+        const float was = scrollPx_;
+        scrollTo_ = to;
+        if (!glide)
+            scrollPx_ = to;
+        if (!funkgui::ease::sameBits(was, scrollPx_))
+            ++revision_;                                         // the rows moved (a11y bounds)
+    }
+
+    int PresetBrowser::firstShown() const noexcept
+    {
+        return shown_.empty() ? -1 : std::clamp(static_cast<int>(std::floor(scrollPx_ / kRowPitch)), 0,
+                                                static_cast<int>(shown_.size()) - 1);
+    }
+
+    int PresetBrowser::lastShown() const noexcept
+    {
+        if (shown_.empty())
+            return -2;
+        const int last = static_cast<int>(std::ceil((scrollPx_ + kTrackH) / kRowPitch)) - 1;
+        return std::clamp(last, firstShown(), static_cast<int>(shown_.size()) - 1);
     }
 
     void PresetBrowser::scrollFilters(int rows)
@@ -603,6 +633,11 @@ namespace fcmp::ui
         if (!armedUuid_.empty() && ctx_.seconds > armedUntil_)
         {
             armedUuid_.clear();
+            ++revision_;
+        }
+        if (!funkgui::ease::sameBits(scrollPx_, scrollTo_))     // a wheel notch glides (ADR-84)
+        {
+            scrollPx_ = funkgui::ease::toward(scrollPx_, scrollTo_, dt, kNotchTau, kGlideSnapPx);
             ++revision_;
         }
         hover_ = ctx_.pointerIn && layout::kOverlay.contains(ctx_.pointer) ? hitAt(ctx_.pointer) : Hit{};
@@ -1386,10 +1421,14 @@ namespace fcmp::ui
 
     funkgui::Rect PresetBrowser::rowRect(int shownIndex) const noexcept
     {
-        const int v = shownIndex - scroll_;
-        if (v < 0 || v >= kRows)
+        // The row's part inside the list (ADR-84: a row the edge cuts is hit, listed and focused by what shows).
+        if (shownIndex < 0 || shownIndex >= static_cast<int>(shown_.size()))
             return {};
-        return { kListX, rowY(v) + kRowHitDy, kListRight - kListX, kRowPitch };
+        const float top = rowTop(shownIndex, scrollPx_) + kRowHitDy;
+        const float y0 = std::max(top, kList.y), y1 = std::min(top + kRowPitch, kList.bottom());
+        if (!(y1 - y0 >= 1.0f))
+            return {};                                           // less than a px shows
+        return { kListX, y0, kListRight - kListX, y1 - y0 };
     }
 
     funkgui::Rect PresetBrowser::filterRect(int filter) const noexcept
@@ -1430,11 +1469,8 @@ namespace fcmp::ui
         for (int f = 0; f < static_cast<int>(filters_.size()); ++f)
             if (const Rect r = filterRect(f); !r.isEmpty() && r.contains(p))
                 return { Zone::filter, f };
-        for (int v = 0; v < kRows; ++v)
+        for (int s = firstShown(); s <= lastShown(); ++s)
         {
-            const int s = scroll_ + v;
-            if (s >= static_cast<int>(shown_.size()))
-                break;
             if (rowRect(s).contains(p))
             {
                 const Entry& e = entries_[static_cast<std::size_t>(shown_[static_cast<std::size_t>(s)])];
@@ -1578,17 +1614,22 @@ namespace fcmp::ui
             }
         }
 
-        // The rows.
+        // The rows (ADR-84): at the offset snapped to a device px, so text lands on the pixel grid while it moves; when a
+        // row is cut by the list's edge the rows are clipped to the list (at rest on a whole row nothing is cut, and the
+        // frame is the one drawn before pixel scrolling).
         const float rowCap = -c.capCentreTop(0.0f, T::kLabel);  // cap centre below a kLabel line's top
         char fitted[256];
-        for (int v = 0; v < kRows; ++v)
+        const float off = c.snapY(scrollPx_);
+        const bool cut = !shown_.empty() && off != kRowPitch * std::floor(off / kRowPitch);
+        if (cut)
+            c.pushClip({ kGround.x, kList.y, kGround.w, kList.h });
+        const int lastRow = static_cast<int>(shown_.size()) - 1;
+        for (int s = std::max(0, static_cast<int>(std::floor(off / kRowPitch)));
+             s <= std::min(lastRow, static_cast<int>(std::ceil((off + kTrackH) / kRowPitch)) - 1); ++s)
         {
-            const int s = scroll_ + v;
-            if (s >= static_cast<int>(shown_.size()))
-                break;
             const int ei = shown_[static_cast<std::size_t>(s)];
             const Entry& e = entries_[static_cast<std::size_t>(ei)];
-            const float y = rowY(v);
+            const float y = rowTop(s, off);
             const bool isSelected = ei == selected_;
             const bool isCurrent = e.uuid == currentUuid_;
             const bool over = hover_.zone == Zone::row && hover_.index == s;
@@ -1633,6 +1674,8 @@ namespace fcmp::ui
             c.text(e.factory ? "FACTORY" : "USER", kSourceRight, c.sharedBaselineTop(y, T::kLabel, T::kMicro), T::kMicro,
                    isSelected ? th.ink52 : th.ink32, funkgui::Align::right);
         }
+        if (cut)
+            c.popClip();
         if (shown_.empty())
         {
             const funkgui::Canvas::Scope scope(c, tag::browserRow, false);
@@ -1648,7 +1691,7 @@ namespace fcmp::ui
             const funkgui::Canvas::Scope scope(c, tag::browserPager, false);
             const float n = static_cast<float>(shown_.size());
             const float h = std::max(12.0f, kTrackH * static_cast<float>(kRows) / n);
-            const float y = kTrackTop + (kTrackH - h) * static_cast<float>(scroll_) / (n - static_cast<float>(kRows));
+            const float y = kTrackTop + (kTrackH - h) * off / maxScroll();
             c.rrect(kThumbX, y, 2.0f, h, 1.0f, th.ink32);
         }
 
@@ -1908,27 +1951,44 @@ namespace fcmp::ui
         sync();
         if (edit_ == Edit::rename)
             return true;                                         // the renamed row stays where it is
-        const float d = (e.reversed ? -1.0f : 1.0f) * (e.dy != 0.0f ? e.dy : e.dx);
-        if (!std::isfinite(d))
+        // ADR-84: a list moves with its content, so JUCE's deltas are taken as they come; they already carry the system's
+        // direction, natural scrolling included. `reversed` is for a value control (RuleSlider), which follows the
+        // fingers whatever the setting; reading it here turned the list against the fingers under natural scrolling.
+        const float d = e.dy != 0.0f ? e.dy : e.dx;
+        if (!std::isfinite(d) || d == 0.0f)
             return true;
-        int rows = 0;
+        const Hit h = hitAt({ e.x, e.y });
+        const bool overFilters = h.zone == Zone::filter || h.zone == Zone::column;
         if (e.smooth)
         {
-            wheelAcc_ = std::clamp(wheelAcc_ - d * kWheelRowsSmooth, -64.0f, 64.0f);
-            rows = static_cast<int>(wheelAcc_);
-            wheelAcc_ -= static_cast<float>(rows);
+            // A trackpad (or a precise mouse): its travel in points, followed 1:1 at the UI zoom, momentum included.
+            const float zoom = ctx_.host != nullptr ? static_cast<float>(std::max(25, ctx_.host->zoomPercent())) / 100.0f
+                                                    : 1.0f;
+            const float px = -d * kPointsPerSmoothDelta / zoom;
+            if (overFilters)
+            {
+                wheelAcc_ = std::clamp(wheelAcc_ + px, -64.0f * kFilterPitch, 64.0f * kFilterPitch);
+                const int rows = static_cast<int>(wheelAcc_ / kFilterPitch);
+                wheelAcc_ -= static_cast<float>(rows) * kFilterPitch;
+                scrollFilters(rows);
+            }
+            else
+                scrollToPx(scrollTo_ + px, false);               // from where a notch was heading, at once
         }
         else
         {
-            rows = d < 0.0f ? static_cast<int>(kWheelRowsDiscrete) : d > 0.0f ? -static_cast<int>(kWheelRowsDiscrete) : 0;
+            // A wheel notch, whatever its size (the platforms scale it differently): kWheelRowsDiscrete rows, glided.
+            const int rows = d < 0.0f ? static_cast<int>(kWheelRowsDiscrete) : -static_cast<int>(kWheelRowsDiscrete);
+            if (overFilters)
+                scrollFilters(rows);
+            else
+                scrollToPx(scrollTo_ + kRowPitch * static_cast<float>(rows), true);
         }
-        const Hit h = hitAt({ e.x, e.y });
-        if (h.zone == Zone::filter || h.zone == Zone::column)
-            scrollFilters(rows);
-        else
-            scrollBy(rows);
+        hover_ = hitAt({ e.x, e.y });                            // the rows moved under the pointer
         return true;                                             // over the overlay nothing underneath scrolls
     }
+
+    bool PresetBrowser::wantsFullRate() const { return isOpen() && !funkgui::ease::sameBits(scrollPx_, scrollTo_); }
 
     bool PresetBrowser::key(const funkgui::KeyEvent& e)
     {
@@ -2165,13 +2225,10 @@ namespace fcmp::ui
             }
         }
 
-        for (int v = 0; v < kRows; ++v)
+        for (int s = firstShown(); s <= lastShown(); ++s)
         {
-            const int s = scroll_ + v;
-            if (s >= static_cast<int>(shown_.size()))
-                break;
             const Entry& e = entries_[static_cast<std::size_t>(shown_[static_cast<std::size_t>(s)])];
-            if (e.index < 0 || static_cast<uint32_t>(e.index) > 0xFFFFu - kRowLocal0)
+            if (e.index < 0 || static_cast<uint32_t>(e.index) > 0xFFFFu - kRowLocal0 || rowRect(s).isEmpty())
                 continue;
             funkgui::A11yItem it;
             it.id = a11yId(ViewIndex::presetBrowser, kRowLocal0 + static_cast<uint32_t>(e.index));
@@ -2235,13 +2292,9 @@ namespace fcmp::ui
         if (edit_ == Edit::none)
         {
             put(kFiltersLocal);
-            for (int v = 0; v < kRows; ++v)
-            {
-                const int s = scroll_ + v;
-                if (s >= static_cast<int>(shown_.size()))
-                    break;
-                put(rowLocal(shown_[static_cast<std::size_t>(s)]));
-            }
+            for (int s = firstShown(); s <= lastShown(); ++s)
+                if (!rowRect(s).isEmpty())
+                    put(rowLocal(shown_[static_cast<std::size_t>(s)]));
         }
         else if (edit_ == Edit::saveAs)
         {
