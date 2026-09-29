@@ -32,6 +32,10 @@
 // - HostServices::beginBatch/endBatch from GestureController::tapMany reach ProcessorFacade::beginBatch/endBatch (K2 #23).
 // - Teardown (K2 #27): shutdown() stops the PreviewWorker, then closes the open gestures; the destructor calls it
 //   when the owner has not. Parameter ports belong to the facade and outlive the Panel.
+// - v1.2 (ADR-85): a tenth sub-view, Settings, is a third overlay (Overlay::settings) over layout::settings::kArea, the
+//   whole region between the header and the footer; the header's gear opens it. It behaves as a browser does: first in
+//   the hit order, the whole Tab order while open, Esc and a click outside its area close it, the items it covers are
+//   not visible to accessibility, and it fades in and out with the browsers' τ. views() lists it as "settings".
 #pragma once
 
 #include "editor/SubView.h"
@@ -45,6 +49,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -66,10 +71,11 @@ namespace fcmp::ui
     class SlotModel;
 
     enum class Screen  : uint8_t { panel, characteristics };
-    enum class Overlay : uint8_t { none, modeBrowser, presetBrowser };
+    enum class Overlay : uint8_t { none, modeBrowser, presetBrowser, settings };   // settings: v1.2 (ADR-85)
     struct ViewSpec { const char* id; Screen screen; ScTab tab; Overlay overlay; };   // ScTab: ProcessorFacade.h
 
-    // "panel", "chars.sidechain", "chars.colour", "modebrowser", "presetbrowser" — the G1 golden views, in this order.
+    // "panel", "chars.sidechain", "chars.colour", "modebrowser", "presetbrowser" — the G1 golden views, in this order —
+    // and v1.2's "settings" (ADR-85).
     std::span<const ViewSpec> views() noexcept;
 
     // The view whose id is `id` (FCMP_UI_VIEW, `ui.dump --view`); nullptr for an unknown id. (Addition to 02.)
@@ -93,6 +99,9 @@ namespace fcmp::ui
 
         void setView(const ViewSpec&, bool instant = true);      // probes and FCMP_UI_VIEW; users use the latch/browsers
         void shutdown();                                         // stop PreviewWorker, then closeGestures() (§5.1)
+        // v1.2 (ADR-85): the live editor's drawing facts for the settings screen (PanelContext::renderInfo); an empty
+        // function removes the source. Message thread.
+        void setRenderInfo(std::function<RenderInfo()>);
 
         // ---- additions: read-only state for sub-views, the GPU editor and probes ----------------------------------------
         Screen  screen() const noexcept;

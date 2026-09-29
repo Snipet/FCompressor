@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=OPTO 3A help=OPTICAL · FEEDBACK · SOLID STATE
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 PEAK RED.                34,356,124,80        value=54
  0 RATIO                    162,356,124,80       value=LIMIT help=2 steps: COMP, LIMIT
  7 KNEE, not applicable     290,356,124,80       [ro] [off] help=THE KNEE IS THE T4 CELL'S; SEE THE CURVE

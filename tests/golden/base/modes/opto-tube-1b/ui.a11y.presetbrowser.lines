@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=OPTO TUBE 1B help=OPTICAL · TUBE · FEED-FORWARD
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=0.0 help=+20 … −40 DB, OR OFF; end steps: OFF (NO COMPRESSION)
  0 RATIO                    162,356,124,80       value=4.0 to 1
  0 KNEE                     290,356,124,80       value=10.0 decibels, fixed [ro] [off] help=THE OPTICAL CELL'S SOFT KNEE

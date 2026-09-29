@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=DIODE 54 help=DIODE BRIDGE · FEEDBACK · COMPRESSOR + LIMITER
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=4 d B u help=16 steps: −20, −18, −16, −14, −12, −10, −8, −6, −4, −2, 0, 2, 4, 6, 8, 10
  0 RATIO                    162,356,124,80       value=4:1 help=5 steps: 1.5, 2, 3, 4, 6
  0 KNEE                     290,356,124,80       value=4.0 decibels [ro] help=FAIRLY SOFT: A 10 DB KNEE AT EVERY RATIO

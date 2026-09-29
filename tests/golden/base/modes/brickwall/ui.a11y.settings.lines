@@ -1,0 +1,52 @@
+ 5 Mode                     656,14,264,32        value=BRICKWALL help=LOOKAHEAD LIMITER · FEED-FORWARD · PEAK/TRUE PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
+ 2 Previous preset          228,14,24,32
+ 5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
+ 2 Next preset              528,14,24,32
+ 2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 7 Footer                   40,600,554,20        [ro]
+ 3 Zoom                     638,601,140,16       value=ZOOM 100 %
+ 4 ZOOM 100 %               638,601,32,16        checked
+ 4 ZOOM 125 %               674,601,32,16        unchecked
+ 4 ZOOM 150 %               710,601,32,16        unchecked
+ 4 ZOOM 175 %               746,601,32,16        unchecked
+ 3 Theme                    790,601,130,16       value=Graphite theme
+ 4 Graphite theme           790,601,72,16        checked
+ 4 Paper theme              866,601,54,16        unchecked
+ 3 Quality                  184,92,98,16         value=Std
+ 4 Eco                      184,92,32,16         unchecked help=Eco: no oversampling, 0 samples latency
+ 4 Std                      220,92,32,16         checked help=Std: 2 times IIR oversampling, 4 samples latency
+ 4 HQ                       256,92,26,16         unchecked help=HQ: 4 times FIR oversampling, 61 samples latency
+ 3 Lookahead budget         184,184,126,16       value=Off
+ 4 Off                      184,184,32,16        checked help=Off: no lookahead, no added latency
+ 4 5 ms                     220,184,40,16        unchecked help=5 ms: up to 5 ms of lookahead, adds 5 ms of latency
+ 4 20 ms                    264,184,46,16        unchecked help=20 ms: up to 20 ms of lookahead, adds 20 ms of latency
+ 3 Sidechain                184,238,136,16       value=Internal
+ 4 Internal                 184,238,66,16        checked help=Internal: the compressor listens to its own input
+ 4 External                 254,238,66,16        unchecked help=External: it listens to the host's key input; with none routed, to its own input
+ 3 Quality for new instances 184,372,98,16        value=Std
+ 4 Eco                      184,372,32,16        unchecked help=Eco: the quality a new FCompressor starts with on this computer
+ 4 Std                      220,372,32,16        checked help=Std: the quality a new FCompressor starts with on this computer
+ 4 HQ                       256,372,26,16        unchecked help=HQ: the quality a new FCompressor starts with on this computer
+ 3 Lookahead for new instances 184,396,126,16       value=Off
+ 4 Off                      184,396,32,16        checked help=Off: the lookahead budget a new FCompressor starts with on this computer
+ 4 5 ms                     220,396,40,16        unchecked help=5 ms: the lookahead budget a new FCompressor starts with on this computer
+ 4 20 ms                    264,396,46,16        unchecked help=20 ms: the lookahead budget a new FCompressor starts with on this computer
+ 7 Key input                184,260,276,14       value=THE HOST ROUTES NO KEY INPUT [ro]
+ 7 Latency                  40,290,420,18        value=4 SAMPLES · 0.08 MS [ro]
+ 7 Version                  500,93,420,18        value=FCOMPRESSOR 0.0.0 [ro]
+ 7 Libraries                500,111,420,18       value=FUNKGUI 0.0.0 · JUCE 0.0.0 [ro]
+ 7 Format and host          500,129,420,18       value=UNKNOWN FORMAT · UNKNOWN HOST [ro]
+ 7 Sample rate              500,147,420,18       value=48 000 HZ [ro]
+ 7 Block size               500,165,420,18       value=UP TO 512 SAMPLES [ro]
+ 7 Channels                 500,183,420,18       value=2 IN · 2 OUT · NO KEY INPUT [ro]
+ 7 Oversampling             500,201,420,18       value=2× IIR, RUNS AT 96 000 HZ [ro]
+ 7 Lookahead                500,219,420,18       value=OFF [ro]
+ 7 Latency                  500,237,420,18       value=4 SAMPLES · 0.08 MS [ro]
+ 7 DSP load                 500,255,420,18       value=3.1 % · PEAK 7.8 % [ro]
+ 7 Overruns                 500,273,420,18       value=0 OF 1000 BLOCKS [ro]
+ 7 Audio                    500,291,420,18       value=NO AUDIO SINCE THIS WINDOW OPENED [ro]
+ 7 Mode                     500,309,420,18       value=BRICKWALL · SLOT 7 · REVISION 1 · 14 MODES [ro]
+ 7 Presets                  500,327,420,18       value=76 FACTORY · 0 USER [ro]
+ 7 Display                  500,345,420,18       value=HEADLESS [ro]
+ 2 Copy report              836,566,84,16        help=Copies the diagnostics as text, for a bug report

@@ -1,4 +1,5 @@
-// Source/plugin/ProcessorFacade.h — the editor's only way into the processor (02 §9.5). Frozen at FZ1.
+// Source/plugin/ProcessorFacade.h — the editor's only way into the processor (02 §9.5). Frozen at FZ1; the lead's
+// additive v1.2 revision (ADR-85) adds Diagnostics and diagnostics(), with a default, and changes nothing else.
 // Written by the lead at the end of Sprint 1, verbatim from 02 §9.5 against FunkGui v0.2.0's ParamPort.h
 // (plus the standard includes it needs to compile standalone). The processor (P1) implements it; FakeFacade (U1a)
 // implements it for headless UI probes.
@@ -50,6 +51,33 @@ public:
     virtual bool     overwrite(int /*index*/) { return false; }
 };
 
+// v1.2 lead addition (ADR-85), additive: what the settings screen's DIAGNOSTICS reports about this instance. Plain
+// values, filled on the message thread from what the processor configured and measured; the texts are static strings
+// or NUL-terminated copies. FakeFacade returns fixed values, so the headless frames do not depend on the build.
+// The machine-wide preferences a new instance starts from (ADR-85): UiPreferences keys beside the theme, holding a
+// fcdsp::Quality or LookaheadBudget value. The processor reads them when it is constructed; a session or a state load
+// then sets its own.
+inline constexpr char kPrefNewQuality[]   = "newQuality";
+inline constexpr char kPrefNewLookahead[] = "newLookahead";
+
+struct Diagnostics {
+    const char* version = "";                      // the product's version (FcmpProduct.h), "" unknown
+    const char* funkgui = "";                      // the pinned FunkGui version
+    const char* juce = "";                         // the JUCE version
+    const char* format = "";                       // "VST3", "AU", "STANDALONE"; "" unknown
+    char   host[48] {};                            // the host's name as JUCE knows it; "" unknown
+    bool   prepared = false;                       // prepareToPlay has configured the engine
+    double sampleRate = 0.0;                       // the configured rate (0 before prepareToPlay)
+    int    maxBlock = 0;                           // the host's largest block
+    int    mainIns = 0, mainOuts = 0, keyChans = 0;   // configured channels; keyChans 0 = no side-chain bus
+    int    quality = 0, budget = 0;                // the configured setup (fcdsp::Quality, LookaheadBudget values)
+    int    latencySamples = 0;                     // what the host is told
+    float  loadAvg = 0.0f;                         // DSP time over real time, smoothed (0.5 s); 0 before the audio runs
+    float  loadPeak = 0.0f;                        // ... its peak, falling over 2 s
+    uint32_t overruns = 0;                         // blocks that took longer than their real time
+    uint32_t blocks = 0;                           // blocks processed since prepareToPlay
+};
+
 class ProcessorFacade {
 public:
     virtual ~ProcessorFacade() = default;
@@ -68,5 +96,8 @@ public:
     virtual void beginBatch() = 0;
     virtual void endBatch() = 0;
     virtual PresetAccess& presets() = 0;                           // an empty implementation until P3 (03 §4.9)
+    // v1.2 lead addition (ADR-85), additive: the DIAGNOSTICS of the settings screen. Message thread. Default: nothing
+    // known.
+    virtual Diagnostics diagnostics() const { return {}; }
 };
 }

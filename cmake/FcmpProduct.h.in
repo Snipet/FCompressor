@@ -21,6 +21,8 @@ namespace fcmp::product
     inline constexpr char kObjcPrefix[]       = "@FCMP_OBJC_PREFIX@";         // FunkGui ObjC class-name root (02 §1.8)
     inline constexpr char kPrefsFolder[]      = "@FCMP_PREFS_FOLDER@";        // ~/Library/Application Support/<this>
     inline constexpr char kPresetExtension[]  = ".fcmppreset";                // FunkPresets ProductConfig::fileExtension (S13)
+    inline constexpr char kFunkGuiVersion[]   = "@FUNKGUI_VERSION@";          // the pinned FunkGui ("" in a DSP-only build)
+    inline constexpr char kJuceVersion[]      = "@FCMP_JUCE_TAG@";            // the pinned JUCE (cmake/FcmpDeps.cmake)
 
     static_assert(sizeof(kManufacturerCode) == 5 && sizeof(kPluginCode) == 5, "four-character codes");
 } // namespace fcmp::product

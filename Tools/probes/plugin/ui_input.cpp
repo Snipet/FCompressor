@@ -126,7 +126,8 @@ namespace
 
     constexpr std::array<const char*, ui::kSubViewCount> kViewNames { "header", "displayRow", "slotGrid", "band",
                                                                         "charScreen", "modeBrowser", "presetStrip",
-                                                                        "presetBrowser", "footer" };
+                                                                        "presetBrowser", "footer", "settings" };
+    static_assert(kViewNames[ui::kSubViewCount - 1] != nullptr, "one name per sub-view (a missing one was a null name)");
 
     uint32_t slotId(std::size_t i) { return ui::a11yId(ui::ViewIndex::slotGrid, static_cast<uint32_t>(1 + i)); }
     uint32_t wordId(std::size_t i)

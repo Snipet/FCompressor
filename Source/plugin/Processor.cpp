@@ -8,9 +8,16 @@
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/HostParams.h"
 
+#include <funkgui/core/Env.h>
+#include <funkgui/prefs/UiPreferences.h>
+
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <string>
+#include <system_error>
 #include <thread>
 
 // The plugin wrappers' factory (declared by JUCE only inside juce_audio_plugin_client).
@@ -64,6 +71,47 @@ namespace fcmp
         std::uint32_t generationOf(std::uint32_t word) noexcept { return word >> kUiGenerationShift; }
 
         bool onMessageThread() noexcept { return juce::MessageManager::existsAndIsCurrentThread(); }
+
+        // ADR-85: the DSP load's smoothing and its peak's fall (seconds of audio).
+        constexpr double kLoadAvgS = 0.5;
+        constexpr double kLoadPeakS = 2.0;
+
+        // ADR-85: a machine-wide preference a new instance starts from (ProcessorFacade.h kPrefNew*). The file is
+        // UiPreferences' (<PREFIX>PREFS_DIR's preferences.settings, else its default file), read here through a
+        // PropertiesFile of this call's own: a host may construct the processor on any thread, and UiPreferences
+        // belongs to the message thread. A missing key, a damaged file or a value that is not a decimal integer in
+        // [lo, hi] reads as -1.
+        int newInstancePref(const char* key, int lo, int hi)
+        {
+            const char* dir = funkgui::env("PREFS_DIR");
+            const juce::File file = dir != nullptr && dir[0] != '\0'
+                                        ? juce::File(juce::String::fromUTF8(dir)).getChildFile("preferences.settings")
+                                        : funkgui::UiPreferences::defaultFile();
+            if (!file.existsAsFile())
+                return -1;
+            juce::PropertiesFile::Options o;
+            o.doNotSave = true;                                    // read only: UiPreferences writes this file
+            const juce::PropertiesFile props(file, o);
+            if (!props.containsKey(key))
+                return -1;
+            const std::string text = props.getValue(key).toStdString();
+            int v = -1;
+            const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), v);
+            return ec == std::errc{} && end == text.data() + text.size() && v >= lo && v <= hi ? v : -1;
+        }
+
+        const char* formatName(juce::AudioProcessor::WrapperType w) noexcept
+        {
+            if (w == juce::AudioProcessor::wrapperType_VST3)
+                return "VST3";
+            if (w == juce::AudioProcessor::wrapperType_AudioUnit)
+                return "AU";
+            if (w == juce::AudioProcessor::wrapperType_AudioUnitv3)
+                return "AUV3";
+            if (w == juce::AudioProcessor::wrapperType_Standalone)
+                return "STANDALONE";
+            return "";                                             // undefined (a probe), or a format we do not build
+        }
     } // namespace
 
     // ==== construction =============================================================================================
@@ -89,6 +137,17 @@ namespace fcmp
             if (raw_[i] != nullptr)
                 raw_[i]->store(h.def, std::memory_order_relaxed);
         }
+
+        // ADR-85: a new instance starts from the machine's QUALITY and LOOKAHEAD for new instances (the settings
+        // screen), when set; a session or a state load then sets its own, and presets never carry these two.
+        for (const auto& [pid, key] : { std::pair{ Pid::quality, kPrefNewQuality },
+                                        std::pair{ Pid::labudget, kPrefNewLookahead } })
+            if (const int v = newInstancePref(key, 0, 2); v >= 0)
+                if (juce::RangedAudioParameter* prm = params_[fcdsp::idx(pid)]; prm != nullptr && raw_[fcdsp::idx(pid)] != nullptr)
+                {
+                    prm->setValue(prm->convertTo0to1(static_cast<float>(v)));   // nothing listens yet
+                    raw_[fcdsp::idx(pid)]->store(static_cast<float>(v), std::memory_order_relaxed);
+                }
 
         cfg_.quality = qualityOf(rawValue(Pid::quality));
         cfg_.budget = budgetOf(rawValue(Pid::labudget));
@@ -336,6 +395,35 @@ namespace fcmp
 
     PresetAccess& Processor::presets() { return *presets_; }
 
+    Diagnostics Processor::diagnostics() const
+    {
+        Diagnostics d;
+        d.version = product::kVersion;
+        d.funkgui = product::kFunkGuiVersion;
+        d.juce = product::kJuceVersion;
+        d.format = formatName(wrapperType);
+        const juce::String host = juce::PluginHostType().getHostDescription();
+        if (host != "Unknown")
+            host.copyToUTF8(d.host, sizeof d.host);
+        {
+            const std::lock_guard<std::mutex> lock(setupMutex_);
+            d.prepared = configured_;
+            d.sampleRate = configured_ ? cfg_.fs : 0.0;
+            d.maxBlock = configured_ ? cfg_.maxBlock : 0;
+            d.mainIns = cfg_.mainIns;
+            d.mainOuts = cfg_.mainOuts;
+            d.keyChans = cfg_.keyChans;
+            d.quality = static_cast<int>(cfg_.quality);
+            d.budget = static_cast<int>(cfg_.budget);
+        }
+        d.latencySamples = latency_.load(std::memory_order_relaxed);
+        d.loadAvg = loadAvg_.load(std::memory_order_relaxed);
+        d.loadPeak = loadPeak_.load(std::memory_order_relaxed);
+        d.overruns = overruns_.load(std::memory_order_relaxed);
+        d.blocks = blocks_.load(std::memory_order_relaxed);
+        return d;
+    }
+
     // Message thread. A generation the editor's copy has not seen is a load: adopt it. Otherwise mirror ui_ into the word
     // for the other threads' saves; a failed exchange means a load published meanwhile, which the next sync adopts.
     void Processor::syncUi() noexcept
@@ -395,6 +483,10 @@ namespace fcmp
             cfg_.mainOuts = std::clamp(getMainBusNumOutputChannels(), 0, 2);
             cfg_.keyChans = getBusCount(true) > 1 ? std::clamp(getChannelCountOfBus(true, 1), 0, 2) : 0;
             latency = configureEngine();
+            loadAvg_.store(0.0f, std::memory_order_relaxed);     // ADR-85: the audio thread is not running
+            loadPeak_.store(0.0f, std::memory_order_relaxed);
+            overruns_.store(0, std::memory_order_relaxed);
+            blocks_.store(0, std::memory_order_relaxed);
         }
         setLatencySamples(latency);                               // right after configure, never from the audio thread
     }
@@ -463,7 +555,28 @@ namespace fcmp
         io.numOut = mainOuts;
         io.n = n;
         io.hostBypassed = hostBypassed;
+        // ADR-85: the block's DSP time (mach_absolute_time: no syscall, no lock) for the settings screen's DSP LOAD.
+        const juce::int64 t0 = juce::Time::getHighResolutionTicks();
         engine_.process(io, block_);
+        noteLoad(juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - t0), n);
+    }
+
+    void Processor::noteLoad(double elapsedSeconds, int samples) noexcept FCDSP_NONBLOCKING
+    {
+        const double fs = sampleRate_.load(std::memory_order_relaxed);
+        if (!(fs > 0.0) || samples <= 0 || !(elapsedSeconds >= 0.0))
+            return;
+        const double real = static_cast<double>(samples) / fs;
+        const auto load = static_cast<float>(elapsedSeconds / real);
+        const auto avgStep = static_cast<float>(std::min(1.0, real / kLoadAvgS));
+        const auto peakFall = static_cast<float>(std::min(1.0, real / kLoadPeakS));
+        const float avg = loadAvg_.load(std::memory_order_relaxed);
+        loadAvg_.store(avg + (load - avg) * avgStep, std::memory_order_relaxed);
+        const float peak = loadPeak_.load(std::memory_order_relaxed);
+        loadPeak_.store(std::max(load, peak - peak * peakFall), std::memory_order_relaxed);
+        if (elapsedSeconds > real)
+            overruns_.fetch_add(1, std::memory_order_relaxed);
+        blocks_.fetch_add(1, std::memory_order_relaxed);
     }
 
     void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept FCDSP_NONBLOCKING

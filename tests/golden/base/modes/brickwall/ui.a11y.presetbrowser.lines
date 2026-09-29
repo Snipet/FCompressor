@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=BRICKWALL help=LOOKAHEAD LIMITER · FEED-FORWARD · PEAK/TRUE PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=minus 18.0 decibels
  0 RATIO                    162,356,124,80       value=infinity to 1, fixed [ro] [off] help=A LIMITER: RATIO IS INFINITE
  0 KNEE                     290,356,124,80       value=6.0 decibels

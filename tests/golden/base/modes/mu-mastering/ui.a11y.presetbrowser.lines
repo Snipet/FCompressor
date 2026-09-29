@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=MU MASTERING help=VARIABLE MU · FEEDBACK · COMPRESS/LIMIT
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=10 help=21 steps: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
  0 RATIO                    162,356,124,80       value=LIMIT 4:1, TO 20:1 help=2 steps: COMP, LIMIT
  0 KNEE                     290,356,124,80       value=3.0 decibels [ro] help=SOFT IN COMPRESS; IN LIMIT THE KNEE SOFTENS INTO 20:1 PAST 12 DB

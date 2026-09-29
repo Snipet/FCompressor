@@ -138,6 +138,7 @@ namespace fcmp
         void beginBatch() override;                              // nestable; the audio thread keeps the previous
         void endBatch() override;                                //   BlockParams; the outermost end raises the snap
         PresetAccess& presets() override;
+        Diagnostics diagnostics() const override;                // v1.2 (ADR-85): message thread
 
         // ---- plugin internals: the glue TUs, SetupWatcher and the proc.* probes -----------------------------------
         juce::AudioProcessorValueTreeState& apvts() noexcept { return apvts_; }
@@ -165,6 +166,8 @@ namespace fcmp
         void syncUi() noexcept;                                  // message thread: adopt a loaded UiState, or mirror ui_
         void publishLoadedUi(const UiState&) noexcept;           // any thread: a load's UiState, next generation
         void render(juce::AudioBuffer<float>&, bool hostBypassed) noexcept FCDSP_NONBLOCKING;
+        // ADR-85: one block's DSP time against its real time: the smoothed load, its falling peak, overruns and blocks.
+        void noteLoad(double elapsedSeconds, int samples) noexcept FCDSP_NONBLOCKING;
         // setupMutex_ held, the audio thread not running (prepareToPlay, or SetupWatcher under suspendProcessing):
         // publishes the configured setup, rebuilds block_ (unless a batch is open) and configures the engine.
         // Returns the new latency.
@@ -196,6 +199,13 @@ namespace fcmp
         std::atomic<std::uint8_t> budget_{0};
         std::atomic<int> latency_{0};
         std::atomic<double> sampleRate_{0.0};
+
+        // ADR-85, the DSP load (render() writes, diagnostics() reads; relaxed: they are readings, not synchronisation).
+        // prepareToPlay zeroes them, the audio thread not running.
+        std::atomic<float> loadAvg_{0.0f};
+        std::atomic<float> loadPeak_{0.0f};
+        std::atomic<std::uint32_t> overruns_{0};
+        std::atomic<std::uint32_t> blocks_{0};
 
         // UI state and notices (the header comment): ui_ and uiGeneration_ belong to the message thread; uiShared_ is
         // the handoff word; noticeSerial_ is guarded by noticeWrite_, which only publishers take.

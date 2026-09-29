@@ -18,6 +18,11 @@
 //   ink52 while the Mode browser is open.
 // - Only `mode` is ever written, and only through the GestureController: a Mode change writes no other parameter (K2 #4).
 //
+// v1.2 (ADR-85): a gear right of the wordmark (layout::settings::kGear) opens the settings overlay: it arms on down and
+// opens on release inside (drag-off cancels), Return or Space opens it when focused, it is ink52 easing to ink100 under
+// the pointer, ink100 while the overlay is open and accent while pressed, and a11y is the button "Settings". It is the
+// header's second Tab stop, after the Mode latch (which stays the panel's first).
+//
 // The members below the FZ4 declarations are additions (private state and SubView overrides with defaults); no FZ4
 // declaration changed.
 #pragma once
@@ -65,13 +70,14 @@ namespace fcmp::ui
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
 
     private:
-        enum class Part : uint8_t { none, prev, name, next };
+        enum class Part : uint8_t { none, prev, name, next, gear };   // gear: v1.2 (ADR-85)
 
         Part partAt(funkgui::Point) const noexcept;
         int  orderIndex() const noexcept;                        // the `mode` port's Mode in order_; -1: none
         void selectOrder(int index);                             // one tap of `mode` to order_[index]
         void stepMode(int delta, bool wrap);                     // chevrons (wrap) and keys (clamp)
         void openBrowser();
+        void openSettings();                                     // v1.2 (ADR-85)
         void showMenu(float x, float y);
         void rebuildSpec();                                      // the latch's footer spec line for the shown Mode
         void drawModeTexts(funkgui::Canvas&, const funkgui::Theme&, int slot, float alpha) const;
@@ -91,5 +97,6 @@ namespace fcmp::ui
         char   spec_[256]{};                                     // "MODE   <spec line>   …" (UTF-8)
         char   wordFirst_[8]{};                                  // the wordmark: "F" …
         char   wordRest_[32]{};                                  // … "COMPRESSOR" (from FcmpProduct.h)
+        float  gearHover_ = 0.0f;                                // v1.2 (ADR-85): the gear's hover ease
     };
 }

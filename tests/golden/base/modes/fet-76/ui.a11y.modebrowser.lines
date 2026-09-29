@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=FET 76 help=FEEDBACK FET · PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 INPUT                    34,356,124,80        value=24
  0 RATIO                    162,356,124,80       value=4:1 help=5 steps: 4, 8, 12, 20, ALL
  0 KNEE                     290,356,124,80       value=8.0 decibels [ro] help=KNEE IS SET BY THE RATIO BUTTON (FEEDBACK FET)

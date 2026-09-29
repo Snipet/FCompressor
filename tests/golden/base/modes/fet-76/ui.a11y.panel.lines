@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=FET 76 help=FEEDBACK FET · PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  7 Display                  40,66,332,54         value=Gain reduction, no signal [ro]
  3 Quality                  446,62,98,16         value=Std
  4 Eco                      446,62,32,16         unchecked help=Eco: no oversampling, 0 samples latency

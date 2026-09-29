@@ -26,6 +26,7 @@
 #include <funkgui/widgets/RuleSlider.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -41,7 +42,26 @@ namespace fcmp::ui
         namespace H = layout::header;
         namespace T = funkgui::type;
 
-        constexpr uint32_t kLatchLocal = 1;                     // the comboBox (the only Tab stop)
+        constexpr uint32_t kLatchLocal = 1;                     // the comboBox (the first Tab stop)
+        constexpr uint32_t kGearLocal = 2;                      // v1.2 (ADR-85): the settings button (the second)
+        constexpr const char* kGearSpec = "SETTINGS   AUDIO, NEW INSTANCES AND DIAGNOSTICS";
+
+        // v1.2 (ADR-85): the gear, centred on layout::settings::kGear: kGearTeeth capsule teeth round a ring.
+        void drawGear(funkgui::Canvas& c, funkgui::Col ink)
+        {
+            namespace G = layout::settings;
+            const float cx = G::kGear.centreX(), cy = G::kGear.centreY();
+            const float half = 0.5f * G::kGearToothW;
+            for (int k = 0; k < G::kGearTeeth; ++k)
+            {
+                const float a = 6.2831853f * (static_cast<float>(k) + 0.5f) / static_cast<float>(G::kGearTeeth);
+                const float ux = std::cos(a), uy = std::sin(a);
+                const float r0 = G::kGearBodyR - half, r1 = G::kGearR - half;
+                c.segment(cx + ux * r0, cy + uy * r0, cx + ux * r1, cy + uy * r1, G::kGearToothW, ink);
+            }
+            c.disc(cx, cy, G::kGearBodyR, funkgui::Col{ ink.r, ink.g, ink.b, 0 },
+                   G::kGearBodyR - G::kGearHoleR, ink);
+        }
 
         // ‹ name › as one rectangle: the wheel's hit area, the a11y bounds and the focus ring's.
         constexpr funkgui::Rect kLatchCells { H::kModePrev.x, H::kModePrev.y, H::kModeNext.right() - H::kModePrev.x,
@@ -289,11 +309,18 @@ namespace fcmp::ui
         for (std::size_t i = 0; i < parts.size(); ++i)
             hoverAmt_[i] = funkgui::ease::hover(hoverAmt_[i], hover_ == parts[i], dt);
 
+        gearHover_ = funkgui::ease::hover(gearHover_, hover_ == Part::gear, dt);
+
         const uint32_t id = a11yId(ViewIndex::header, kLatchLocal);
-        if (hover_ != Part::none)
+        const uint32_t gearId = a11yId(ViewIndex::header, kGearLocal);
+        if (hover_ == Part::gear)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::hover, gearId, kGearSpec);
+        else if (hover_ != Part::none)
             ctx_.offerHand(fcdsp::Pid::mode, HandKind::hover, id, spec_);
         if (ctx_.focusVisible && ctx_.focus == id)
             ctx_.offerHand(fcdsp::Pid::mode, HandKind::focus, id, spec_);
+        if (ctx_.focusVisible && ctx_.focus == gearId)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::focus, gearId, kGearSpec);
     }
 
     bool Header::wantsFullRate() const
@@ -304,7 +331,7 @@ namespace fcmp::ui
         for (std::size_t i = 0; i < parts.size(); ++i)
             if (!funkgui::ease::sameBits(hoverAmt_[i], hover_ == parts[i] ? 1.0f : 0.0f))
                 return true;
-        return false;
+        return !funkgui::ease::sameBits(gearHover_, hover_ == Part::gear ? 1.0f : 0.0f);
     }
 
     // ---- drawing --------------------------------------------------------------------------------------------------------
@@ -366,6 +393,15 @@ namespace fcmp::ui
             const float x = H::kWordmark.x + c.textWidth(wordFirst_, T::kWordmark) + H::kWordmarkGap;
             c.text(wordRest_, x, H::kWordmark.y, T::kWordmark, th.ink52);
         }
+        {
+            const funkgui::Canvas::Scope scope(c, tag::settingsGear, false);
+            const funkgui::Col ink = pressed_ == Part::gear            ? th.accent
+                                   : ctx_.overlay == Overlay::settings ? th.ink100
+                                                                       : funkgui::mix(th.ink52, th.ink100, gearHover_);
+            drawGear(c, ink);
+            if (ctx_.focusVisible && ctx_.focus == a11yId(ViewIndex::header, kGearLocal))
+                funkgui::drawFocusRing(c, layout::settings::kGear, th.accent);
+        }
 
         // The Mode texts: the outgoing Mode at 1 − a, the incoming one at a (only the incoming one once settled).
         const float a = shown_.amount();
@@ -405,6 +441,8 @@ namespace fcmp::ui
             return Part::name;
         if (H::kModeNext.contains(p))
             return Part::next;
+        if (layout::settings::kGear.contains(p))
+            return Part::gear;
         return Part::none;
     }
 
@@ -436,6 +474,11 @@ namespace fcmp::ui
         ctx_.panel.setView({ nullptr, ctx_.screen, ctx_.scTab, Overlay::modeBrowser }, false);
     }
 
+    void Header::openSettings()
+    {
+        ctx_.panel.setView({ nullptr, ctx_.screen, ctx_.scTab, Overlay::settings }, false);
+    }
+
     void Header::showMenu(float x, float y)
     {
         if (ctx_.host != nullptr)
@@ -454,11 +497,12 @@ namespace fcmp::ui
             return;
         if (e.popup)
         {
-            showMenu(e.x, e.y);                                  // the host menu, never a write
+            if (p != Part::gear)
+                showMenu(e.x, e.y);                              // the host menu, never a write
             return;
         }
         pressed_ = p;
-        armed_ = p == Part::name;
+        armed_ = p == Part::name || p == Part::gear;
         if (p == Part::prev || p == Part::next)
             stepMode(p == Part::prev ? -1 : 1, true);            // one tap per click (HR's strip steps on the click)
     }
@@ -467,15 +511,20 @@ namespace fcmp::ui
     {
         if (pressed_ == Part::name && !H::kModeName.contains({ e.x, e.y }))
             armed_ = false;                                      // dragging off cancels
+        if (pressed_ == Part::gear && !layout::settings::kGear.contains({ e.x, e.y }))
+            armed_ = false;
     }
 
     void Header::pointerUp(const funkgui::PointerEvent& e)
     {
         const bool open = pressed_ == Part::name && armed_ && H::kModeName.contains({ e.x, e.y });
+        const bool settings = pressed_ == Part::gear && armed_ && layout::settings::kGear.contains({ e.x, e.y });
         pressed_ = Part::none;
         armed_ = false;
         if (open)
             openBrowser();
+        if (settings)
+            openSettings();
     }
 
     bool Header::wheel(const funkgui::WheelEvent& e)
@@ -518,6 +567,13 @@ namespace fcmp::ui
 
     bool Header::key(const funkgui::KeyEvent& e)
     {
+        if (ctx_.focus == a11yId(ViewIndex::header, kGearLocal))
+        {
+            if (e.key != funkgui::Key::enter && e.key != funkgui::Key::space)
+                return false;
+            openSettings();
+            return true;
+        }
         if (ctx_.focus != a11yId(ViewIndex::header, kLatchLocal))
             return false;
         switch (e.key)
@@ -576,18 +632,33 @@ namespace fcmp::ui
             it.help = d->topologyLine != nullptr ? d->topologyLine : "";
         }
         out.push_back(std::move(it));
+
+        funkgui::A11yItem gear;                                  // v1.2 (ADR-85)
+        gear.id = a11yId(ViewIndex::header, kGearLocal);
+        gear.role = funkgui::A11yRole::button;
+        gear.bounds = layout::settings::kGear;
+        gear.title = "Settings";
+        gear.help = "Audio settings, defaults for new instances and diagnostics";
+        out.push_back(std::move(gear));
     }
 
     int Header::focusOrder(std::span<uint32_t> out) const
     {
-        if (out.empty())
-            return 0;
-        out[0] = a11yId(ViewIndex::header, kLatchLocal);
-        return 1;
+        const std::array<uint32_t, 2> stops { a11yId(ViewIndex::header, kLatchLocal),
+                                              a11yId(ViewIndex::header, kGearLocal) };
+        const std::size_t n = std::min(out.size(), stops.size());
+        std::copy_n(stops.begin(), n, out.begin());
+        return static_cast<int>(n);
     }
 
     void Header::a11yAction(uint32_t id, funkgui::A11yAction a, double value)
     {
+        if (id == a11yId(ViewIndex::header, kGearLocal))
+        {
+            if (a == funkgui::A11yAction::press || a == funkgui::A11yAction::toggle)
+                openSettings();
+            return;
+        }
         if (id != a11yId(ViewIndex::header, kLatchLocal))
             return;
         switch (a)
