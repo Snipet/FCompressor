@@ -1,39 +1,40 @@
 1 header:1 comboBox Mode
-2 presetStrip:1 button Previous preset
-3 presetStrip:2 comboBox Preset
-4 presetStrip:3 button Next preset
-5 presetStrip:4 button Save preset
-6 displayRow:16 radioGroup Quality
-7 displayRow:32 radioGroup Lookahead budget
-8 displayRow:48 toggleButton DELTA
-9 displayRow:49 toggleButton BYPASS
-10 displayRow:50 toggleButton CHARACTERISTICS
-11 band:264 radioGroup GR view
-12 band:258 radioGroup History span
-13 band:514 radioGroup Meter scale
-14 band:776 button Reset meters
-15 slotGrid:1 slider THRESHOLD
-16 slotGrid:2 slider RATIO
-17 slotGrid:3 slider KNEE
-18 slotGrid:4 slider ATTACK
-19 slotGrid:5 slider RECOVERY
-20 slotGrid:6 slider MAKEUP
-21 slotGrid:7 slider MIX
-22 slotGrid:8 staticText RANGE, not applicable
-23 slotGrid:9 slider DETECT
-24 slotGrid:72 toggleButton EXT
-25 slotGrid:10 staticText HOLD, not applicable
-26 slotGrid:11 staticText LOOKAHEAD, not applicable
-27 slotGrid:12 staticText TIME MODE, not applicable
-28 slotGrid:13 slider DRIVE
-29 slotGrid:14 slider VOICE
-30 slotGrid:15 slider SC HPF
-31 slotGrid:78 toggleButton LISTEN
-32 slotGrid:16 staticText SC EMPH, not applicable
-33 slotGrid:17 slider LINK
-34 slotGrid:18 slider STEREO
-35 slotGrid:19 slider S2 THRESH
-36 slotGrid:20 slider S2 ATTACK
-37 slotGrid:21 slider LIM RECOV
-38 footer:32 radioGroup Zoom
-39 footer:16 radioGroup Theme
+2 header:2 button Settings
+3 presetStrip:1 button Previous preset
+4 presetStrip:2 comboBox Preset
+5 presetStrip:3 button Next preset
+6 presetStrip:4 button Save preset
+7 displayRow:16 radioGroup Quality
+8 displayRow:32 radioGroup Lookahead budget
+9 displayRow:48 toggleButton DELTA
+10 displayRow:49 toggleButton BYPASS
+11 displayRow:50 toggleButton CHARACTERISTICS
+12 band:264 radioGroup GR view
+13 band:258 radioGroup History span
+14 band:514 radioGroup Meter scale
+15 band:776 button Reset meters
+16 slotGrid:1 slider THRESHOLD
+17 slotGrid:2 slider RATIO
+18 slotGrid:3 slider KNEE
+19 slotGrid:4 slider ATTACK
+20 slotGrid:5 slider RECOVERY
+21 slotGrid:6 slider MAKEUP
+22 slotGrid:7 slider MIX
+23 slotGrid:8 staticText RANGE, not applicable
+24 slotGrid:9 slider DETECT
+25 slotGrid:72 toggleButton EXT
+26 slotGrid:10 staticText HOLD, not applicable
+27 slotGrid:11 staticText LOOKAHEAD, not applicable
+28 slotGrid:12 staticText TIME MODE, not applicable
+29 slotGrid:13 slider DRIVE
+30 slotGrid:14 slider VOICE
+31 slotGrid:15 slider SC HPF
+32 slotGrid:78 toggleButton LISTEN
+33 slotGrid:16 staticText SC EMPH, not applicable
+34 slotGrid:17 slider LINK
+35 slotGrid:18 slider STEREO
+36 slotGrid:19 slider S2 THRESH
+37 slotGrid:20 slider S2 ATTACK
+38 slotGrid:21 slider LIM RECOV
+39 footer:32 radioGroup Zoom
+40 footer:16 radioGroup Theme
