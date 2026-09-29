@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=BUS G help=VCA BUS · FEED-FORWARD · PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=0.0
  0 RATIO                    162,356,124,80       value=4:1 help=3 steps: 2, 4, 10
  0 KNEE                     290,356,124,80       value=6.0 decibels [ro] help=KNEE FOLLOWS RATIO: SOFT AT 2, MEDIUM AT 4, HARD AT 10

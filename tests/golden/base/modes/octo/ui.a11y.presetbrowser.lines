@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=OCTO help=HYBRID VCA · FEED-FORWARD · PEAK
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 INPUT                    34,356,124,80        value=5.0
  0 RATIO                    162,356,124,80       value=4:1 help=8 steps: 1, 2, 3, 4, 6, 10, 20, NUKE
  0 KNEE                     290,356,124,80       value=10.0 decibels [ro] help=EACH RATIO HAS ITS OWN CURVE: WIDE AT 2 AND 3, HARD AT 20 AND NUKE

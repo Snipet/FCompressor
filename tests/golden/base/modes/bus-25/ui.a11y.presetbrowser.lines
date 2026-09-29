@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=BUS 25 help=VCA · NEW FEED-FORWARD / OLD FEEDBACK · RMS
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 THRESHOLD                34,356,124,80        value=4.0 d B u
  0 RATIO                    162,356,124,80       value=4:1 help=7 steps: 1.5, 2, 3, 4, 6, 10, ∞
  0 KNEE                     290,356,124,80       value=MEDIUM help=3 steps: HARD, MED, SOFT

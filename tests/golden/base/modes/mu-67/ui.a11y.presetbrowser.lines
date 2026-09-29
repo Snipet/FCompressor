@@ -1,4 +1,5 @@
  5 Mode                     656,14,264,32        value=MU 67 help=VARIABLE-MU TUBE · FEEDBACK · PROGRESSIVE
+ 2 Settings                 196,12,24,24         help=Audio settings, defaults for new instances and diagnostics
  0 AC THRESH                34,356,124,80        value=3.4
  0 RATIO                    162,356,124,80       value=about 6.6 to 1 [ro] help=RATIO RISES WITH LEVEL (REMOTE-CUTOFF TUBE)
  0 DC THRESH                290,356,124,80       value=1.5
