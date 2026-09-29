@@ -1,7 +1,8 @@
 // Source/editor/SubView.h — the sub-view interface of the fixed Panel composition (02 Part 2 intro; K3 #15), and the
 // PanelContext every sub-view and plot is constructed with. Frozen at FZ4.
 //
-// The Panel (Panel.h) owns nine sub-views in the fixed order of ViewIndex and dispatches to them; Band and CharScreen
+// The Panel (Panel.h) owns ten sub-views (nine, and the v1.2 settings overlay) in the fixed order of ViewIndex and
+// dispatches to them; Band and CharScreen
 // own their plots and dispatch to them the same way (a plot is a SubView of its composite). Nothing here allocates
 // per frame. Sub-views never talk to each other directly: what one publishes for another (the item under the hand and
 // its spec line, the last touched parameter, the HISTORY freeze column) goes through the PanelContext, and navigation
@@ -26,6 +27,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -79,13 +81,14 @@ namespace fcmp::ui
 
     // ---- a11y ids and the fixed composition -----------------------------------------------------------------------------
 
-    // The nine sub-views, in the composition order of 02 Part 2 (the Panel's views_ index; the high half of every a11y
-    // id). Draw, hit and Tab orders are fixed tables in Panel.cpp.
+    // The sub-views, in the composition order of 02 Part 2 (the Panel's views_ index; the high half of every a11y id),
+    // then the v1.2 settings overlay. Draw, hit and Tab orders are fixed tables in Panel.cpp.
     enum class ViewIndex : uint8_t
     {
-        header, displayRow, slotGrid, band, charScreen, modeBrowser, presetStrip, presetBrowser, footer
+        header, displayRow, slotGrid, band, charScreen, modeBrowser, presetStrip, presetBrowser, footer,
+        settings                                     // v1.2 (ADR-85), appended: the ids above keep their index
     };
-    inline constexpr int kSubViewCount = 9;
+    inline constexpr int kSubViewCount = 10;
 
     // id = (subViewIndex << 16) | local, local in 1..65535 (0 is "no item" everywhere).
     constexpr uint32_t a11yId(ViewIndex v, uint32_t local) noexcept
@@ -155,6 +158,18 @@ namespace fcmp::ui
         fcdsp::HistoryColumn column{};
     };
 
+    // v1.2 (ADR-85): what the live editor knows about its drawing, for the settings screen's DIAGNOSTICS (the GPU editor
+    // installs a source, Panel::setRenderInfo; headless there is none, and `gpu` stays false).
+    struct RenderInfo
+    {
+        bool     gpu = false;                       // an EditorHost draws the panel (bgfx over Metal)
+        bool     displayLinked = false;             // its frame pump runs off the display link
+        float    fps = 0.0f;
+        double   scale = 0.0;                       // the backing scale the drawable is sized for
+        int      zoomPercent = 100;                 // the effective UI zoom
+        uint32_t frames = 0, overflows = 0;         // frames drawn, frames dropped (transient buffer full)
+    };
+
     // Everything a sub-view is constructed with. Owned by the Panel, which outlives every sub-view; services are fixed
     // for the Panel's life, the rest is rewritten every frame or input event. Message thread only.
     struct PanelContext
@@ -175,6 +190,7 @@ namespace fcmp::ui
         std::array<SlotModel*, fcdsp::kNumModeParams> slots{};   // one per Mode-filtered Pid, shared by slots and handles
         funkgui::HostServices*        host = nullptr;       // after Panel::attach: the host menu, unbounded drags
         funkgui::GestureController*   gestures = nullptr;   // after Panel::attach: every parameter write goes here
+        std::function<RenderInfo()>   renderInfo;           // v1.2 (ADR-85): Panel::setRenderInfo; empty headless
 
         // ---- navigation (read-only here; Panel::setView changes it) --------------------------------------------------
         Screen   screen{};

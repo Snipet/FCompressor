@@ -67,6 +67,20 @@ namespace fcmp::ui
         : funkgui::EditorHost(owner, makeConfig(facade), makePanel(facade, options)),
           ui_(static_cast<Panel&>(funkgui::EditorHost::panel()))    // makePanel made it: the cast is exact
     {
+        // ADR-85: the settings screen's DISPLAY row reads the host's own diagnostics (this editor outlives the source:
+        // the destructor removes it first).
+        ui_.setRenderInfo([this] {
+            const funkgui::EditorHost::Diagnostics d = diagnostics();
+            RenderInfo r;
+            r.gpu = surfaceAttached() && !showingFallback();
+            r.displayLinked = d.displayLinked;
+            r.fps = d.fps;
+            r.scale = d.scale;
+            r.zoomPercent = d.zoomPercent;
+            r.frames = d.frames;
+            r.overflows = d.overflows;
+            return r;
+        });
         if (!options.unknownView.empty())
         {
             juce::String known;
@@ -82,6 +96,7 @@ namespace fcmp::ui
     {
         // K2 #27: the Panel's worker and gestures go first, while everything they use is alive; ~EditorHost then runs
         // with this class's members already gone and touches only what it owns (02 §5.1 teardown rule).
+        ui_.setRenderInfo({});
         ui_.shutdown();
     }
 }

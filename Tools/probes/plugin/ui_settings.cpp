@@ -1,0 +1,389 @@
+// FCMP_PROBE layer=ui name=settings scope=global timeout=120
+//
+// ui.settings (v1.2, ADR-85): the settings overlay (views/Settings.h) and the header's gear over a FakeFacade, driven
+// through HeadlessHost input (Panel{skipHint, syncPreview}; settle at 1/60 s; dpi 2, theme 0; FCMP_PREFS_DIR is the
+// test's sandbox). Global and spec-only: the overlay reads no Mode-specific data beyond the MODE row.
+//
+//   open.*      the gear opens it (released inside; dragged off it does not); a second click on the gear, a click on the
+//               footer and Esc close it; nothing is written by opening or closing; it fades in (full rate) and out.
+//   gear.*      the gear is the header's second Tab stop, a button "Settings" at layout::settings::kGear; its hover
+//               puts "SETTINGS   …" on the footer line; Return on it opens the overlay with the focus on QUALITY, and
+//               closing gives the focus back to the gear.
+//   keys.*      while open the Tab order is exactly QUALITY, LOOKAHEAD, SIDECHAIN, NEW QUALITY, NEW LOOKAHEAD, COPY
+//               REPORT, and wraps; → on QUALITY is one tap of `quality`.
+//   cells.*     a click on HQ, 5 MS and EXTERNAL is one gesture on `quality`, `labudget` and `extkey` each, to the cell's
+//               value, outside any batch, and nothing else is written; a click on the selected cell writes nothing.
+//   new.*       NEW INSTANCES' cells write the machine preferences kPrefNewQuality / kPrefNewLookahead (UiPreferences)
+//               and no parameter.
+//   diag.*      the fifteen DIAGNOSTICS rows are staticTexts in order with the FakeFacade's fixed values; after HQ is
+//               chosen, OVERSAMPLING, LATENCY and the QUALITY help follow within one refresh (0.25 s); a key bus the host
+//               routes is named; the DISPLAY row is HEADLESS; report() is a title line then "KEY: value" per row.
+//   copy.*      headless, COPY REPORT copies nothing and keeps its title.
+//   cover.*     while open, the slot grid's and the band's items are not visible to accessibility, the footer's are.
+#include "ProbeRegistry.h"
+
+#include "FakeFacade.h"
+
+#include "editor/Layout.h"
+#include "editor/Panel.h"
+#include "editor/SubView.h"
+#include "editor/views/Settings.h"
+
+#include "fcdsp/engine/Oversampler.h"
+#include "fcdsp/params/HostParams.h"
+#include "fcdsp/params/Pid.h"
+
+#include <funkgui/a11y/A11yItem.h>
+#include <funkgui/panel/HeadlessHost.h>
+#include <funkgui/panel/Input.h>
+#include <funkgui/prefs/UiPreferences.h>
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace
+{
+    using funkgui::test::Probe;
+    namespace ui = fcmp::ui;
+    namespace L = fcmp::ui::layout;
+    using fcmp::probe::FakeFacade;
+    using fcdsp::Pid;
+
+    constexpr int   kMaxSettle = 600;
+    constexpr float kDt = 1.0f / 60.0f;
+    constexpr ui::PanelOptions kProbeOptions { true, true, false };   // skipHint, syncPreview, !ignoreLive
+    const std::string kDot = " \xC2\xB7 ";                              // " · "
+
+    int b(bool v) { return v ? 1 : 0; }
+
+    struct Rig
+    {
+        Rig() : facade("clean"), panel(facade, kProbeOptions), host(panel, 0, 2.0f)
+        {
+            host.settle(kMaxSettle, kDt);
+            facade.resetCounts();
+        }
+        Rig(const Rig&) = delete;
+        Rig& operator=(const Rig&) = delete;
+
+        const ui::PanelContext& ctx() const { return panel.context(); }
+        bool open() const { return panel.overlay() == ui::Overlay::settings; }
+        int  settle() { return host.settle(kMaxSettle, kDt); }
+        void click(const funkgui::Rect& r)
+        {
+            host.click(r.centreX(), r.centreY());
+            host.tick(1, kDt);
+        }
+        void keys(const char* spec)
+        {
+            host.keys(spec);
+            host.tick(1, kDt);
+        }
+        void openByGear()
+        {
+            click(L::settings::kGear);
+            settle();
+        }
+        std::vector<funkgui::A11yItem> items() const { return host.accessibility(); }
+
+        FakeFacade            facade;
+        ui::Panel             panel;
+        funkgui::HeadlessHost host;
+    };
+
+    // The probe reaches the Panel's Settings through its a11y ids only; report() and copyReport() it calls on a Settings
+    // of its own over the same context (the Panel's sub-views are private).
+    const funkgui::A11yItem* item(const std::vector<funkgui::A11yItem>& v, uint32_t id)
+    {
+        for (const funkgui::A11yItem& it : v)
+            if (it.id == id)
+                return &it;
+        return nullptr;
+    }
+
+    uint32_t sid(uint32_t local) { return ui::a11yId(ui::ViewIndex::settings, local); }
+
+    std::string rowValue(const Rig& r, int row)
+    {
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* it = item(v, sid(ui::Settings::kDiagLocal0 + static_cast<uint32_t>(row)));
+        return it != nullptr ? it->value : std::string("<missing>");
+    }
+
+    // The cell i of a radioGroup (a11y local + 1 + i): its bounds.
+    funkgui::Rect cellOf(const Rig& r, uint32_t groupLocal, int i)
+    {
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* it = item(v, sid(groupLocal + 1u + static_cast<uint32_t>(i)));
+        return it != nullptr ? it->bounds : funkgui::Rect{};
+    }
+
+    int writesTotal(const FakeFacade& f) { return static_cast<int>(f.writes().size()); }
+
+    std::string footerLine(const Rig& r)
+    {
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* it = item(v, ui::a11yId(ui::ViewIndex::footer, 1));
+        return it != nullptr ? it->value : std::string();
+    }
+
+    // ---- opening and closing --------------------------------------------------------------------------------------------
+
+    void openRows(Probe& P)
+    {
+        Rig r;
+        r.host.click(L::settings::kGear.centreX(), L::settings::kGear.centreY());
+        r.host.tick(1, kDt);
+        const bool fading = r.open() && r.panel.wantsFullRate();
+        r.settle();
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* q = item(v, sid(ui::Settings::kQualityLocal));
+        P.eq("open.gear_click", b(r.open() && q != nullptr && q->visible), 1);
+        P.eq("open.fades_in", b(fading), 1);
+        r.click(L::settings::kGear);                              // above the overlay: outside it, so it closes
+        r.settle();
+        P.eq("open.gear_again_closes", b(!r.open()), 1);
+        r.openByGear();
+        r.click({ 100.0f, 604.0f, 1.0f, 1.0f });                  // the footer's line
+        r.settle();
+        P.eq("open.footer_click_closes", b(!r.open()), 1);
+        r.openByGear();
+        r.keys("escape");
+        r.settle();
+        P.eq("open.escape_closes", b(!r.open()), 1);
+        // Dragging off the gear does not open it.
+        r.host.drag(L::settings::kGear.centreX(), L::settings::kGear.centreY(), 400.0f, 30.0f, 4);
+        r.settle();
+        P.eq("open.drag_off_cancels", b(!r.open()), 1);
+        P.eq("open.writes_nothing", writesTotal(r.facade) + r.facade.batches(), 0);
+    }
+
+    // ---- the gear ---------------------------------------------------------------------------------------------------------
+
+    void gearRows(Probe& P)
+    {
+        Rig r;
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* g = item(v, ui::a11yId(ui::ViewIndex::header, 2));
+        P.eq("gear.a11y_button", b(g != nullptr && g->role == funkgui::A11yRole::button && g->title == "Settings"
+                                   && g->bounds.x == L::settings::kGear.x && g->bounds.w == L::settings::kGear.w), 1);
+        r.host.move(L::settings::kGear.centreX(), L::settings::kGear.centreY());
+        r.host.tick(1, kDt);
+        P.eq("gear.hover_spec", b(footerLine(r).rfind("SETTINGS   ", 0) == 0), 1);
+        r.host.move(480.0f, 460.0f);
+        r.keys("tab");                                            // the Mode latch (the panel's first stop)
+        r.keys("tab");                                            // the gear
+        const bool second = r.ctx().focus == ui::a11yId(ui::ViewIndex::header, 2);
+        P.eq("gear.second_tab_stop", b(second), 1);
+        r.keys("return");
+        r.settle();
+        P.eq("gear.return_opens_on_quality", b(r.open() && r.ctx().focus == sid(ui::Settings::kQualityLocal)), 1);
+        r.keys("escape");
+        r.settle();
+        P.eq("gear.close_returns_focus", b(!r.open() && r.ctx().focus == ui::a11yId(ui::ViewIndex::header, 2)), 1);
+    }
+
+    // ---- keys -------------------------------------------------------------------------------------------------------------
+
+    void keyRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        const std::array<uint32_t, 6> want { sid(ui::Settings::kQualityLocal), sid(ui::Settings::kBudgetLocal),
+                                             sid(ui::Settings::kKeyLocal), sid(ui::Settings::kNewQualityLocal),
+                                             sid(ui::Settings::kNewBudgetLocal), sid(ui::Settings::kCopyLocal) };
+        std::vector<uint32_t> stops;
+        for (int i = 0; i < 8; ++i)
+        {
+            r.keys("tab");
+            stops.push_back(r.ctx().focus);
+        }
+        bool order = stops.size() == 8;
+        for (std::size_t i = 0; order && i < want.size(); ++i)
+            order = stops[i] == want[i];
+        P.eq("keys.tab_order", b(order), 1);
+        P.eq("keys.tab_wraps", b(order && stops[6] == want[0] && stops[7] == want[1]), 1);
+        // Back on QUALITY (STD): → is one tap to HQ.
+        while (r.ctx().focus != want[0])
+            r.keys("tab");
+        r.facade.resetCounts();
+        r.keys("right");
+        const fcmp::probe::FakePort& q = r.facade.fakePort(Pid::quality);
+        P.eq("keys.right_taps_quality", b(q.begins() == 1 && q.ends() == 1 && q.plain() == 2.0f), 1);
+    }
+
+    // ---- the cells --------------------------------------------------------------------------------------------------------
+
+    void cellRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        const auto one = [&](uint32_t local, int cell, Pid pid, float plain, const char* key) {
+            r.facade.resetCounts();
+            r.facade.clearWrites();
+            r.click(cellOf(r, local, cell));
+            const fcmp::probe::FakePort& port = r.facade.fakePort(pid);
+            bool only = true;
+            for (const fcmp::probe::FakeWrite& w : r.facade.writes())
+                only = only && w.pid == pid && w.inGesture && w.batchDepth == 0;
+            P.eq(std::string("cells.") + key, b(port.begins() == 1 && port.ends() == 1 && !port.inGesture()
+                                                && port.plain() == plain && only && !r.facade.writes().empty()
+                                                && r.facade.batches() == 0), 1);
+        };
+        one(ui::Settings::kQualityLocal, 2, Pid::quality, 2.0f, "quality_hq");
+        one(ui::Settings::kBudgetLocal, 1, Pid::labudget, 1.0f, "budget_5ms");
+        one(ui::Settings::kKeyLocal, 1, Pid::extkey, 1.0f, "sidechain_external");
+        r.facade.resetCounts();
+        r.facade.clearWrites();
+        r.click(cellOf(r, ui::Settings::kQualityLocal, 2));       // already HQ
+        P.eq("cells.selected_writes_nothing", writesTotal(r.facade), 0);
+        P.eq("cells.overlay_stays_open", b(r.open()), 1);
+    }
+
+    // ---- NEW INSTANCES -----------------------------------------------------------------------------------------------
+
+    void newRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        funkgui::UiPreferences& prefs = funkgui::UiPreferences::get();
+        r.facade.clearWrites();
+        r.click(cellOf(r, ui::Settings::kNewQualityLocal, 2));    // HQ
+        r.click(cellOf(r, ui::Settings::kNewBudgetLocal, 2));     // 20 MS
+        P.eq("new.quality_pref", prefs.getInt(fcmp::kPrefNewQuality, -1, -1, 9), 2);
+        P.eq("new.lookahead_pref", prefs.getInt(fcmp::kPrefNewLookahead, -1, -1, 9), 2);
+        P.eq("new.no_parameter_write", writesTotal(r.facade) + r.facade.batches(), 0);
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* hq = item(v, sid(ui::Settings::kNewQualityLocal + 3u));
+        P.eq("new.cell_checked", b(hq != nullptr && hq->checked), 1);
+        prefs.setInt(fcmp::kPrefNewQuality, 1);                   // leave the sandbox as the other rows expect it
+        prefs.setInt(fcmp::kPrefNewLookahead, 0);
+    }
+
+    // ---- DIAGNOSTICS ------------------------------------------------------------------------------------------------------
+
+    void diagRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const std::array<const char*, ui::Settings::kDiagRows> titles {
+            "Version", "Libraries", "Format and host", "Sample rate", "Block size", "Channels", "Oversampling",
+            "Lookahead", "Latency", "DSP load", "Overruns", "Audio", "Mode", "Presets", "Display" };
+        bool ordered = true;
+        for (std::size_t i = 0; i < titles.size(); ++i)
+        {
+            const funkgui::A11yItem* it = item(v, sid(ui::Settings::kDiagLocal0 + static_cast<uint32_t>(i)));
+            ordered = ordered && it != nullptr && it->role == funkgui::A11yRole::staticText && it->title == titles[i]
+                   && it->visible;
+        }
+        P.eq("diag.rows_in_order", b(ordered), 1);
+        const int stdLatency = fcdsp::kOs[1].latency;
+        P.eq("diag.version", b(rowValue(r, 0) == "FCOMPRESSOR 0.0.0"), 1);
+        P.eq("diag.libraries", b(rowValue(r, 1) == "FUNKGUI 0.0.0" + kDot + "JUCE 0.0.0"), 1);
+        P.eq("diag.format_unknown", b(rowValue(r, 2) == "UNKNOWN FORMAT" + kDot + "UNKNOWN HOST"), 1);
+        P.eq("diag.rate", b(rowValue(r, 3) == "48 000 HZ"), 1);
+        P.eq("diag.block", b(rowValue(r, 4) == "UP TO 512 SAMPLES"), 1);
+        P.eq("diag.channels", b(rowValue(r, 5) == "2 IN" + kDot + "2 OUT" + kDot + "NO KEY INPUT"), 1);
+        P.eq("diag.oversampling", b(rowValue(r, 6) == "2\xC3\x97 IIR, RUNS AT 96 000 HZ"), 1);
+        P.eq("diag.lookahead_off", b(rowValue(r, 7) == "OFF"), 1);
+        P.eq("diag.latency", b(rowValue(r, 8) == std::to_string(stdLatency) + " SAMPLES" + kDot + "0.08 MS"), 1);
+        P.eq("diag.load", b(rowValue(r, 9) == "3.1 %" + kDot + "PEAK 7.8 %"), 1);
+        P.eq("diag.overruns", b(rowValue(r, 10) == "0 OF 1000 BLOCKS"), 1);
+        P.eq("diag.audio_none", b(rowValue(r, 11) == "NO AUDIO SINCE THIS WINDOW OPENED"), 1);
+        P.eq("diag.mode", b(rowValue(r, 12).rfind("CLEAN" + kDot + "SLOT 0" + kDot + "REVISION ", 0) == 0), 1);
+        P.eq("diag.display_headless", b(rowValue(r, 14) == "HEADLESS"), 1);
+
+        // HQ and 5 MS: the rows follow within one refresh.
+        r.click(cellOf(r, ui::Settings::kQualityLocal, 2));
+        r.click(cellOf(r, ui::Settings::kBudgetLocal, 1));
+        r.host.tick(20, kDt);
+        const int la = fcdsp::lookaheadSamples(fcdsp::LookaheadBudget::ms5, 48000.0);
+        const int total = fcdsp::kOs[2].latency + la;
+        P.eq("diag.follows_quality", b(rowValue(r, 6) == "4\xC3\x97 FIR, RUNS AT 192 000 HZ"), 1);
+        P.eq("diag.follows_lookahead", b(rowValue(r, 7) == "5 MS BUDGET, " + std::to_string(la) + " SAMPLES"), 1);
+        P.eq("diag.follows_latency", b(rowValue(r, 8).rfind(std::to_string(total) + " SAMPLES", 0) == 0), 1);
+
+        // A key bus the host routes.
+        fcmp::Diagnostics d = r.facade.diagnostics();
+        d.keyChans = 2;
+        r.facade.setDiagnostics(d);
+        r.host.tick(20, kDt);
+        const std::vector<funkgui::A11yItem> w = r.items();
+        const funkgui::A11yItem* note = item(w, sid(ui::Settings::kKeyNoteLocal));
+        P.eq("diag.key_note", b(note != nullptr && note->value == "KEY INPUT: STEREO FROM THE HOST"), 1);
+        P.eq("diag.key_channels", b(rowValue(r, 5) == "2 IN" + kDot + "2 OUT" + kDot + "KEY 2"), 1);
+        r.facade.setDiagnostics(std::nullopt);
+    }
+
+    // ---- report and COPY REPORT (a Settings of the probe's own over the Panel's context) -----------------------------
+
+    void reportRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        ui::Settings own(const_cast<ui::PanelContext&>(r.ctx()));
+        const std::string rep = own.report();
+        P.eq("report.title", b(rep.rfind("FCompressor diagnostics\n", 0) == 0), 1);
+        P.eq("report.rows", b(rep.find("SAMPLE RATE: 48 000 HZ\n") != std::string::npos
+                              && rep.find("DISPLAY: HEADLESS\n") != std::string::npos), 1);
+        int lines = 0;
+        for (const char ch : rep)
+            lines += ch == '\n' ? 1 : 0;
+        P.eq("report.line_count", lines, 1 + ui::Settings::kDiagRows);
+        P.eq("copy.headless_copies_nothing", b(!own.copyReport()), 1);
+        r.panel.a11yAction(sid(ui::Settings::kCopyLocal), funkgui::A11yAction::press, 0.0);
+        r.host.tick(1, kDt);
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* c = item(v, sid(ui::Settings::kCopyLocal));
+        P.eq("copy.title_kept", b(c != nullptr && c->title == "Copy report"), 1);
+    }
+
+    // ---- what the overlay covers ----------------------------------------------------------------------------------------
+
+    void coverRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        int slotsVisible = 0, footerVisible = 0, settingsVisible = 0;
+        for (const funkgui::A11yItem& it : r.items())
+        {
+            const int view = ui::viewIndexOf(it.id);
+            if (view == static_cast<int>(ui::ViewIndex::slotGrid) || view == static_cast<int>(ui::ViewIndex::band))
+                slotsVisible += it.visible ? 1 : 0;
+            if (view == static_cast<int>(ui::ViewIndex::footer))
+                footerVisible += it.visible ? 1 : 0;
+            if (view == static_cast<int>(ui::ViewIndex::settings))
+                settingsVisible += it.visible ? 1 : 0;
+        }
+        P.eq("cover.slots_hidden", slotsVisible, 0);
+        P.ge("cover.footer_visible", footerVisible, 1);
+        P.ge("cover.settings_visible", settingsVisible, 20);
+        // A click on the overlay where the band is underneath writes nothing and keeps it open.
+        r.facade.resetCounts();
+        r.facade.clearWrites();
+        r.click({ 300.0f, 500.0f, 1.0f, 1.0f });
+        P.eq("cover.click_through_nothing", b(r.open() && writesTotal(r.facade) == 0), 1);
+    }
+}
+
+FCMP_PROBE(ui, settings)
+{
+    (void) C;
+    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    openRows(P);
+    gearRows(P);
+    keyRows(P);
+    cellRows(P);
+    newRows(P);
+    diagRows(P);
+    reportRows(P);
+    coverRows(P);
+    return P.finish();
+}

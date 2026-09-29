@@ -15,6 +15,10 @@
 //   (the real SetupWatcher applies a new budget at 20 Hz, so the configured budget can lag the port).
 // - readUiFrame() returns false until publish(), then the last published frame; publish() stamps publishCount, so
 //   every publish is a new frame for the UI's staleness.
+// - diagnostics() (v1.2, ADR-85): fixed values, so a headless frame never depends on the build: versions "0.0.0", no
+//   format or host, prepared at 48 kHz with 512-sample blocks, 2 in, 2 out, no key bus, the configured quality and
+//   budget of currentRaw() with their latency, load 3.1 % (peak 7.8 %), no overruns, 1000 blocks. setDiagnostics()
+//   scripts another (then returned as given).
 // - The script calls (script01, setPlain, setMode, …) are a host or automation writing: no gesture, not logged.
 #pragma once
 
@@ -201,6 +205,7 @@ namespace fcmp::probe
         void                      beginBatch() override;         // counted and nestable
         void                      endBatch() override;
         PresetAccess&             presets() override;
+        Diagnostics               diagnostics() const override;  // v1.2 (ADR-85): see the header comment
 
         // scripting (a host, automation or the audio thread; no gestures, not logged)
         bool setMode(std::string_view key);                      // the key's slot; false: unknown key (unchanged)
@@ -210,6 +215,7 @@ namespace fcmp::probe
         void clearFrame() noexcept;                              // readUiFrame returns false again
         void pushColumn(const fcdsp::HistoryColumn&);            // into the real ring
         void setStateNotice(const StateNotice&) noexcept;
+        void setDiagnostics(std::optional<Diagnostics>) noexcept;   // nullopt: the fixed values above
 
         // inspection
         FakePort&    fakePort(fcdsp::Pid);
@@ -236,6 +242,7 @@ namespace fcmp::probe
         FakePresets                            presets_;
         UiState                                ui_{};
         StateNotice                            notice_{};
+        std::optional<Diagnostics>             diagnostics_;
         std::optional<fcdsp::UiFrame>          frame_;
         std::optional<fcdsp::LookaheadBudget>  budget_;
         std::vector<FakeWrite>                 writes_;

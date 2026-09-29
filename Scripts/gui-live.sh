@@ -3,7 +3,8 @@
 # Scripts/gui-live.sh <build-dir>: live parity, ui.live (03 §3.6; 02 §3.9, §5.1; C G1; U7). The real GPU editor in the
 # real Standalone must draw, frame for frame, what the headless probe draws for the same state.
 #
-#   For each view of {panel, chars.sidechain, chars.colour, modebrowser, presetbrowser} x Mode clean (the 5 views, S12):
+#   For each view of {panel, chars.sidechain, chars.colour, modebrowser, presetbrowser} x Mode clean (the 5 views, S12;
+#   v1.2's "settings" is not one: its DIAGNOSTICS show the real processor and renderer, which a FakeFacade does not):
 #   1. headless  fcmp_probe_plugin ui.dump --mode clean -- --view <id> --dpi 2 --theme 0: a FakeFacade at its defaults,
 #                Panel{skipHint, syncPreview}, HeadlessHost settle at 1/60 s, the settled frame as dump v2.
 #   2. live      FunkGui's tools/capture-frame.sh on <build>'s Standalone with the product's environment prefix (FCMP_):
@@ -43,7 +44,7 @@ DT=0.0166666675
 LOCK=/tmp/fcmp-gui.lock
 
 usage() {
-  sed -n '3,37p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {

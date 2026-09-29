@@ -15,6 +15,7 @@
 #include "editor/views/ModeBrowser.h"
 #include "editor/views/PresetBrowser.h"
 #include "editor/views/PresetStrip.h"
+#include "editor/views/Settings.h"
 #include "editor/views/SlotGrid.h"
 
 #include "fcdsp/modes/Registry.h"
@@ -35,22 +36,24 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <utility>
 
 namespace fcmp::ui
 {
     namespace
     {
-        constexpr std::array<ViewSpec, 5> kViews { {
+        constexpr std::array<ViewSpec, 6> kViews { {
             { "panel",           Screen::panel,           ScTab::sidechain, Overlay::none },
             { "chars.sidechain", Screen::characteristics, ScTab::sidechain, Overlay::none },
             { "chars.colour",    Screen::characteristics, ScTab::colour,    Overlay::none },
             { "modebrowser",     Screen::panel,           ScTab::sidechain, Overlay::modeBrowser },
             { "presetbrowser",   Screen::panel,           ScTab::sidechain, Overlay::presetBrowser },
+            { "settings",        Screen::panel,           ScTab::sidechain, Overlay::settings },   // v1.2 (ADR-85)
         } };
 
         // The fixed orders of Panel.h.
-        constexpr std::array<ViewIndex, 9> kHitOrder { ViewIndex::modeBrowser, ViewIndex::presetBrowser,
-                                                       ViewIndex::presetStrip, ViewIndex::header,
+        constexpr std::array<ViewIndex, 10> kHitOrder { ViewIndex::settings, ViewIndex::modeBrowser,
+                                                       ViewIndex::presetBrowser, ViewIndex::presetStrip, ViewIndex::header,
                                                        ViewIndex::displayRow, ViewIndex::footer,
                                                        ViewIndex::slotGrid, ViewIndex::band, ViewIndex::charScreen };
         constexpr std::array<ViewIndex, 7> kTabOrder { ViewIndex::header, ViewIndex::presetStrip, ViewIndex::displayRow,
@@ -104,16 +107,31 @@ namespace fcmp::ui
 
         ViewIndex overlayView(Overlay o) noexcept
         {
-            return o == Overlay::presetBrowser ? ViewIndex::presetBrowser : ViewIndex::modeBrowser;
+            switch (o)
+            {
+                case Overlay::presetBrowser: return ViewIndex::presetBrowser;
+                case Overlay::settings:      return ViewIndex::settings;
+                case Overlay::none:
+                case Overlay::modeBrowser:   break;
+            }
+            return ViewIndex::modeBrowser;
+        }
+
+        // The area an open overlay takes input in: a pointer down outside it closes the overlay (02 §8.6).
+        const funkgui::Rect& overlayArea(Overlay o) noexcept
+        {
+            return o == Overlay::settings ? layout::settings::kArea : layout::kOverlay;
         }
 
         // Both browsers draw an opaque ground over layout::kOverlay grown by 8 px left and right and 4 px up and down
-        // (ModeBrowser.h, PresetBrowser.h). An item whose centre lies under it is covered while a browser is open.
+        // (ModeBrowser.h, PresetBrowser.h), and the settings overlay over its own area grown the same way. An item whose
+        // centre lies under the open one's ground is covered.
         constexpr funkgui::Rect kBrowserGround { layout::kOverlay.x - 8.0f, layout::kOverlay.y - 4.0f,
                                                  layout::kOverlay.w + 16.0f, layout::kOverlay.h + 8.0f };
-        bool covered(const funkgui::Rect& r) noexcept
+        bool covered(Overlay o, const funkgui::Rect& r) noexcept
         {
-            return kBrowserGround.contains({ r.x + 0.5f * r.w, r.y + 0.5f * r.h });
+            const funkgui::Rect& ground = o == Overlay::settings ? layout::settings::kGround : kBrowserGround;
+            return ground.contains({ r.x + 0.5f * r.w, r.y + 0.5f * r.h });
         }
 
         // The screen crossfade is a funkgui::ScreenFader (Panel.h), whose τ and snap are 02 §7.1's (layout::chars).
@@ -206,6 +224,7 @@ namespace fcmp::ui
         views_[at(ViewIndex::presetStrip)]   = std::make_unique<PresetStrip>(ctx_);
         views_[at(ViewIndex::presetBrowser)] = std::make_unique<PresetBrowser>(ctx_);
         views_[at(ViewIndex::footer)]        = std::make_unique<Footer>(ctx_);
+        views_[at(ViewIndex::settings)]      = std::make_unique<Settings>(ctx_);
 
         preview_->setActive(screen_ == Screen::characteristics);
     }
@@ -279,6 +298,8 @@ namespace fcmp::ui
 
     void Panel::closeOverlay() { setView({ nullptr, screen_, scTab_, Overlay::none }, false); }
 
+    void Panel::setRenderInfo(std::function<RenderInfo()> source) { ctx_.renderInfo = std::move(source); }
+
     Screen  Panel::screen() const noexcept { return screen_; }
     Overlay Panel::overlay() const noexcept { return overlay_; }
     ScTab   Panel::scTab() const noexcept { return scTab_; }
@@ -300,6 +321,7 @@ namespace fcmp::ui
             case ViewIndex::charScreen:    return screen_ == Screen::characteristics;
             case ViewIndex::modeBrowser:   return overlay_ == Overlay::modeBrowser;
             case ViewIndex::presetBrowser: return overlay_ == Overlay::presetBrowser;
+            case ViewIndex::settings:      return overlay_ == Overlay::settings;
         }
         return false;
     }
@@ -320,6 +342,7 @@ namespace fcmp::ui
                                                || (fading && outgoing == Screen::characteristics);
             case ViewIndex::modeBrowser:   return overlayAmt_ > 0.0f && drawnOverlay_ == Overlay::modeBrowser;
             case ViewIndex::presetBrowser: return overlayAmt_ > 0.0f && drawnOverlay_ == Overlay::presetBrowser;
+            case ViewIndex::settings:      return overlayAmt_ > 0.0f && drawnOverlay_ == Overlay::settings;
         }
         return false;
     }
@@ -554,7 +577,7 @@ namespace fcmp::ui
             ctx_.alwaysChrome = true;                            // a touch screen or tablet (HR :1488)
         ++ctx_.pointerDowns;
         ctx_.focusVisible = false;                               // the pointer is the affordance now (HR)
-        if (overlay_ != Overlay::none && !layout::kOverlay.contains(ctx_.pointer))
+        if (overlay_ != Overlay::none && !overlayArea(overlay_).contains(ctx_.pointer))
         {
             closeOverlay();                                      // 02 §8.6: clicking outside cancels
             captured_ = -1;
@@ -690,7 +713,7 @@ namespace fcmp::ui
             views_[i]->accessibility(out);
             const bool hidden = !live(static_cast<ViewIndex>(i));   // HR skips hidden items; so does the dump (A §1)
             for (std::size_t k = first; k < out.size(); ++k)
-                if (hidden || (covering && static_cast<int>(i) != open && covered(out[k].bounds)))
+                if (hidden || (covering && static_cast<int>(i) != open && covered(overlay_, out[k].bounds)))
                     out[k].visible = false;
         }
     }

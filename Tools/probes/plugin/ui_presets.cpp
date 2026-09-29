@@ -6,9 +6,10 @@
 // spec-only: the views read no Mode-specific data beyond the Mode names of the rows.
 //
 //   strip.*     the four a11y items (‹, the "Preset" comboBox with the current name, ›, SAVE) and their Tab stops right
-//               after the Mode latch; ‹ and › are one PresetAccess::step(∓1) each (one apply, one batch); keys and a11y on
-//               the focused stops; nothing to step without presets; redraw on revision(): idle frames re-read nothing,
-//               a revision (modified, a new list) is shown on the next frame (the marker, ", modified", UNTITLED).
+//               after the header's (the Mode latch, then v1.2's settings gear); ‹ and › are one
+//               PresetAccess::step(∓1) each (one apply, one batch); keys and a11y on the focused stops; nothing to step
+//               without presets; redraw on revision(): idle frames re-read nothing, a revision (modified, a new list)
+//               is shown on the next frame (the marker, ", modified", UNTITLED).
 //   browser.*   a click on the name opens it without applying; the rows shown (11 of 15, in PresetAccess order, the
 //               current one checked); a click on a row is exactly one apply of that index and keeps the browser open; a
 //               click on the current, unmodified row applies nothing (modified: one apply); a double-click applies once
@@ -321,17 +322,18 @@ namespace
                       && it->bounds.bottom() <= L::kPresetStrip.bottom();
             P.eq("strip.a11y.inside", b(inside), 1);
 
-            // Tab: the Mode latch, then ‹ name › SAVE (02 §8.9 items 1–2).
+            // Tab: the Mode latch and (v1.2, ADR-85) the settings gear, then ‹ name › SAVE (02 §8.9 items 1–2).
             std::vector<uint32_t> stops;
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
             {
                 r.host->keys("tab");
                 stops.push_back(r.ctx().focus);
             }
-            P.eq("strip.taborder", b(stops.size() == 5
+            P.eq("strip.taborder", b(stops.size() == 6
                                      && ui::viewIndexOf(stops[0]) == static_cast<int>(ui::ViewIndex::header)
-                                     && stops[1] == stripId(PS::kPrevLocal) && stops[2] == stripId(PS::kNameLocal)
-                                     && stops[3] == stripId(PS::kNextLocal) && stops[4] == stripId(PS::kSaveLocal)), 1);
+                                     && ui::viewIndexOf(stops[1]) == static_cast<int>(ui::ViewIndex::header)
+                                     && stops[2] == stripId(PS::kPrevLocal) && stops[3] == stripId(PS::kNameLocal)
+                                     && stops[4] == stripId(PS::kNextLocal) && stops[5] == stripId(PS::kSaveLocal)), 1);
         }
         {
             Rig r;
@@ -349,7 +351,7 @@ namespace
         }
         {
             Rig r;
-            r.keys("tab,tab");                                   // ‹
+            r.keys("tab,tab,tab");                               // ‹ (after the Mode latch and the gear)
             r.keys("return");
             const bool prevKey = r.presets().steps() == 1 && r.presets().current() == 0;
             r.keys("tab");                                       // the name
@@ -752,7 +754,7 @@ namespace
             // Keys on the focused SAVE: Return saves over; Shift-Return is the save as.
             Rig r;
             userModified(r);
-            r.keys("tab,tab,tab,tab,tab");
+            r.keys("tab,tab,tab,tab,tab,tab");                   // the Mode latch, the gear, ‹ name › SAVE
             const bool focused = r.ctx().focus == stripId(PS::kSaveLocal);
             r.keys("return");
             const bool over = r.presets().overwrites() == 1 && !r.open() && stripValue(r) == "My Bus";

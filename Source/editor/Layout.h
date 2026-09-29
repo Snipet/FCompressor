@@ -731,4 +731,54 @@ namespace fcmp::ui::layout
         inline constexpr float kLedTickY    = 247.0f;              // scale ticks between the ladder and its labels
         inline constexpr float kLedTickH    = 4.0f;
     }
+
+    // ---- v1.2 (ADR-85): the SETTINGS overlay and its gear ----------------------------------------------------------------
+    // The gear right of the wordmark opens it (the footer has no room: the ZOOM spec fills its line). The overlay covers
+    // the region between the header and the footer, over a ground grown 8 px left and right and 4 px up and down as the
+    // browsers' is; a click outside it (the header, the footer) closes it, as a browser's does.
+    namespace settings
+    {
+        inline constexpr Rect  kGear { 196.0f, 12.0f, 24.0f, 24.0f };   // hit; drawn centred, kGearR
+        inline constexpr float kGearR = 7.0f;                    // teeth tips
+        inline constexpr float kGearBodyR = 5.0f;
+        inline constexpr float kGearHoleR = 2.0f;
+        inline constexpr int   kGearTeeth = 8;
+        inline constexpr float kGearToothW = 2.4f;
+
+        inline constexpr Rect  kArea { 40.0f, 64.0f, 880.0f, 526.0f };  // y 64–590
+        inline constexpr Rect  kGround { kArea.x - 8.0f, kArea.y - 4.0f, kArea.w + 16.0f, kArea.h + 8.0f };
+        inline constexpr float kHeadingY = 72.0f;                // kCaption: AUDIO · NEW INSTANCES · DIAGNOSTICS
+        // The left column: a caption at x 40, its cells from kCellsX (the display row's cell look and width rule), the
+        // tables and notes under them in kMicro.
+        inline constexpr float kLabelX = 40.0f;
+        inline constexpr float kCellsX = 184.0f;
+        inline constexpr float kCellH = 16.0f;
+        inline constexpr float kCellGap = 4.0f;
+        inline constexpr float kCellPad = 14.0f;                 // a cell is w(label) + 14, rounded up to an even px
+        inline constexpr float kQualityY = 92.0f;                // cell tops
+        inline constexpr float kTableY0 = 116.0f;                // QUALITY's table: OVERSAMPLING, FILTER, LATENCY, RUNS AT
+        inline constexpr float kTablePitch = 14.0f;
+        inline constexpr float kBudgetY = 184.0f;
+        inline constexpr float kBudgetTableY = 208.0f;           // LATENCY at the current rate
+        inline constexpr float kKeyY = 238.0f;
+        inline constexpr float kKeyNoteY = 262.0f;
+        inline constexpr float kLatencyY = 292.0f;               // the total, kLabel
+        inline constexpr float kLatencyNoteY = 310.0f;
+        inline constexpr float kRuleY = 338.0f;                  // a hairline over NEW INSTANCES
+        inline constexpr float kNewHeadingY = 350.0f;
+        inline constexpr float kNewQualityY = 372.0f;
+        inline constexpr float kNewBudgetY = 396.0f;
+        inline constexpr float kNewNoteY = 422.0f;
+        inline constexpr float kColumnRight = 460.0f;            // the left column's notes are fitted to x 460
+        // The divider, then DIAGNOSTICS: a key (kMicro ink32) and its value (kMicro ink70) per row.
+        inline constexpr float kDividerX = 480.0f;
+        inline constexpr float kDiagKeyX = 500.0f;
+        inline constexpr float kDiagValueX = 604.0f;
+        inline constexpr float kDiagY0 = 96.0f;
+        inline constexpr float kDiagPitch = 18.0f;
+        inline constexpr float kRefreshS = 0.25f;                // the live values' text, every 0.25 s of panel time
+        // COPY REPORT, a text cell right-aligned to the content edge, and its note left of it.
+        inline constexpr float kCopyY = 566.0f;
+        inline constexpr double kCopiedS = 2.0;                  // "COPIED" stays this long
+    }
 }

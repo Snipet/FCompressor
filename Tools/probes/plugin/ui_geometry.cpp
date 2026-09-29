@@ -17,7 +17,8 @@
 //   golden row    modebrowser.row.{x,y,w,h}       the Mode's own browser row (a listItem titled with the Mode's name)
 //                                                 once the Mode browser lists rows (U5; the U1a stub has none)
 // Once per Mode, spec rows for the skeleton the later cards build on:
-//   skeleton.size, skeleton.views, skeleton.find.*   960×640; the five view ids in order; findView round trips
+//   skeleton.size, skeleton.views, skeleton.find.*   960×640; the six view ids in order (v1.2's settings the sixth);
+//                                                     findView round trips
 //   skeleton.batch.{facade,host}                     a composite write (tapMany) is one batch on the facade (K2 #23)
 //   skeleton.teardown.{worker,gesture}               shutdown() stops the PreviewWorker, then closes a gesture (K2 #27)
 //   skeleton.preview.{sync,async}                    PreviewWorker completes a request inline (syncPreview) and on its
@@ -179,9 +180,9 @@ namespace
     void skeleton(Probe& P, const fcdsp::ModeEntry& entry)
     {
         const fcdsp::ModeDescriptor& desc = *entry.desc;
-        P.eq("skeleton.views", static_cast<int64_t>(ui::views().size()), 5);
-        constexpr std::array<std::string_view, 5> kIds { "panel", "chars.sidechain", "chars.colour", "modebrowser",
-                                                          "presetbrowser" };
+        P.eq("skeleton.views", static_cast<int64_t>(ui::views().size()), 6);
+        constexpr std::array<std::string_view, 6> kIds { "panel", "chars.sidechain", "chars.colour", "modebrowser",
+                                                          "presetbrowser", "settings" };   // settings: v1.2 (ADR-85)
         for (std::size_t i = 0; i < kIds.size() && i < ui::views().size(); ++i)
         {
             const ui::ViewSpec& v = ui::views()[i];

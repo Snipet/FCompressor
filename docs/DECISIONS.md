@@ -747,6 +747,41 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - Value controls (slots, the Mode latch, the preset strip's name) keep following the fingers.
   - `ui.presets` `scroll.*` holds the direction under both settings, the 1:1 travel at 150 % zoom, the clamp, the clip
     and the glide; `ui.dump --wheel <points>` renders a scrolled list for review.
+- **ADR-85 A settings screen: audio in detail, new-instance defaults, diagnostics (v1.2).** The user asked for a
+  dedicated settings screen with audio settings for advanced users and diagnostics. It is a third overlay beside the
+  two browsers (`Overlay::settings`, a tenth sub-view `ViewIndex::settings`, the view "settings"). It covers the whole
+  region between the header and the footer and behaves as a browser does: first in the hit order, the whole Tab order
+  while open, Esc and a click outside close it, the items it covers are hidden from accessibility, and it fades in and
+  out. `views/Settings.h` has the layout.
+
+  Decisions:
+  - **The entry is a gear right of the wordmark,** the header's second Tab stop, after the Mode latch, which stays the
+    panel's first. The footer has no room: the ZOOM spec line (480 px) fills the 554 px line that a SETTINGS cell would
+    shorten.
+  - **AUDIO · THIS INSTANCE** shows the three setup parameters that already exist, QUALITY, LOOKAHEAD and SIDECHAIN
+    (`quality`, `labudget`, `extkey`). Each has a table of what it costs: oversampling factor, filter, latency in samples,
+    the rate the engine runs at, and the lookahead's samples at the current rate. Below them are what the host routes
+    to the key input and the total latency the host is told. The cells write exactly what the display row's do: one
+    tap, and SetupWatcher applies the setup.
+  - **NEW INSTANCES · THIS COMPUTER** is new: QUALITY and LOOKAHEAD for an instance the host creates. They are machine
+    preferences (`kPrefNewQuality`, `kPrefNewLookahead` in `UiPreferences`' file). The processor reads them in its
+    constructor through a `PropertiesFile` of its own, since a host may construct it on any thread and `UiPreferences`
+    belongs to the message thread. A session or a state load then sets its own, and presets never carry these two.
+    `proc.diagnostics` holds this, including the rule that a damaged or out-of-range value leaves the table's default.
+  - **An offline-render quality was not added.** The engine's latency depends on QUALITY, and a latency change at the
+    start of a bounce is exactly what hosts compensate worst.
+  - **DIAGNOSTICS** has fifteen rows from the new `ProcessorFacade::diagnostics()`. It is an additive, defaulted virtual
+    and a `Diagnostics` struct: versions, format and host, rate, block, channels, the configured setup, the reported
+    latency, and a DSP load. The rows also use the frame state (audio running or stopped), the registry, `PresetAccess`
+    and, in the live editor, `EditorHost::diagnostics()` through `Panel::setRenderInfo` (display rate, zoom, backing
+    scale, dropped frames). FakeFacade returns fixed values, so no headless frame depends on the build or the version.
+  - **The DSP load is measured on the audio thread** around `EngineHost::process`: `juce::Time::getHighResolutionTicks`
+    (`mach_absolute_time`: no syscall, no lock) against the block's real time. It is smoothed over 0.5 s with a peak
+    falling over 2 s, and overruns are the blocks that took longer than real time. The values are relaxed atomics, and
+    prepareToPlay zeroes them. `proc.latency`'s allocation rows still read 0 on the audio thread.
+  - **COPY REPORT** puts the rows on the clipboard as text for a bug report. Headless it copies nothing.
+  - `FcmpProduct.h` gains `kFunkGuiVersion` and `kJuceVersion`. Probes: `ui.settings` (53 rows) and `proc.diagnostics`
+    (22 rows). The gear moves every Mode's `ui.*` goldens, and "settings" is a new golden view for every Mode.
 
 ## HardwareReverb migration
 

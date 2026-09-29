@@ -4,6 +4,7 @@
 
 #include "plugin/factory/FactoryBank.h"
 
+#include "fcdsp/engine/Oversampler.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/HostParams.h"
 
@@ -438,6 +439,33 @@ namespace fcmp::probe
     void FakeFacade::pushColumn(const fcdsp::HistoryColumn& c) { ring_->push(c); }
 
     void FakeFacade::setStateNotice(const StateNotice& n) noexcept { notice_ = n; }
+
+    Diagnostics FakeFacade::diagnostics() const
+    {
+        if (diagnostics_)
+            return *diagnostics_;
+        Diagnostics d;
+        d.version = "0.0.0";
+        d.funkgui = "0.0.0";
+        d.juce = "0.0.0";
+        d.prepared = true;
+        d.sampleRate = 48000.0;
+        d.maxBlock = 512;
+        d.mainIns = 2;
+        d.mainOuts = 2;
+        const fcdsp::RawParams raw = currentRaw();
+        const float q = ports_[fcdsp::idx(fcdsp::Pid::quality)]->plain();
+        d.quality = std::clamp(static_cast<int>(std::lround(q)), 0, 2);
+        d.budget = static_cast<int>(raw.budget);
+        d.latencySamples = fcdsp::kOs[d.quality].latency
+                         + fcdsp::lookaheadSamples(raw.budget, d.sampleRate);
+        d.loadAvg = 0.031f;
+        d.loadPeak = 0.078f;
+        d.blocks = 1000;
+        return d;
+    }
+
+    void FakeFacade::setDiagnostics(std::optional<Diagnostics> d) noexcept { diagnostics_ = d; }
 
     std::span<const FakeWrite> FakeFacade::writes() const noexcept { return writes_; }
 

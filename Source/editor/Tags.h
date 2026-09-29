@@ -125,7 +125,13 @@ namespace fcmp::ui::tag
     inline constexpr Tag meterDetail   = 334;   // METER_DETAIL    a meter plate's detail: screws, glass, shadows, the %
                                                 //                 scale, fine ticks, LED glow (live where it moves)
 
-    inline constexpr Tag last          = 334;
+    // ---- v1.2 (ADR-85) ---------------------------------------------------------------------------------------------------
+    inline constexpr Tag settingsBg    = 335;   // SETTINGS_BG     the settings overlay's ground, rules and divider
+    inline constexpr Tag settingsText  = 336;   // SETTINGS_TEXT   its headings, captions, tables and notes
+    inline constexpr Tag settingsValue = 337;   // SETTINGS_VALUE  a DIAGNOSTICS value (live where it moves)
+    inline constexpr Tag settingsGear  = 338;   // SETTINGS_GEAR   the header's gear, and COPY REPORT
+
+    inline constexpr Tag last          = 338;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -159,6 +165,8 @@ namespace fcmp::ui::tag
         { browserCurrent, "BROWSER_CURRENT" }, { browserPager, "BROWSER_PAGER" },
         { linkedBox, "LINKED_BOX" },         { modeRule, "MODE_RULE" },          { modeSwatch, "MODE_SWATCH" },
         { meterFace, "METER_FACE" },         { meterDetail, "METER_DETAIL" },
+        { settingsBg, "SETTINGS_BG" },       { settingsText, "SETTINGS_TEXT" },  { settingsValue, "SETTINGS_VALUE" },
+        { settingsGear, "SETTINGS_GEAR" },
     } };
 
     namespace detail
