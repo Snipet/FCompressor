@@ -722,6 +722,31 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     allows.
 
   With this Mode, Wave 2 (SPRINTS §5) is complete: 14 Modes.
+- **ADR-84 Lists scroll by the pixel, with the content (v1.2).** The user found the preset browser scrolling against a
+  Mac trackpad, "very sensitive and rigid". Three causes:
+  - **Direction.** Both browsers multiplied JUCE's delta by −1 when `isReversed` was set. That is the rule for a value
+    control (JUCE's Slider, FunkGui's RuleSlider): a knob follows the fingers whatever the system setting. JUCE's delta
+    already carries the system's direction, natural scrolling included, so a list must take it as it comes. Under
+    natural scrolling, the macOS default, the list ran against the fingers.
+  - **Rigidity.** The list moved in whole 20 px rows, so small travel did nothing and then jumped a row.
+  - **Sensitivity.** A trackpad delta was scaled to rows (12 rows per unit), unrelated to the fingers' travel, so a flick
+    and its momentum crossed the bank.
+
+  Decisions:
+  - The preset list keeps its offset in logical px. A precise (trackpad) delta moves it 1:1: JUCE's macOS delta is
+    `scrollingDelta / 512` points, divided by the UI zoom (ADR-68). The system's momentum events carry on the same way,
+    clamped at the ends.
+  - A wheel notch stays 3 rows (HR's value) and glides there (τ 0.05 s). Keys and a selection brought into view jump at
+    once, as before. The filter column moves a row per 18 px of trackpad travel.
+  - A row cut by the list's edge (y 88–308) is drawn clipped and is hit, listed and focused by the part that shows. The
+    clip is new in FunkGui v0.9.0: `Canvas::pushClip`/`popClip` crops recorded primitives on the CPU, interpolating
+    their local coordinates, so every pixel inside draws as before. The shader, the dump format and `SoftRaster` are
+    unchanged (`fg.canvas.clip`: identical pixels inside, ground outside). The browser pushes a clip only while a row is
+    cut, so a list at rest on a whole row draws the frame it drew before, and no golden moved.
+  - The Mode browser's pages follow the same direction rule, and a trackpad swipe with its momentum turns one page.
+  - Value controls (slots, the Mode latch, the preset strip's name) keep following the fingers.
+  - `ui.presets` `scroll.*` holds the direction under both settings, the 1:1 travel at 150 % zoom, the clamp, the clip
+    and the glide; `ui.dump --wheel <points>` renders a scrolled list for review.
 
 ## HardwareReverb migration
 

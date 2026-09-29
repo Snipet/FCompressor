@@ -13,7 +13,12 @@
 //               current one checked); a click on a row is exactly one apply of that index and keeps the browser open; a
 //               click on the current, unmodified row applies nothing (modified: one apply); a double-click applies once
 //               and closes; ↓ Home End apply as they move, Return closes without a second apply; filters (click, ← →,
-//               a11y); the wheel scrolls the list; type-ahead selects without applying; Esc closes.
+//               a11y); the wheel scrolls the list (a notch glides 3 rows); type-ahead selects without applying; Esc
+//               closes.
+//   scroll.*    (ADR-84) a trackpad scrolls the list by the pixel with the content whatever `reversed` says (natural
+//               scrolling), 1:1 at the UI zoom, clamped; a row the list's edge cuts is listed by the part that shows
+//               and its primitives are clipped to the list (y 88–308); a notch glides at full rate and lands on its row;
+//               nothing is applied.
 //   saveas.*    the strip's SAVE opens the browser with the name pre-filled and selected (the store's unique name
 //               announced when it is taken); typing replaces it; Return is one saveAs(name, category) and the browser
 //               closes (opened for the save), the strip showing the new preset; Esc cancels and keeps the browser open;
@@ -506,18 +511,19 @@ namespace
             P.eq("browser.filter_items", radios, 3 + 5);          // ALL FACTORY USER, BUS DRUMS INIT MASTER VOCAL
         }
         {
-            // The wheel scrolls the list (3 rows a notch, clamped); type-ahead selects without applying; Esc closes.
+            // The wheel scrolls the list (3 rows a notch, glided, clamped); type-ahead selects without applying; Esc
+            // closes.
             Rig r;
             openBrowser(r);
             r.host->wheel(500.0f, 200.0f, -1.0f);
-            r.host->tick(1, kDt);
+            r.settle();
             const bool down3 = rows(r).front().title == "Drum Punch";
             r.host->wheel(500.0f, 200.0f, -1.0f);
-            r.host->tick(1, kDt);
+            r.settle();
             const bool clamp = rows(r).front().title == "Master -1 dBTP" && rows(r).back().title == "Vox Chain";
             r.host->wheel(500.0f, 200.0f, 1.0f);
             r.host->wheel(500.0f, 200.0f, 1.0f);
-            r.host->tick(1, kDt);
+            r.settle();
             const bool up = rows(r).front().title == "Init";
             P.eq("browser.wheel", b(down3 && clamp && up && r.presets().applies() == 0), 1);
             r.keys("s");
@@ -528,6 +534,60 @@ namespace
             r.keys("escape");
             r.settle();
             P.eq("browser.escape", b(!r.open()), 1);
+        }
+        {
+            // ADR-84: the trackpad moves the list by the pixel, with the content.
+            Rig r;
+            openBrowser(r);
+            const auto swipe = [&r](float points, bool reversed) {
+                funkgui::WheelEvent w;
+                w.x = 500.0f;
+                w.y = 200.0f;
+                w.dy = -points / 512.0f;                         // JUCE on macOS: scrollingDeltaY / 512; < 0 = content up
+                w.smooth = true;
+                w.reversed = reversed;
+                const bool used = r.panel->wheel(w);
+                r.host->tick(1, kDt);
+                return used;
+            };
+            const auto front = [&r] {
+                const std::vector<funkgui::A11yItem> v = rows(r);
+                return v.empty() ? funkgui::A11yItem{} : v.front();
+            };
+            // Natural scrolling (reversed): fingers up by 30 pt move the list up 30 px; row 1 shows its lower 10 px.
+            const bool natural = swipe(30.0f, true) && front().title == "Gentle Glue" && front().bounds.y == 88.0f
+                                 && front().bounds.h == 10.0f;
+            P.eq("scroll.natural_follows_content", b(natural), 1);
+            int outside = 0, cutAtEdge = 0;
+            for (const funkgui::Prim& p : r.host->draw().prims)
+                if (p.tag == ui::tag::browserRow || p.tag == ui::tag::browserCurrent)
+                {
+                    outside += p.y0 < 88.0f || p.y1 > 308.0f ? 1 : 0;
+                    cutAtEdge += p.y0 == 88.0f || p.y1 == 308.0f ? 1 : 0;
+                }
+            P.eq("scroll.rows_clipped_to_list", outside, 0);
+            P.ge("scroll.rows_cut_at_edge", cutAtEdge, 2);
+            // The same fingers without natural scrolling: the same way (JUCE's delta already carries the setting).
+            P.eq("scroll.classic_same_way", b(swipe(10.0f, false) && front().title == "Vocal Leveler"
+                                              && front().bounds.h == 20.0f), 1);
+            // At a 150 % UI zoom 30 pt are 20 logical px.
+            r.host->setZoom({ 100, 125, 150, 175 }, 150);
+            P.eq("scroll.zoom_one_to_one", b(swipe(30.0f, true) && front().title == "Drum Punch"
+                                             && front().bounds.h == 20.0f), 1);
+            r.host->setZoom({}, 100);
+            // Clamped at both ends.
+            const bool end = swipe(1000.0f, true) && front().title == "Master -1 dBTP" && rows(r).back().title == "Vox Chain"
+                             && rows(r).back().bounds.bottom() == 308.0f;
+            const bool top = swipe(-1000.0f, true) && front().title == "Init" && front().bounds.y == 88.0f;
+            P.eq("scroll.clamped", b(end && top), 1);
+            // A notch glides: at full rate until it lands on its row.
+            r.host->wheel(500.0f, 200.0f, -1.0f);
+            r.host->tick(1, kDt);
+            const bool gliding = r.panel->wantsFullRate() && front().title != "Drum Punch";
+            r.settle();
+            P.eq("scroll.notch_glides", b(gliding && front().title == "Drum Punch" && front().bounds.h == 20.0f
+                                          && !r.panel->wantsFullRate()), 1);
+            P.eq("scroll.applies_nothing", r.presets().applies(), 0);
         }
     }
 
