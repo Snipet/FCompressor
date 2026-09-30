@@ -34,7 +34,7 @@ struct DiodeAsym {
         float dcA = 0;                          // DC blocker pole, e^(-2 pi fc / fsOs)
     };
     struct State {
-        adaa::Channel ch{};
+        detail::DrivenChannel ch{};
         detail::DcBlock dc{};
     };
 

@@ -99,9 +99,10 @@ Console E exposed three things in the shared probes and stages:
   exponential.
 - **`dsp.time`'s GR OFF rows:** the Rig applies makeup unsmoothed, so an AUTO makeup that follows GR OFF read as a step.
   The host ramps that change. The rows now clear `kEngAutoMakeup`.
-- **`VoiceDrive` (TubeSym.h):** it steps a moving DRIVE once per control tick. Against this Mode's clean output that
-  read 4.5 dB on `dsp.zipper`'s DRIVE edge (limit 3). Other Modes mask it with their own colour. Console E has no
-  colour stage, so it has no DRIVE. Smoothing DRIVE per sample is a separate change for every Mode with DRIVE.
+- **`VoiceDrive` (TubeSym.h):** it stepped a moving DRIVE once per colour call. Against this Mode's clean output that
+  read 4.5 dB on `dsp.zipper`'s DRIVE edge (limit 3). Other Modes masked it with their own colour. Fixed for every
+  Mode by ADR-86 (DRIVE glides per sample; with a temporary live DRIVE this Mode then read under 0.8 dB). Console E
+  still has no DRIVE: the channel has no drive control.
 
 ## Known limits
 

@@ -32,7 +32,7 @@ struct VcaBus {
     static constexpr float kIn = 0.1f;          // [H] shaper input at 0 dB drive per unit of signal
 
     struct Coeffs { detail::VoiceDrive drive{}; };
-    struct State { adaa::Channel ch{}; };
+    struct State { detail::DrivenChannel ch{}; };
 
     static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
     {

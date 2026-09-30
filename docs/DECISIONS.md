@@ -782,6 +782,20 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - **COPY REPORT** puts the rows on the clipboard as text for a bug report. Headless it copies nothing.
   - `FcmpProduct.h` gains `kFunkGuiVersion` and `kJuceVersion`. Probes: `ui.settings` (53 rows) and `proc.diagnostics`
     (22 rows). The gear moves every Mode's `ui.*` goldens, and "settings" is a new golden view for every Mode.
+- **ADR-86 DRIVE glides per sample in every driven voice (v1.2).** Console E found that the shared driven voice
+  (`detail::VoiceDrive` and `detail::processDriven`, TubeSym.h) held its input scale k for a whole `colour()` call. The
+  engine designs k per control tick but runs colour once per chunk, so a moving DRIVE stepped the residual's level at
+  the chunk rate. Against Console E's clean, RMS-detected output that read 4.5 dB (ECO) and 7.0 dB (HQ) on
+  `dsp.zipper`'s DRIVE edge (limit 3). Other Modes masked it under their own colour. The user left the call to the lead.
+  - **k now glides linearly across each call from where the last one ended,** the rule TubeTransformer, TubePushPull
+    and FetColour's ALL already follow. The last k lives in the new `detail::DrivenChannel`, which replaces
+    `adaa::Channel` in the six driven voices' states (TubeSym, DiodeAsym, Bright, VcaBus, OctoDist, LoudClip, whose
+    clip level moves with THRESHOLD). A static DRIVE takes exactly k and 1/k, so the steady output is bit-identical:
+    `dsp.print`, `dsp.static` and every other golden held; only `zipper.ramp.drive.err_db` moved, 8 to 9 dB better on
+    Bus G and Octo.
+  - **Checked where it failed:** with a temporary live DRIVE on Console E (VcaBus, not committed), the DRIVE edge read
+    −0.76 dB (ECO), 0.79 dB (STD) and −0.41 dB (HQ), all under the limit.
+  - **Console E keeps DRIVE n/a.** The channel it models has no drive control, so the fix does not reopen the slot.
 
 ## HardwareReverb migration
 

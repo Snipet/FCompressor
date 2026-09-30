@@ -15,8 +15,11 @@
 // fundamental gain against that curve (colourStatic = true: the shape does not depend on GR, so grDb is ignored).
 // drive is smoothed per control tick (01 §5.1: "driveDb is smoothed per tick by each engine's colour stage"): a 20 ms
 // one-pole in dB at fs / kTickSamples, landing exactly on the target; a value-initialised Coeffs lands at once (the
-// ModeEngine convention for snapParams and the analysis entry points). The process runs at the OS rate (StageCtx::fsOs)
-// in place, in sub-blocks of 64 samples through a stack buffer.
+// ModeEngine convention for snapParams and the analysis entry points). The engine runs colour once per chunk after the
+// chunk's ticks, so k then glides linearly across each process() call from where the last one ended (DrivenChannel::k;
+// TubeTransformer's rule, ADR-86): a moving DRIVE never steps the residual's level between samples, and a static one
+// takes exactly k and 1/k (the steady output is bit-identical to a constant scale). The process runs at the OS rate
+// (StageCtx::fsOs) in place, in sub-blocks of 64 samples through a stack buffer.
 //
 // TUBE: f = tanh (adaa::Tanh), kIn = 1/2 [H]: at 0 dB drive a 0 dBFS sine drives the shaper to 0.5 (about 2 % H3), a
 // -18 dBFS one to 0.06 (0.03 %). Constants and their reasons: docs/modes/clean.md.
@@ -79,22 +82,52 @@ struct NoPost {
     float operator()(float r) const noexcept FCDSP_NONBLOCKING { return r; }
 };
 
-// y = x + post(A(k x) - k x) / k over one channel in place; ch carries the ADAA state (in the shaper's u domain).
+// A driven voice's per-channel state: the ADAA carry (in the shaper's u domain) and the input scale the last call
+// ended on (0: none yet, so the first call after a reset takes the designed k at once).
+struct DrivenChannel {
+    adaa::Channel adaa{};
+    float k = 0;
+};
+
+// y = x + post(A(k x) - k x) / k over one channel in place, k gliding from ch.k to d.k across the call (header comment).
 template <class S, class Post>
-inline void processDriven(const S& shape, const VoiceDrive& d, adaa::Channel& ch, float* x, int n,
+inline void processDriven(const S& shape, const VoiceDrive& d, DrivenChannel& ch, float* x, int n,
                           Post&& post) noexcept FCDSP_NONBLOCKING
 {
     constexpr int kBlock = 64;
     alignas(16) float u[kBlock];
+    if (n <= 0)
+        return;
+    const float k0 = ch.k > 0.0f ? ch.k : d.k, k1 = d.k;
+    ch.k = k1;
+    if (k0 == k1)                                       // a static DRIVE: exactly k and 1/k
+    {
+        for (int off = 0; off < n; off += kBlock)
+        {
+            const int m = n - off < kBlock ? n - off : kBlock;
+            float* const xs = x + off;
+            for (int i = 0; i < m; ++i)
+                u[i] = d.k * xs[i];
+            adaa::process(shape, ch.adaa, u, m);
+            for (int i = 0; i < m; ++i)
+                xs[i] = xs[i] + post(u[i] - d.k * xs[i]) * d.invK;
+        }
+        return;
+    }
+    alignas(16) float kv[kBlock];
+    const float dk = (k1 - k0) / static_cast<float>(n);
     for (int off = 0; off < n; off += kBlock)
     {
         const int m = n - off < kBlock ? n - off : kBlock;
         float* const xs = x + off;
         for (int i = 0; i < m; ++i)
-            u[i] = d.k * xs[i];
-        adaa::process(shape, ch, u, m);
+        {
+            kv[i] = off + i + 1 < n ? k0 + dk * static_cast<float>(off + i + 1) : k1;
+            u[i] = kv[i] * xs[i];
+        }
+        adaa::process(shape, ch.adaa, u, m);
         for (int i = 0; i < m; ++i)
-            xs[i] = xs[i] + post(u[i] - d.k * xs[i]) * d.invK;
+            xs[i] = xs[i] + post(u[i] - kv[i] * xs[i]) / kv[i];
     }
 }
 
@@ -111,7 +144,7 @@ struct TubeSym {
     static constexpr float kIn = 0.5f;          // [H] shaper input at 0 dB drive per unit of signal
 
     struct Coeffs { detail::VoiceDrive drive{}; };
-    struct State { adaa::Channel ch{}; };
+    struct State { detail::DrivenChannel ch{}; };
 
     static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
     {
