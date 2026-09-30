@@ -208,7 +208,7 @@ namespace fcmp
                         }
                 }
             }
-            history_.setPendingCompare(c);                       // taken at the next message-thread access
+            history_.setLoadedCompare(c);                        // the slots are the loaded ones at once
         };
         setup_.start();
     }
@@ -402,6 +402,9 @@ namespace fcmp
     // and the snapshot is discarded (the previous BlockParams stay). endBatch's release decrement publishes the batch's
     // writes to a block that sees depth 0; the outermost end raises the snap, which the audio thread passes to the
     // engine AFTER its parameter pull, so the snap always applies to the new set (HR's render-order fix).
+    // ADR-91: the edit history's batches (undo, redo, an A/B switch) end without asking for the snap, so what they
+    // write ramps like any edit (20 ms); the outermost end raises it when any batch in the nest asked for it (a state
+    // load on a host thread may overlap an undo on the message thread).
 
     void Processor::beginBatch()
     {
@@ -411,15 +414,19 @@ namespace fcmp
         std::atomic_thread_fence(std::memory_order_release);
     }
 
-    void Processor::endBatch()
+    void Processor::endBatch() { finishBatch(true); }
+
+    void Processor::finishBatch(bool snap)
     {
+        if (snap && batch_.load(std::memory_order_relaxed) > 0)
+            snapWanted_.store(true, std::memory_order_relaxed);  // before the decrement, whose release publishes it
         int depth = batch_.load(std::memory_order_relaxed);
         while (depth > 0 && !batch_.compare_exchange_weak(depth, depth - 1, std::memory_order_acq_rel,
                                                           std::memory_order_relaxed))
         {
         }
         jassert(depth > 0);                                       // endBatch without beginBatch: ignored
-        if (depth == 1)
+        if (depth == 1 && snapWanted_.exchange(false, std::memory_order_acq_rel))
             snapPending_.store(true, std::memory_order_release);
         if (depth > 0)
             history_.batchEnded();                               // ADR-91
@@ -473,7 +480,7 @@ namespace fcmp
     }
 
     void Processor::HistoryHost::beginBatch() { p_.beginBatch(); }
-    void Processor::HistoryHost::endBatch() { p_.endBatch(); }
+    void Processor::HistoryHost::endBatch() { p_.finishBatch(false); }   // no snap: the writes ramp
     std::string Processor::HistoryHost::presetUuid() const { return p_.presets_ ? p_.presets_->currentUuid() : std::string(); }
     void Processor::HistoryHost::restorePreset(const std::string& uuid)
     {

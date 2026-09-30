@@ -15,7 +15,9 @@
 //
 // Undo writes the entry's before values (redo its after values) as exact raw writes, inside one batch, each announced
 // to the host as a gesture, then puts the preset identity back (PresetAccess::restoreCurrent); nothing it writes is
-// recorded. It is refused while a bracket is open. At most kCapacity entries; a new entry drops the redo branch.
+// recorded. The processor's Host ends that batch without the engine snap, so the writes ramp like any edit. It is
+// refused while a bracket is open (the editor closes an open wheel burst first). Save As is not an entry: it names the
+// current sound, so the steps either side of it take the new uuid (undo, then redo, lands on the saved preset). At most kCapacity entries; a new entry drops the redo branch.
 //
 // A/B. Two slots, each a sound (the tracked values) and a preset uuid; A is active at first and B unused. Selecting the
 // other slot stores the current sound into the active one, starts B as a copy of A the first time, writes the selected
@@ -23,9 +25,11 @@
 // is stored first, so no edit is lost). copySlot() puts the current sound into the other slot. The inactive slot is
 // saved in the session (<COMPARE>, State.h's hooks) once B has been used, and comes back with it.
 //
-// Sessions. The host's loadSerial() bumps on every state load (any thread); at its next message-thread call the history
-// sees it, drops every entry and takes the compare state that load handed over (setPendingCompare, any thread). The
-// compare state a save writes is read under a mutex (compareForSave, any thread).
+// Sessions. Every accepted state load hands the history its compare state (setLoadedCompare, any thread, under a
+// mutex): the slots are the loaded ones at once, so a save that follows (compareForSave, any thread, the same mutex)
+// writes them back even when no editor ever opened. The host's loadSerial() bumps after the load; at its next
+// message-thread call the history sees it and drops every entry. A bracket still open across a load (a wheel burst)
+// records nothing: the load started a new history.
 #pragma once
 
 #include "plugin/ProcessorFacade.h"
@@ -37,7 +41,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -93,7 +96,7 @@ namespace fcmp
 
         // Sessions (any thread).
         Compare compareForSave() const;
-        void    setPendingCompare(const Compare&);
+        void    setLoadedCompare(const Compare&);        // a load's <COMPARE>, or its absence (used false)
 
     private:
         using Values = std::array<float, fcdsp::kNumParams>;
@@ -116,13 +119,14 @@ namespace fcmp
             std::string preset;
         };
 
-        void   sync() const;                             // a state load since the last call: reset, take the compare
+        void   sync() const;                             // a state load since the last call: drop every entry
         Values capture() const;
         void   began(bool batch, fcdsp::Pid);
         void   ended();
         void   push(Entry&&);
         void   applyValues(const Values&, const std::string& preset);   // exact writes of the differing tracked values
         void   applyChanges(const Entry&, bool undo);
+        void   adoptIdentity();                          // a Save As since: the current sound's steps take its uuid
         void   switchTo(int slot);                       // store the current sound, then load `slot` (not recorded)
 
         Host& host_;
@@ -131,12 +135,14 @@ namespace fcmp
         mutable std::size_t        cur_ = 0;             // entries_[0, cur_) are undoable, [cur_, size) redoable
         mutable uint32_t           seenLoad_ = 0;
         mutable uint32_t           revision_ = 1;
-        mutable std::mutex         compareMutex_;        // slots_, used_, active_ against a save on another thread
-        mutable std::array<Slot, 2> slots_{};
-        mutable std::array<bool, 2> used_{ true, false };
-        mutable int                active_ = 0;
-        mutable std::optional<Compare> pending_;         // set by a load (under compareMutex_)
+        // slots_, used_ and active_ only under compareMutex_: a load (setLoadedCompare) or a save (compareForSave) may
+        // run on a host thread.
+        mutable std::mutex         compareMutex_;
+        std::array<Slot, 2>        slots_{};
+        std::array<bool, 2>        used_{ true, false };
+        int                        active_ = 0;
         int         depth_ = 0;                          // open brackets
+        uint32_t    loadAtBegin_ = 0;                    // loadSerial() at the outermost begin
         bool        batchSeen_ = false;
         bool        applying_ = false;
         Values      before_{};

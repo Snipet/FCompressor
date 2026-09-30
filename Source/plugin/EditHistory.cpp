@@ -58,19 +58,6 @@ namespace fcmp
         seenLoad_ = load;
         entries_.clear();
         cur_ = 0;
-        const std::lock_guard<std::mutex> lock(compareMutex_);
-        active_ = 0;
-        used_ = { true, false };
-        slots_ = {};
-        if (pending_.has_value() && pending_->used)
-        {
-            const int inactive = pending_->active == 1 ? 0 : 1;
-            active_ = inactive == 0 ? 1 : 0;
-            used_ = { true, true };
-            slots_[static_cast<std::size_t>(inactive)].values = pending_->values;
-            slots_[static_cast<std::size_t>(inactive)].preset = pending_->preset;
-        }
-        pending_.reset();
         ++revision_;
     }
 
@@ -89,10 +76,20 @@ namespace fcmp
         return c;
     }
 
-    void EditHistory::setPendingCompare(const Compare& c)
+    void EditHistory::setLoadedCompare(const Compare& c)
     {
         const std::lock_guard<std::mutex> lock(compareMutex_);
-        pending_ = c;
+        active_ = 0;
+        used_ = { true, false };
+        slots_ = {};
+        if (c.used)
+        {
+            active_ = c.active == 1 ? 1 : 0;
+            used_ = { true, true };
+            Slot& inactive = slots_[static_cast<std::size_t>(active_ == 0 ? 1 : 0)];
+            inactive.values = c.values;
+            inactive.preset = c.preset;
+        }
     }
 
     // ---- recording --------------------------------------------------------------------------------------------------
@@ -108,13 +105,14 @@ namespace fcmp
 
     void EditHistory::began(bool batch, Pid pid)
     {
-        if (applying_ || !host_.onMessageThread())
+        if (!host_.onMessageThread() || applying_)       // the thread first: applying_ is the message thread's
             return;
         sync();
         if (depth_++ == 0)
         {
             before_ = capture();
             presetBefore_ = host_.presetUuid();
+            loadAtBegin_ = host_.loadSerial();
             touched_.reset();
             batchSeen_ = false;
         }
@@ -126,10 +124,12 @@ namespace fcmp
 
     void EditHistory::ended()
     {
-        if (applying_ || !host_.onMessageThread() || depth_ == 0)
+        if (!host_.onMessageThread() || applying_ || depth_ == 0)
             return;
         if (--depth_ > 0)
             return;
+        if (host_.loadSerial() != loadAtBegin_)
+            return;                                      // a load came in while it was open: the history starts over
         const Values after = capture();
         Entry e;
         std::vector<std::pair<Pid, bool>> changed;
@@ -200,11 +200,24 @@ namespace fcmp
         host_.restorePreset(undo ? e.presetBefore : e.presetAfter);
     }
 
+    // The identity the history last left may have been renamed since, by what it does not record: Save As makes the
+    // live sound a new preset (a save over another preset likewise). The sound between the steps either side of the
+    // current position is that preset now, so redo comes back to it (and undo from it knows it).
+    void EditHistory::adoptIdentity()
+    {
+        const std::string now = host_.presetUuid();
+        if (cur_ > 0 && !entries_[cur_ - 1].abSwitch)
+            entries_[cur_ - 1].presetAfter = now;
+        if (cur_ < entries_.size() && !entries_[cur_].abSwitch)
+            entries_[cur_].presetBefore = now;
+    }
+
     bool EditHistory::undo()
     {
         sync();
         if (depth_ > 0 || cur_ == 0)
             return false;
+        adoptIdentity();
         const Entry& e = entries_[cur_ - 1];
         applying_ = true;
         if (e.abSwitch)
@@ -222,6 +235,7 @@ namespace fcmp
         sync();
         if (depth_ > 0 || cur_ >= entries_.size())
             return false;
+        adoptIdentity();
         const Entry& e = entries_[cur_];
         applying_ = true;
         if (e.abSwitch)
@@ -239,12 +253,14 @@ namespace fcmp
     int EditHistory::compareSlot() const
     {
         sync();
+        const std::lock_guard<std::mutex> lock(compareMutex_);
         return active_;
     }
 
     bool EditHistory::slotUsed(int slot) const
     {
         sync();
+        const std::lock_guard<std::mutex> lock(compareMutex_);
         return slot >= 0 && slot < 2 && used_[static_cast<std::size_t>(slot)];
     }
 
@@ -281,12 +297,12 @@ namespace fcmp
 
     void EditHistory::selectSlot(int slot)
     {
-        sync();
-        if (slot < 0 || slot > 1 || slot == active_ || depth_ > 0)
+        const int from = compareSlot();                  // syncs
+        if (slot < 0 || slot > 1 || slot == from || depth_ > 0)
             return;
         Entry e;
         e.abSwitch = true;
-        e.abFrom = active_;
+        e.abFrom = from;
         e.abTo = slot;
         e.name = "A/B";
         applying_ = true;

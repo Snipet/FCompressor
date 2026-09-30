@@ -204,6 +204,7 @@ namespace fcmp
         // raw -> resolveSlot -> resolve -> BlockParams (scratch: a Resolution the caller owns)
         static void buildBlockParams(const fcdsp::RawParams&, const Globals&, fcdsp::Resolution& scratch,
                                      fcdsp::BlockParams& out) noexcept;
+        void finishBatch(bool snap);                             // endBatch; the history's batches pass false
         void pullBlockParams() noexcept FCDSP_NONBLOCKING;       // audio thread: skipped while a batch is open
         void syncUi() noexcept;                                  // message thread: adopt a loaded UiState, or mirror ui_
         void publishLoadedUi(const UiState&) noexcept;           // any thread: a load's UiState, next generation
@@ -234,6 +235,7 @@ namespace fcmp
         std::atomic<int> batch_{0};
         std::atomic<std::uint32_t> batchEpoch_{0};
         std::atomic<bool> snapPending_{false};                   // endBatch -> requestSnap at the next block start
+        std::atomic<bool> snapWanted_{false};                    // a batch in the open nest asked for the snap
 
         // setup (prepareToPlay / SetupWatcher). cfg_ and configured_ under setupMutex_; the atomics publish the
         // configured quality/budget, latency and rate to the audio thread and to readers on any thread.
