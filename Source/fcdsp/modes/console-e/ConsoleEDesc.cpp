@@ -22,9 +22,8 @@
 //   signal by up to 18 (1 - 1/R) dB here; so physical() clears kEngAutoMakeup (Brickwall's pattern) and adds this
 //   makeup to makeupDb, which the host smooths like any makeup.
 // - No colour stage (hasColour = false; VOICE and DRIVE n/a): the channel VCA is clean and has no drive control. Bus
-//   G's VcaBus at 0 dB drive adds H3 near -105 dB at 0 VU, nothing a colour slot could show, and a moving DRIVE's
-//   per-tick steps (VoiceDrive) read above dsp.zipper's limit against this Mode's clean RMS-detected output
-//   (docs/modes/console-e.md).
+//   G's VcaBus at 0 dB drive adds H3 near -105 dB at 0 VU, nothing a colour slot could show. (A moving DRIVE's steps,
+//   which first showed here, are fixed for every Mode by ADR-86; docs/modes/console-e.md.)
 // - Not modelled (docs/modes/console-e.md): the expander/gate, the E module's SC EQ routing, and the E/G revision
 //   difference ([U]).
 // - Mode-local helpers live here in an unnamed namespace (ModeKit.h is frozen); the tables are namespace-scope

@@ -55,7 +55,7 @@ struct OctoDistT {
         float hpG = 0, hpD = 0;                 // SVF: g and 1 / (1 + g (k + g)), k = 1 / Q = 1
     };
     struct State {
-        adaa::Channel ch{};
+        detail::DrivenChannel ch{};
         detail::DcBlock dc{};
         float z1 = 0;                           // one-pole HP integrator
         float s1 = 0, s2 = 0;                   // SVF integrators

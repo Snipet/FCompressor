@@ -62,7 +62,7 @@ struct LoudClip {
         float kTick = 0;
         bool primed = false;
     };
-    struct State { adaa::Channel ch{}; };
+    struct State { detail::DrivenChannel ch{}; };
 
     static void design(Coeffs& c, const EngineParams& p, const StageCtx& x) noexcept FCDSP_NONBLOCKING
     {
