@@ -62,6 +62,11 @@
  5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
  2 Next preset              528,14,24,32
  2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 2 Undo                     504,43,20,16         [off] help=UNDO   NOTHING TO UNDO
+ 2 Redo                     526,43,20,16         [off] help=REDO   NOTHING TO REDO
+ 3 Compare                  562,43,38,16         value=A help=Two sounds to compare; its menu copies one into the other
+ 4 A                        562,43,18,16         checked
+ 4 B                        582,43,18,16         unchecked
  7 Footer                   40,600,554,20        [ro]
  3 Zoom                     638,601,140,16       value=ZOOM 100 %
  4 ZOOM 100 %               638,601,32,16        checked

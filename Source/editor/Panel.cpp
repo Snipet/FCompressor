@@ -10,12 +10,14 @@
 #include "editor/views/Band.h"
 #include "editor/views/CharScreen.h"
 #include "editor/views/DisplayRow.h"
+#include "editor/views/EditControls.h"
 #include "editor/views/Footer.h"
 #include "editor/views/Header.h"
 #include "editor/views/ModeBrowser.h"
 #include "editor/views/PresetBrowser.h"
 #include "editor/views/PresetStrip.h"
 #include "editor/views/Settings.h"
+#include "editor/views/AnimationModel.h"
 #include "editor/views/SlotGrid.h"
 #include "editor/views/ValueEntry.h"
 
@@ -30,6 +32,7 @@
 #include <funkgui/core/Theme.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/params/GestureController.h>
+#include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
 
 #include <array>
@@ -199,6 +202,8 @@ namespace fcmp::ui
           ctx_(*this, facade, options_, funkgui::FontService::get().atlas(), *history_, *preview_)
     {
         tag::registerTagNames();
+        AnimationModel::apply();                                 // ADR-90: the machine's ANIMATION speed
+        prefsRevision_ = funkgui::UiPreferences::get().revision();
         for (std::size_t i = 0; i < fcdsp::kNumModeParams; ++i)
         {
             slots_[i] = std::make_unique<SlotModel>(facade_, ctx_.frame, static_cast<fcdsp::Pid>(i));
@@ -436,6 +441,13 @@ namespace fcmp::ui
         if (shutDown_)
             return;
         ctx_.seconds += static_cast<double>(dt);
+        // ADR-90: the machine's ANIMATION speed, again whenever the preferences change (the host re-reads the file
+        // when an editor opens, after this Panel was built; another window in this process may set it).
+        if (const uint32_t prefs = funkgui::UiPreferences::get().revision(); prefs != prefsRevision_)
+        {
+            prefsRevision_ = prefs;
+            AnimationModel::apply();
+        }
         refreshFrame(dt);
         history_->drain(facade_.history());
         // ADR-89: a field whose view is no longer shown (the screen changed under it) closes without writing.
@@ -451,7 +463,7 @@ namespace fcmp::ui
             colourAmt_ = colourFrom_ == colourTo_ ? 1.0f : 0.0f;
         }
         if (colourAmt_ < 1.0f)
-            colourAmt_ = std::min(1.0f, colourAmt_ + dt / layout::kModeColourS);
+            colourAmt_ = std::min(1.0f, colourAmt_ + AnimationModel::scaledStep(dt, layout::kModeColourS));   // ADR-90
         overlayAmt_ = funkgui::ease::toward(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f, dt,
                                             layout::browser::kOpenTau, layout::chars::kScreenFadeSnap);
         if (overlayAmt_ <= 0.0f && overlay_ == Overlay::none)
@@ -590,6 +602,7 @@ namespace fcmp::ui
             }
             views_[static_cast<std::size_t>(ctx_.textEntry)]->endTextEntry(true);   // elsewhere: the value is set
         }
+        ctx_.typedTarget = 0;                                    // ADR-89: a value control's press sets it again
         if (overlay_ != Overlay::none && !overlayArea(overlay_).contains(ctx_.pointer))
         {
             closeOverlay();                                      // 02 §8.6: clicking outside cancels
@@ -632,7 +645,11 @@ namespace fcmp::ui
     {
         ctx_.pointer = { e.x, e.y };
         if (ctx_.textEntry >= 0)                                 // ADR-89: the wheel sets an open field's value first
+        {
+            if (e.inertial)
+                return true;                                     // a flick's momentum is not a new wheel: nothing
             views_[static_cast<std::size_t>(ctx_.textEntry)]->endTextEntry(true);
+        }
         const int v = hitView(ctx_.pointer);
         return v >= 0 && views_[static_cast<std::size_t>(v)]->wheel(e);
     }
@@ -680,13 +697,33 @@ namespace fcmp::ui
 
     bool Panel::key(const funkgui::KeyEvent& e)
     {
-        // ADR-89: an open typed-value field takes every key (Return and Tab set the value, Esc cancels); a Tab that set
-        // it then moves the focus as usual.
+        const bool undoChord = e.key == funkgui::Key::character && e.mods.cmd && !e.mods.ctrl && !e.mods.alt
+                               && (e.ch == U'z' || e.ch == U'Z');
+        // ADR-89: an open typed-value field takes the keys (Return and Tab set the value, Esc cancels); a Tab that set
+        // it then moves the focus on, also from a control a click focused. Cmd-Z takes the typing back (the field
+        // closes, nothing is written); the host's other Cmd and Ctrl chords pass, as from the preset browser's edit.
         if (ctx_.textEntry >= 0)
         {
-            views_[static_cast<std::size_t>(ctx_.textEntry)]->key(e);
+            const auto te = static_cast<std::size_t>(ctx_.textEntry);
+            if (undoChord)
+            {
+                views_[te]->endTextEntry(false);
+                return true;
+            }
+            if (e.key == funkgui::Key::character && (e.mods.cmd || e.mods.ctrl))
+                return false;
+            views_[te]->key(e);
             if (e.key != funkgui::Key::tab || ctx_.textEntry >= 0)
                 return true;
+            ctx_.focusVisible = true;
+        }
+        // ADR-91: Cmd-Z undoes the editor's last edit, Shift-Cmd-Z redoes it, wherever the focus is on the panel (an
+        // open browser or the settings screen covers the controls: the key is theirs, or the host's). With nothing to
+        // take back the host keeps the key (its own undo).
+        if (undoChord && overlay_ == Overlay::none)
+        {
+            EditAccess& h = EditControls::edits(ctx_);
+            return e.mods.shift ? h.redo() : h.undo();
         }
         if (e.key == funkgui::Key::tab)
             return moveFocus(e.mods.shift ? -1 : 1);             // false without a Tab stop: the host keeps Tab
@@ -721,8 +758,10 @@ namespace fcmp::ui
             if (v >= 0 && v < kSubViewCount && live(static_cast<ViewIndex>(v)))
                 return views_[static_cast<std::size_t>(v)]->key(e);
         }
-        // ADR-89: a value control a click focused (the ring hidden) takes the keys that open a typed-value field.
-        if (ctx_.focus != 0 && !ctx_.focusVisible && ValueEntry::opens(e))
+        // ADR-89: a value control the last press focused (the ring hidden) takes the keys that open a typed-value
+        // field; not under an open browser or the settings screen, which hide it.
+        if (ctx_.focus != 0 && ctx_.focus == ctx_.typedTarget && !ctx_.focusVisible && overlay_ == Overlay::none
+            && ValueEntry::opens(e))
         {
             const int v = viewIndexOf(ctx_.focus);
             if (v >= 0 && v < kSubViewCount && live(static_cast<ViewIndex>(v))

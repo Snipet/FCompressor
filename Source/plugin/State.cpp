@@ -258,6 +258,8 @@ namespace fcmp
         ui.setProperty(kCharExpandedAttr, ctx.ui.charExpanded ? 1 : 0, nullptr);
         ui.setProperty(kScTabAttr, ctx.ui.scTab == ScTab::colour ? kScTabColour : kScTabSidechain, nullptr);
         tree.appendChild(ui, nullptr);
+        if (ctx.hooks.writeCompare)                                 // ADR-91: after <UI>, only once B was used
+            ctx.hooks.writeCompare(tree);
 
         // 5.
         if (const std::unique_ptr<juce::XmlElement> xml = tree.createXml())
@@ -374,6 +376,8 @@ namespace fcmp
             if (ctx.hooks.readPreset)
                 ctx.hooks.readPreset(tree);
             ctx.ui = readUi(tree.getChildWithName(kUiType));
+            if (ctx.hooks.readCompare)                              // ADR-91: every load, the child or its absence
+                ctx.hooks.readCompare(tree);
         }
         ctx.notice = notice;
     }

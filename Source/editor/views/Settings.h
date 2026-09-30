@@ -14,6 +14,10 @@
 // - Left, under a rule, NEW INSTANCES · THIS COMPUTER: QUALITY and LOOKAHEAD for an instance the host creates
 //   (funkgui::PrefCells over kPrefNewQuality / kPrefNewLookahead, ProcessorFacade.h), read by the processor when it is
 //   constructed. A session or a state load sets its own; presets never carry these two.
+// - Left, under a second rule, INTERFACE · THIS COMPUTER (v1.2, ADR-90): the ANIMATION slider, a stepped RuleSlider over
+//   AnimationModel (SLOW · NORMAL · FAST · FASTER · OFF, a machine preference; OFF is no animation), and a note. It is
+//   driven as a slot is (labels, drag, wheel, keys, double-click to NORMAL, a11y), and is the Tab stop before COPY
+//   REPORT.
 // - Right, DIAGNOSTICS: fifteen rows, a key (kMicro ink32) and a value (kMicro ink70, fitted to the column) — version,
 //   libraries, format and host, sample rate, block size, channels, oversampling, lookahead, latency, DSP load, overruns,
 //   audio (running, stopped, none yet), Mode, presets, display. They come from ProcessorFacade::diagnostics(), the
@@ -32,10 +36,12 @@
 #pragma once
 
 #include "editor/SubView.h"
+#include "editor/views/AnimationModel.h"
 
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/core/Geometry.h>
 #include <funkgui/panel/Input.h>
+#include <funkgui/widgets/RuleSlider.h>
 #include <funkgui/widgets/SegmentedSelector.h>
 
 #include <array>
@@ -69,6 +75,8 @@ namespace fcmp::ui
         funkgui::Cursor cursor(funkgui::Point) const override;
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
+        void doubleClick(const funkgui::PointerEvent&) override;   // v1.2 (ADR-90): ANIMATION to NORMAL
+        bool wheel(const funkgui::WheelEvent&) override;           // v1.2: ANIMATION
 
         // The DIAGNOSTICS as plain text: a title line, then "KEY: value" per row. COPY REPORT's text.
         std::string report() const;
@@ -82,6 +90,7 @@ namespace fcmp::ui
         static constexpr uint32_t kNewQualityLocal = 0x40;
         static constexpr uint32_t kNewBudgetLocal  = 0x50;
         static constexpr uint32_t kCopyLocal       = 0x60;       // button
+        static constexpr uint32_t kAnimationLocal  = 0x70;       // slider (v1.2, ADR-90)
         static constexpr uint32_t kKeyNoteLocal    = 0x61;       // staticText: the key input
         static constexpr uint32_t kLatencyLocal    = 0x62;       // staticText: the total latency
         static constexpr uint32_t kDiagLocal0      = 0x100;      // staticText per DIAGNOSTICS row, in order
@@ -123,6 +132,9 @@ namespace fcmp::ui
         funkgui::SegmentedSelector key_;
         funkgui::SegmentedSelector newQuality_;
         funkgui::SegmentedSelector newBudget_;
+        AnimationModel      animationModel_;                     // ADR-90
+        funkgui::RuleSlider animation_;
+        bool                animationCaptured_ = false;
         std::array<funkgui::SegmentedSelector*, kGroups> groups_{};
         funkgui::Rect copyRect_{};                               // COPY REPORT (its width from the atlas)
         std::array<float, 3> qualityX_{};                        // the tables' column centres (the cells')

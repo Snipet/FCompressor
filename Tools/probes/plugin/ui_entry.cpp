@@ -19,6 +19,12 @@
 //   slot.stepped.*     Bus G's RATIO (2 · 4 · 10): "10" Return writes the 10:1 step (S 0.9)
 //   output.*           Return on the focused OUTPUT, "-3" Return: −3 dB in one tap; a press on OUTPUT then "6" Return:
 //                      +6 dB
+//   guard.*            (the v1.2 review) a slot a click focused takes no key under the settings screen: '5' opens no
+//                      hidden field, writes nothing, and one Esc closes the screen; "8" Tab after a click on RATIO moves
+//                      the focus on as Tab from a focused RATIO does; a flick's momentum (an inertial wheel) neither
+//                      sets nor closes an open field; Cmd-S passes to the host with the field left open, Cmd-Z closes
+//                      it writing nothing; a click on the n/a DRIVE, then '5': the host keeps the key; a click on
+//                      THRESHOLD, then one on the band: '5' and Return go to the host, no field opens
 #include "ProbeRegistry.h"
 
 #include "FakeFacade.h"
@@ -214,6 +220,109 @@ namespace
         }
     }
 
+    funkgui::KeyEvent chord(char32_t ch, bool cmd)
+    {
+        funkgui::KeyEvent k;
+        k.key = funkgui::Key::character;
+        k.ch = ch;
+        k.mods.cmd = cmd;
+        return k;
+    }
+
+    void guardRows(Probe& P)
+    {
+        {
+            Rig r;
+            const funkgui::Rect s = r.bounds(slotId(Pid::thr));
+            r.host.click(s.centreX(), s.y + 20.0f);
+            r.host.tick(1, kDt);
+            r.host.click(L::settings::kGear.centreX(), L::settings::kGear.centreY());
+            r.host.settle(kMaxSettle, kDt);
+            r.facade.resetCounts();
+            const bool shown = r.panel.overlay() == ui::Overlay::settings;
+            r.keys("5");
+            P.eq("guard.overlay.no_field", b(shown && !r.open()), 1);
+            r.keys("return");
+            P.eq("guard.overlay.return_no_field", b(!r.open()), 1);
+            P.eq("guard.overlay.writes", r.writes(), 0);
+            r.keys("escape");
+            P.eq("guard.overlay.one_esc_closes", b(r.panel.overlay() == ui::Overlay::none), 1);
+        }
+        {
+            Rig t;
+            t.focus(slotId(Pid::ratio));
+            t.keys("tab");
+            const uint32_t next = t.ctx().focus;
+            Rig r;
+            const funkgui::Rect s = r.bounds(slotId(Pid::ratio));
+            r.host.click(s.centreX(), s.y + 20.0f);
+            r.host.tick(1, kDt);
+            r.keys("8,tab");
+            P.near("guard.click_tab.ratio_s", r.raw(Pid::ratio), 1.0 - 1.0 / 8.0, kTol);
+            P.eq("guard.click_tab.moves_on", b(next != slotId(Pid::ratio) && r.ctx().focus == next
+                                               && r.ctx().focusVisible), 1);
+        }
+        {
+            Rig r;
+            r.focus(slotId(Pid::thr));
+            r.keys("-,1");
+            r.facade.resetCounts();
+            const funkgui::Rect s = r.bounds(slotId(Pid::thr));
+            funkgui::WheelEvent w;
+            w.x = s.centreX();
+            w.y = s.centreY();
+            w.dy = 0.05f;
+            w.smooth = true;
+            w.inertial = true;
+            r.panel.wheel(w);
+            r.host.tick(1, kDt);
+            P.eq("guard.inertial.still_open", b(r.open()), 1);
+            P.eq("guard.inertial.writes", r.writes(), 0);
+        }
+        {
+            Rig r;
+            r.focus(slotId(Pid::thr));
+            r.keys("-,2,0");
+            r.facade.resetCounts();
+            const bool passed = !r.panel.key(chord(U's', true));
+            P.eq("guard.cmd_s.passes", b(passed && r.open()), 1);
+            const bool took = r.panel.key(chord(U'z', true));
+            r.host.tick(1, kDt);
+            P.eq("guard.cmd_z.closes", b(took && !r.open()), 1);
+            P.eq("guard.cmd.writes", r.writes(), 0);
+        }
+        {
+            Rig r;
+            const funkgui::Rect s = r.bounds(slotId(Pid::drive));
+            r.host.click(s.centreX(), s.y + 20.0f);
+            r.host.tick(1, kDt);
+            r.host.move(L::kBand.x + 300.0f, L::kBand.y + 100.0f);
+            r.host.tick(1, kDt);
+            r.facade.resetCounts();
+            const bool kept = r.panel.key(chord(U'5', false));
+            funkgui::KeyEvent ret;
+            ret.key = funkgui::Key::enter;
+            const bool keptReturn = r.panel.key(ret);
+            P.eq("guard.refused.passes", b(!kept && !keptReturn && !r.open()), 1);
+            P.eq("guard.refused.writes", r.writes(), 0);
+        }
+        {
+            Rig r;
+            const funkgui::Rect s = r.bounds(slotId(Pid::thr));
+            r.host.click(s.centreX(), s.y + 20.0f);
+            r.host.tick(1, kDt);
+            r.host.click(L::kBand.x + 300.0f, L::kBand.y + 100.0f);   // a press elsewhere
+            r.host.tick(1, kDt);
+            r.facade.resetCounts();
+            const bool kept = r.panel.key(chord(U'5', false));
+            funkgui::KeyEvent ret;
+            ret.key = funkgui::Key::enter;
+            const bool keptReturn = r.panel.key(ret);
+            P.eq("guard.elsewhere.passes", b(!kept && !keptReturn && !r.open()), 1);
+            P.eq("guard.elsewhere.writes", r.writes(), 0);
+        }
+    }
+
     void outputRows(Probe& P)
     {
         {
@@ -243,5 +352,6 @@ FCMP_PROBE(ui, entry)
     const juce::ScopedJuceInitialiser_GUI juceInit;              // FontService bakes the atlas through JUCE's fonts
     slotRows(P);
     outputRows(P);
+    guardRows(P);
     return P.finish();
 }

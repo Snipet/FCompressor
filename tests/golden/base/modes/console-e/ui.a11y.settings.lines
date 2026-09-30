@@ -4,6 +4,11 @@
  5 Preset                   252,14,276,32        value=Init help=Opens the preset browser
  2 Next preset              528,14,24,32
  2 Save preset              556,21,44,18         help=Saves the current sound as a new preset
+ 2 Undo                     504,43,20,16         [off] help=UNDO   NOTHING TO UNDO
+ 2 Redo                     526,43,20,16         [off] help=REDO   NOTHING TO REDO
+ 3 Compare                  562,43,38,16         value=A help=Two sounds to compare; its menu copies one into the other
+ 4 A                        562,43,18,16         checked
+ 4 B                        582,43,18,16         unchecked
  7 Footer                   40,600,554,20        [ro]
  3 Zoom                     638,601,140,16       value=ZOOM 100 %
  4 ZOOM 100 %               638,601,32,16        checked
@@ -32,6 +37,7 @@
  4 Off                      184,396,32,16        checked help=Off: the lookahead budget a new FCompressor starts with on this computer
  4 5 ms                     220,396,40,16        unchecked help=5 ms: the lookahead budget a new FCompressor starts with on this computer
  4 20 ms                    264,396,46,16        unchecked help=20 ms: the lookahead budget a new FCompressor starts with on this computer
+ 0 Animation                34,468,252,66        value=normal help=How fast the panel's fades and eases run, on every FCompressor on this computer
  7 Key input                184,260,276,14       value=THE HOST ROUTES NO KEY INPUT [ro]
  7 Latency                  40,290,420,18        value=4 SAMPLES · 0.08 MS [ro]
  7 Version                  500,93,420,18        value=FCOMPRESSOR 0.0.0 [ro]

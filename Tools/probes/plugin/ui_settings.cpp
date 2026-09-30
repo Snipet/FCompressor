@@ -9,8 +9,14 @@
 //   gear.*      the gear is the header's second Tab stop, a button "Settings" at layout::settings::kGear; its hover
 //               puts "SETTINGS   …" on the footer line; Return on it opens the overlay with the focus on QUALITY, and
 //               closing gives the focus back to the gear.
-//   keys.*      while open the Tab order is exactly QUALITY, LOOKAHEAD, SIDECHAIN, NEW QUALITY, NEW LOOKAHEAD, COPY
-//               REPORT, and wraps; → on QUALITY is one tap of `quality`.
+//   keys.*      while open the Tab order is exactly QUALITY, LOOKAHEAD, SIDECHAIN, NEW QUALITY, NEW LOOKAHEAD, ANIMATION,
+//               COPY REPORT, and wraps; → on QUALITY is one tap of `quality`.
+//   anim.*      (v1.2, ADR-90) ANIMATION is a stepped slider "Animation" at NORMAL (ease::timeScale() 1): → writes FAST to
+//               the preference and the scale is 0.5 at once; End: OFF, 0, and with it the overlay is gone one frame
+//               after Esc (at NORMAL it is still fading then); Home: SLOW, 2; a click on its NORMAL label goes back;
+//               no parameter is written. The scale follows the preference written elsewhere (another window, or the
+//               file the host re-reads when an editor opens) at the next frame. At OFF the TRANSFER curve is the new
+//               Mode's on the frame of the switch (at NORMAL it is still easing then).
 //   cells.*     a click on HQ, 5 MS and EXTERNAL is one gesture on `quality`, `labudget` and `extkey` each, to the cell's
 //               value, outside any batch, and nothing else is written; a click on the selected cell writes nothing.
 //   new.*       NEW INSTANCES' cells write the machine preferences kPrefNewQuality / kPrefNewLookahead (UiPreferences)
@@ -27,6 +33,8 @@
 #include "editor/Layout.h"
 #include "editor/Panel.h"
 #include "editor/SubView.h"
+#include "editor/Tags.h"
+#include "editor/views/AnimationModel.h"
 #include "editor/views/Settings.h"
 
 #include "fcdsp/engine/Oversampler.h"
@@ -34,6 +42,8 @@
 #include "fcdsp/params/Pid.h"
 
 #include <funkgui/a11y/A11yItem.h>
+#include <funkgui/canvas/PrimList.h>
+#include <funkgui/core/Ease.h>
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/prefs/UiPreferences.h>
@@ -42,6 +52,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -195,20 +206,21 @@ namespace
     {
         Rig r;
         r.openByGear();
-        const std::array<uint32_t, 6> want { sid(ui::Settings::kQualityLocal), sid(ui::Settings::kBudgetLocal),
+        const std::array<uint32_t, 7> want { sid(ui::Settings::kQualityLocal), sid(ui::Settings::kBudgetLocal),
                                              sid(ui::Settings::kKeyLocal), sid(ui::Settings::kNewQualityLocal),
-                                             sid(ui::Settings::kNewBudgetLocal), sid(ui::Settings::kCopyLocal) };
+                                             sid(ui::Settings::kNewBudgetLocal), sid(ui::Settings::kAnimationLocal),
+                                             sid(ui::Settings::kCopyLocal) };
         std::vector<uint32_t> stops;
-        for (int i = 0; i < 8; ++i)
+        for (int i = 0; i < 9; ++i)
         {
             r.keys("tab");
             stops.push_back(r.ctx().focus);
         }
-        bool order = stops.size() == 8;
+        bool order = stops.size() == 9;
         for (std::size_t i = 0; order && i < want.size(); ++i)
             order = stops[i] == want[i];
         P.eq("keys.tab_order", b(order), 1);
-        P.eq("keys.tab_wraps", b(order && stops[6] == want[0] && stops[7] == want[1]), 1);
+        P.eq("keys.tab_wraps", b(order && stops[7] == want[0] && stops[8] == want[1]), 1);
         // Back on QUALITY (STD): → is one tap to HQ.
         while (r.ctx().focus != want[0])
             r.keys("tab");
@@ -216,6 +228,95 @@ namespace
         r.keys("right");
         const fcmp::probe::FakePort& q = r.facade.fakePort(Pid::quality);
         P.eq("keys.right_taps_quality", b(q.begins() == 1 && q.ends() == 1 && q.plain() == 2.0f), 1);
+    }
+
+    // ---- ANIMATION (ADR-90) -----------------------------------------------------------------------------------------------
+
+    void animRows(Probe& P)
+    {
+        Rig r;
+        r.openByGear();
+        const uint32_t id = sid(ui::Settings::kAnimationLocal);
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* it = item(v, id);
+        P.eq("anim.slider", b(it != nullptr && it->role == funkgui::A11yRole::slider && it->title == "Animation"), 1);
+        P.eq("anim.default_normal", b(ui::AnimationModel::index() == 1 && funkgui::ease::timeScale() == 1.0f), 1);
+        r.panel.a11yAction(id, funkgui::A11yAction::focus);
+        r.host.tick(1, kDt);
+        r.facade.clearWrites();
+        r.keys("right");
+        P.eq("anim.right_fast", b(ui::AnimationModel::index() == 2 && funkgui::ease::timeScale() == 0.5f), 1);
+        r.keys("end");
+        P.eq("anim.end_off", b(ui::AnimationModel::index() == 4 && funkgui::ease::timeScale() == 0.0f), 1);
+        // The overlay one frame after Esc: gone at OFF, still fading at NORMAL (its ground is drawn while it fades).
+        const auto groundAfterEsc = [&r]() {
+            r.host.keys("escape");                               // the focus ring goes first ...
+            r.host.keys("escape");                               // ... then the overlay
+            r.host.tick(1, kDt);
+            int n = 0;
+            for (const funkgui::Prim& p : r.host.draw().prims)
+                n += p.tag == ui::tag::settingsBg ? 1 : 0;
+            return n;
+        };
+        P.eq("anim.off_gone_after_one_frame", b(groundAfterEsc() == 0), 1);
+        {
+            Rig n;
+            n.openByGear();
+            n.panel.a11yAction(id, funkgui::A11yAction::focus);
+            n.host.tick(1, kDt);
+            n.keys("home");
+            n.keys("right");                                     // NORMAL
+            n.host.keys("escape");
+            n.host.keys("escape");
+            n.host.tick(1, kDt);
+            int bg = 0;
+            for (const funkgui::Prim& p : n.host.draw().prims)
+                bg += p.tag == ui::tag::settingsBg ? 1 : 0;
+            P.eq("anim.normal_fading_after_one_frame", b(bg > 0), 1);
+        }
+        r.openByGear();
+        r.panel.a11yAction(id, funkgui::A11yAction::focus);
+        r.host.tick(1, kDt);
+        r.keys("home");
+        P.eq("anim.home_slow", b(ui::AnimationModel::index() == 0 && funkgui::ease::timeScale() == 2.0f), 1);
+        const float normalX = L::settings::kAnimation.x + L::settings::kAnimation.w * 1.5f / 5.0f;
+        r.host.click(normalX, L::settings::kAnimation.subTop() + 4.0f);
+        r.host.tick(1, kDt);
+        P.eq("anim.label_click_normal", b(ui::AnimationModel::index() == 1 && funkgui::ease::timeScale() == 1.0f), 1);
+        P.eq("anim.no_parameter_written", writesTotal(r.facade), 0);
+
+        // The preference written elsewhere (another window in this process, or UiPreferences::reload()).
+        funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, 3);
+        r.host.tick(1, kDt);
+        P.eq("anim.follows_prefs", b(funkgui::ease::timeScale() == 0.25f), 1);
+        funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, 1);
+        r.host.tick(1, kDt);
+        P.eq("anim.follows_prefs_back", b(funkgui::ease::timeScale() == 1.0f), 1);
+
+        // The TRANSFER curve on a Mode switch (THRESHOLD moved with it, so the curves differ): its prims two frames
+        // after the switch against 0.3 s after it (the ease takes 160 ms at NORMAL).
+        const auto curveLands = [](int index) {
+            funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, index);
+            Rig m;
+            m.facade.setMode("bus-g");
+            m.facade.setPlain(Pid::thr, -40.0f);                 // with it a curve of another shape
+            m.host.tick(2, kDt);
+            const auto curve = [&m]() {
+                std::vector<funkgui::Prim> out;
+                for (const funkgui::Prim& p : m.host.draw().prims)
+                    if (p.tag == ui::tag::transferCurve)
+                        out.push_back(p);
+                return out;
+            };
+            const std::vector<funkgui::Prim> first = curve();
+            m.host.tick(18, kDt);
+            const std::vector<funkgui::Prim> later = curve();
+            return !first.empty() && first.size() == later.size()
+                   && std::memcmp(first.data(), later.data(), first.size() * sizeof(funkgui::Prim)) == 0;
+        };
+        P.eq("anim.curve_off_lands_at_once", b(curveLands(4)), 1);
+        P.eq("anim.curve_normal_eases", b(!curveLands(1)), 1);
+        funkgui::ease::setTimeScale(1.0f);
     }
 
     // ---- the cells --------------------------------------------------------------------------------------------------------
@@ -380,6 +481,7 @@ FCMP_PROBE(ui, settings)
     openRows(P);
     gearRows(P);
     keyRows(P);
+    animRows(P);
     cellRows(P);
     newRows(P);
     diagRows(P);

@@ -73,6 +73,18 @@ namespace fcmp::ui::layout
         inline constexpr Rect  kModeLatch { 600.0f, 14.0f, 320.0f, 42.0f };     // caption + ‹ name › + group line
     }
 
+    // v1.2 (ADR-91): UNDO, REDO and A | B on the preset strip's second line (views/EditControls.h): the arrows under the
+    // name's rule end, the letters under SAVE; the strip's sub-line is fitted to end before them.
+    namespace edits
+    {
+        inline constexpr Rect  kUndo { 504.0f, 43.0f, 20.0f, 16.0f };
+        inline constexpr Rect  kRedo { 526.0f, 43.0f, 20.0f, 16.0f };
+        inline constexpr Rect  kA    { 562.0f, 43.0f, 18.0f, 16.0f };
+        inline constexpr Rect  kB    { 582.0f, 43.0f, 18.0f, 16.0f };
+        inline constexpr float kCentreY = 51.0f;                 // the sub-line's cap centre
+        inline constexpr float kSubRight = 496.0f;
+    }
+
     // ---- display row (02 §6.3, §6.6) ----------------------------------------------------------------------------------
     namespace display
     {
@@ -780,6 +792,14 @@ namespace fcmp::ui::layout
         // COPY REPORT, a text cell right-aligned to the content edge, and its note left of it.
         inline constexpr float kCopyY = 566.0f;
         inline constexpr double kCopiedS = 2.0;                  // "COPIED" stays this long
+
+        // v1.2 (ADR-90): INTERFACE · THIS COMPUTER under NEW INSTANCES — a rule, the heading, the ANIMATION slider (a
+        // secondary slot, views/AnimationModel.h) and a note right of its value.
+        inline constexpr char  kPrefAnimation[] = "animationSpeed";   // UiPreferences: the detent index 0 … 4
+        inline constexpr float kInterfaceRuleY = 440.0f;
+        inline constexpr float kInterfaceHeadingY = 452.0f;
+        inline constexpr funkgui::SlotGeom kAnimation { 40.0f, 474.0f, 240.0f, funkgui::SlotSize::secondary };
+        inline constexpr Point kAnimationNote { 300.0f, 490.0f };       // kMicro ink32, fitted to kColumnRight
     }
 
     // ---- v1.2 (ADR-88): the OUTPUT trim ---------------------------------------------------------------------------------

@@ -31,7 +31,9 @@
 // a fast signal driven into the corner overshoots the static bound 1/k by up to half a sample's step (at base rate, near
 // Nyquist, several dB). A hard clip at +-1/k follows the shaper, so no output sample (at the OS rate; ECO: the output
 // itself) exceeds 1/k: in LOUD, OS-rate samples never pass ceiling - 1.27 dB. It acts only on that overshoot (a static,
-// slow signal never reaches it), so its own aliasing is second order.
+// slow signal never reaches it), so its own aliasing is second order. While k glides across a call (ADR-86: T moving,
+// see below) each sample is clipped at its own 1/k, the scale the shaper used for it, so a falling T never meets a hard
+// corner under the soft one; a static T clips at exactly 1/k as before (bit for bit).
 //
 // T moves (threshold automation): the clip level is smoothed per control tick like a voice's drive (a 20 ms one-pole in
 // dB at fs / kTickSamples, landing within 1e-4 dB; a value-initialised Coeffs lands at once), while ModeEngine smooths
@@ -85,10 +87,23 @@ struct LoudClip {
 
     static void process(const Coeffs& c, State& s, float* x, const float*, int n, int) noexcept FCDSP_NONBLOCKING
     {
+        const float k1 = c.drive.k, k0 = s.ch.k > 0.0f ? s.ch.k : k1;   // processDriven's glide (TubeSym.h)
         detail::processDriven(adaa::SoftClip{}, c.drive, s.ch, x, n, detail::NoPost{});
-        const float b = c.drive.invK;                           // the safety clip (header comment): |y| <= 1/k
+        // The safety clip (header comment): |y| <= 1/k, each sample at the k the shaper used for it. NaN compares false
+        // and passes (the poison check).
+        if (k0 == k1)
+        {
+            const float b = c.drive.invK;
+            for (int i = 0; i < n; ++i)
+                x[i] = x[i] > b ? b : (x[i] < -b ? -b : x[i]);
+            return;
+        }
+        const float dk = (k1 - k0) / static_cast<float>(n);
         for (int i = 0; i < n; ++i)
-            x[i] = x[i] > b ? b : (x[i] < -b ? -b : x[i]);      // NaN compares false and passes (the poison check)
+        {
+            const float b = i + 1 < n ? 1.0f / (k0 + dk * static_cast<float>(i + 1)) : c.drive.invK;
+            x[i] = x[i] > b ? b : (x[i] < -b ? -b : x[i]);
+        }
     }
 
     static float transfer(const Coeffs& c, float x, float) noexcept FCDSP_NONBLOCKING

@@ -50,7 +50,7 @@ namespace fcmp::ui
         constexpr float kMarkerX = 520.0f;
         constexpr float kMarkerR = 2.5f;
         constexpr float kNameMaxW = kMarkerX - 8.0f - kNameTextX;   // 252
-        constexpr float kSubMaxW = kSave.x - 4.0f - kNameTextX;     // 288
+        constexpr float kSubMaxW = layout::edits::kSubRight - kNameTextX;   // 236: UNDO, REDO, A | B follow (ADR-91)
         constexpr float kChevronInset = 1.5f;                   // the Mode latch's chevrons (Header.cpp)
         constexpr float kChevronDepth = 3.5f;
         constexpr float kChevronHalf = 5.0f;
@@ -103,7 +103,7 @@ namespace fcmp::ui
         }
     }
 
-    PresetStrip::PresetStrip(PanelContext& ctx) : ctx_(ctx) { refresh(); }
+    PresetStrip::PresetStrip(PanelContext& ctx) : ctx_(ctx), edits_(ctx) { refresh(); }
 
     PresetStrip::~PresetStrip()
     {
@@ -168,6 +168,7 @@ namespace fcmp::ui
     void PresetStrip::tick(float dt)
     {
         refresh();
+        edits_.tick(dt, ctx_.pointer, pointerOver_);
         hover_ = pointerOver_ ? partAt(ctx_.pointer) : Part::none;
         for (int p = 1; p <= 4; ++p)
             hoverAmt_[partIndex(p)] = funkgui::ease::hover(hoverAmt_[partIndex(p)], static_cast<int>(hover_) == p, dt);
@@ -184,6 +185,8 @@ namespace fcmp::ui
 
     bool PresetStrip::wantsFullRate() const
     {
+        if (!edits_.settled())
+            return true;
         if (savedUntil_ >= 0.0 && ctx_.seconds <= savedUntil_)
             return true;                                         // SAVED goes on time
         for (int p = 1; p <= 4; ++p)
@@ -281,6 +284,7 @@ namespace fcmp::ui
         c.text("SAVE", kSaveBox.centreX(), c.capCentreTop(kSaveBox.centreY(), T::kCaption), T::kCaption,
                hoverInk(Part::save, th.ink52, th.ink100), funkgui::Align::centre);
 
+        edits_.draw(c, th);                                      // ADR-91
         if (ctx_.focusVisible)
             if (const Part f = partOf(ctx_.focus); f != Part::none)
                 funkgui::drawFocusRing(c, f == Part::prev ? kPrev : f == Part::name ? kName : f == Part::next ? kNext
@@ -290,7 +294,7 @@ namespace fcmp::ui
 
     // ---- input ----------------------------------------------------------------------------------------------------------
 
-    bool PresetStrip::hit(funkgui::Point p) const { return layout::kPresetStrip.contains(p); }
+    bool PresetStrip::hit(funkgui::Point p) const { return layout::kPresetStrip.contains(p) || edits_.contains(p); }
 
     PresetStrip::Part PresetStrip::partAt(funkgui::Point p) const noexcept
     {
@@ -433,6 +437,12 @@ namespace fcmp::ui
     void PresetStrip::pointerDown(const funkgui::PointerEvent& e)
     {
         pointerOver_ = true;
+        editsPressed_ = edits_.contains({ e.x, e.y });
+        if (editsPressed_)
+        {
+            edits_.pointerDown(e);                               // ADR-91
+            return;
+        }
         refresh();
         const Part p = partAt({ e.x, e.y });
         pressed_ = Part::none;
@@ -455,12 +465,23 @@ namespace fcmp::ui
 
     void PresetStrip::pointerDrag(const funkgui::PointerEvent& e)
     {
+        if (editsPressed_)
+        {
+            edits_.pointerDrag(e);
+            return;
+        }
         if (armed_ && partAt({ e.x, e.y }) != pressed_)
             armed_ = false;                                      // dragging off cancels
     }
 
     void PresetStrip::pointerUp(const funkgui::PointerEvent& e)
     {
+        if (editsPressed_)
+        {
+            editsPressed_ = false;
+            edits_.pointerUp(e);
+            return;
+        }
         const Part p = pressed_;
         const bool fire = armed_ && partAt({ e.x, e.y }) == p;
         pressed_ = Part::none;
@@ -471,6 +492,8 @@ namespace fcmp::ui
 
     bool PresetStrip::key(const funkgui::KeyEvent& e)
     {
+        if (edits_.owns(ctx_.focus))
+            return edits_.key(e);                                // ADR-91
         const Part f = partOf(ctx_.focus);
         if (f == Part::none)
             return false;
@@ -512,6 +535,8 @@ namespace fcmp::ui
 
     funkgui::Cursor PresetStrip::cursor(funkgui::Point p) const
     {
+        if (edits_.contains(p))
+            return edits_.cursor(p);
         const Part part = partAt(p);
         if (part == Part::none || ((part == Part::prev || part == Part::next) && count_ <= 0))
             return funkgui::Cursor::normal;
@@ -564,6 +589,7 @@ namespace fcmp::ui
         saveItem.help = savesOver() ? "Saves over " + std::string(rawName_) + ". Its menu has Save as"
                                     : std::string("Saves the current sound as a new preset");
         out.push_back(std::move(saveItem));
+        edits_.accessibility(out);                               // ADR-91
     }
 
     int PresetStrip::focusOrder(std::span<uint32_t> out) const
@@ -572,13 +598,18 @@ namespace fcmp::ui
         const std::size_t n = std::min(out.size(), kLocals.size());
         for (std::size_t i = 0; i < n; ++i)
             out[i] = a11yId(ViewIndex::presetStrip, kLocals[i]);
-        return static_cast<int>(n);
+        return static_cast<int>(n) + edits_.focusOrder(out.subspan(n));   // then UNDO, REDO, A | B (ADR-91)
     }
 
-    uint32_t PresetStrip::a11yRevision() const { return a11yRev_; }
+    uint32_t PresetStrip::a11yRevision() const { return a11yRev_ + edits_.revision(); }
 
     void PresetStrip::a11yAction(uint32_t id, funkgui::A11yAction a, double)
     {
+        if (edits_.owns(id))
+        {
+            edits_.a11yAction(id, a);                            // ADR-91
+            return;
+        }
         const Part p = partOf(id);
         if (p == Part::none)
             return;

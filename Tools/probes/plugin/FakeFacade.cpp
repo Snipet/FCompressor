@@ -41,6 +41,7 @@ namespace fcmp::probe
 
     void FakePort::beginGesture()
     {
+        owner_.history_.gestureBegan(pid_);                      // ADR-91
         ++depth_;
         ++begins_;
     }
@@ -60,6 +61,7 @@ namespace fcmp::probe
         if (depth_ > 0)
             --depth_;
         ++ends_;
+        owner_.history_.gestureEnded(pid_);                      // ADR-91
     }
 
     void FakePort::script01(float v01) noexcept { plain_ = fcdsp::toPlain(pid_, clamp01(v01)); }
@@ -331,6 +333,25 @@ namespace fcmp::probe
 
     void FakePresets::setImportRow(std::optional<Row> r) { importRow_ = std::move(r); }
 
+    std::string FakePresets::currentUuid() const
+    {
+        return current_ >= 0 && current_ < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(current_)].uuid
+                                                                           : std::string();
+    }
+
+    void FakePresets::restoreCurrent(std::string_view uuid)
+    {
+        int found = -1;
+        for (std::size_t i = 0; i < rows_.size() && !uuid.empty(); ++i)
+            if (rows_[i].uuid == uuid)
+                found = static_cast<int>(i);
+        if (found != current_)
+        {
+            current_ = found;
+            ++revision_;
+        }
+    }
+
     void FakePresets::setCurrent(int index) noexcept
     {
         current_ = index >= 0 && index < static_cast<int>(rows_.size()) ? index : -1;
@@ -402,15 +423,28 @@ namespace fcmp::probe
 
     void FakeFacade::beginBatch()
     {
+        history_.batchBegan();                                   // ADR-91
         ++batchDepth_;
         ++batches_;
     }
 
     void FakeFacade::endBatch()
     {
+        const bool open = batchDepth_ > 0;
         if (batchDepth_ > 0)
             --batchDepth_;
+        if (open)
+            history_.batchEnded();
     }
+
+    EditAccess& FakeFacade::edits() { return history_; }
+
+    float FakeFacade::HistoryHost::raw(fcdsp::Pid p) const { return f_.fakePort(p).plain(); }
+    void  FakeFacade::HistoryHost::write(fcdsp::Pid p, float plain) { f_.fakePort(p).scriptPlain(plain); }
+    void  FakeFacade::HistoryHost::beginBatch() { f_.beginBatch(); }
+    void  FakeFacade::HistoryHost::endBatch() { f_.endBatch(); }
+    std::string FakeFacade::HistoryHost::presetUuid() const { return f_.fakePresets().currentUuid(); }
+    void  FakeFacade::HistoryHost::restorePreset(const std::string& uuid) { f_.fakePresets().restoreCurrent(uuid); }
 
     PresetAccess& FakeFacade::presets() { return presets_; }
     FakePresets& FakeFacade::fakePresets() noexcept { return presets_; }

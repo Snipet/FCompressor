@@ -166,6 +166,7 @@ Conventions:
 
 ### ADR-23 No `UndoManager`
 - **Decision:** `apvts(*this, nullptr, …)`; undo belongs to the host, which records every UI gesture (01 §9.1).
+  (v1.2: the plugin now keeps its own edit history without an UndoManager, ADR-91; this rejection still stands.)
 - **Rejected:** Draft 1 / E §4.3's `UndoManager` (JUCE's APVTS timer pushes host automation into one unbounded
   transaction; undo would revert automation; K2 #7). `ProcessorFacade::beginUndoTransaction` is deleted.
 
@@ -796,6 +797,12 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - **Checked where it failed:** with a temporary live DRIVE on Console E (VcaBus, not committed), the DRIVE edge read
     −0.76 dB (ECO), 0.79 dB (STD) and −0.41 dB (HQ), all under the limit.
   - **Console E keeps DRIVE n/a.** The channel it models has no drive control, so the fix does not reopen the slot.
+  - **Review revision (v1.2, with ADR-91):** LoudClip's safety clip still cut at the call's final 1/k while the shaper
+    glided, so a falling THRESHOLD in VOICE LOUD met a hard corner under the soft one (0.1 of 1/k at a 1 dB fall in a
+    call), pulsing at the chunk rate. It now clips each sample at its own 1/k; a static T is bit-identical.
+    `dsp.slidingmax` gains `loudclip.glide.*`. A snap lands the drive but keeps the channel's last k, so the first call
+    after it still glides (one chunk, 64 samples at most); `reset()` clears it (analysis entry points, a new engine).
+    That is now the stated behaviour (TubeSym.h) rather than a snap hook in every glide voice.
 - **ADR-87 CI on GitHub Actions; FunkGui from GitHub when there is no local checkout (v1.2).** The user made both
   repositories public and asked for CI, a build badge and a README image.
   - **`.github/workflows/ci.yml`** runs on every push to main, every pull request and by hand, on `macos-26` (Apple
@@ -860,6 +867,83 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     nothing is written, the field stays with the text selected and its border flashes. A Mode change closes it.
   - **Tests:** `ui.entry` (34 rows): each way to open, commit and cancel, the refusal, units, a stepped slot, refused
     slots, a Mode change and OUTPUT. No golden moves: a closed field draws nothing.
+  - **Review revision (before release):** a control a click focused takes no typed key while a browser or the settings
+    screen covers it (a hidden field there could be committed by the next click), and a locked, derived or n/a slot
+    takes none at all, so the host keeps it. Tab after "click, then type" moves on as from a Tab stop. A flick's
+    momentum (inertial wheel events) neither sets nor closes an open field. In an open field Cmd-Z takes the typing
+    back (the field closes, nothing is written), and the host's other Cmd and Ctrl chords pass, as from the preset
+    browser's name edit. Typed keys follow the last press only (`PanelContext::typedTarget`, which every press clears):
+    after a press on anything else they go back to the host instead of opening a field on a slot the user left.
+    `ui.entry` gains `guard.*` (17 rows).
+- **ADR-90 An ANIMATION speed in the settings screen (v1.2).** The user asked for a slider controlling how fast the fading
+  animations run, the fastest setting being none.
+  - **FunkGui v0.10.0** (`ease::setTimeScale`): every tau `ease::toward`, `hover` and `shown` take is multiplied by a
+    process-wide scale, 1 by default (bit for bit the eases as before), 0 for none. That covers every widget, the
+    screen crossfade and the browser and settings fades, the Mode texts' crossfade and the preset browser's notch
+    glide. The product's own timed fades follow it through `AnimationModel::scaledStep`: the Mode colour (0.25 s),
+    the live marks' fade when the audio stops (0.4 s), a typed field's refusal flash; the landing flash of a Mode
+    change is scaled likewise. Meters, clocks, dwells and messages (SAVED, COPIED, the first-run hint) are not
+    animations and keep their time.
+  - **The setting:** INTERFACE · THIS COMPUTER, under NEW INSTANCES: ANIMATION, a stepped slider (a RuleSlider over
+    `views/AnimationModel.h`, which is its own `ParamPort` so the slider writes it as it writes a parameter) with
+    SLOW (×2), NORMAL (×1, the default), FAST (×0.5), FASTER (×0.25) and OFF. It is a machine preference
+    (`animationSpeed` in UiPreferences, the detent index), set at once in the process (every open editor follows)
+    and applied by each Panel when it is built. It is the settings screen's Tab stop before COPY REPORT.
+  - **Tests:** `ui.settings` gains `anim.*` (the slider, its keys and a label click, the scale at each step, the
+    overlay gone one frame after Esc at OFF and still fading at NORMAL, no parameter written); `fg.ease` (FunkGui)
+    12 rows. Goldens move only for the settings view (`ui.geometry`, `ui.a11y`).
+  - **Review revision (v1.2, with ADR-91):** the Panel applies the scale again whenever UiPreferences' revision moves,
+    because the host re-reads the preferences file after the Panel is built (an editor opened after the speed was
+    changed in another process ran at the old speed). TRANSFER's Mode-switch curve ease (160 ms) follows the scale too;
+    its 0.9 s ghost is a dwell and keeps its time. `anim.*` gains four rows.
+- **ADR-91 Undo/redo and an A/B compare (v1.2).** The last of the lead's pick. ADR-23 rejected JUCE's `UndoManager`
+  because the APVTS pushes host automation into its transactions, so undo would revert automation. This history is
+  the plugin's own and records only what the editor writes.
+  - **`plugin/EditHistory.h`**, plain C++ over a small Host interface, so the processor and `FakeFacade` run the same
+    code. The processor's ports (a `HistoryPort` wrapping `JuceParamPort`) report every gesture's begin and end, and
+    its batches report theirs (a preset, a Mode change, any multi-write). At the outermost begin the history reads the
+    tracked raw values and the preset's uuid; at the outermost end, whatever changed is ONE entry. A gesture-only
+    bracket keeps only the parameters it had a gesture on, so host automation meanwhile is neither recorded nor undone.
+    Tracked: the 22 Mode-filtered parameters, `mode`, `extkey`, `output`; never `quality` or `labudget` (latency),
+    `bypass` or the monitoring latches. Undo and redo are exact raw writes in one batch, each announced to the host as a
+    gesture, then the preset identity comes back (`PresetAccess::currentUuid` / `restoreCurrent`: the preset is current
+    again with its values as the baseline, so MODIFIED is recomputed). At most 100 entries; a new edit drops the redo
+    branch; a state load clears it (a load serial, since hosts load on their own threads).
+  - **A/B:** two slots, each a sound and its preset. B starts as a copy of A; selecting the other slot stores the live
+    sound into the active one and loads the other, and is an undo step. `copySlot` fills the other slot. Once B has been
+    used, the inactive slot is saved in the session (`<COMPARE>` after `<UI>`, State.h's new hooks; older builds ignore
+    it) and a load restores it.
+  - **On screen:** UNDO and REDO arrows and A | B on the preset strip's second line under SAVE
+    (`views/EditControls.h`), with footer lines naming the step ("UNDO THRESHOLD   CMD-Z"), buttons and a radio group for
+    accessibility, Tab stops after SAVE, and a menu on A | B (a right-click) with "Copy A to B". Cmd-Z and Shift-Cmd-Z
+    work anywhere in the panel (hosts that keep those keys for themselves still have the buttons); with nothing to
+    take back, or under an open browser, the key is left to the host.
+  - **Tests:** `proc.history` (30 rows) on a real processor: gestures, automation left alone, batches, the setup not
+    recorded, presets and their identity, capacity, state loads, A/B with presets and across a session. `ui.edits`
+    (17 rows): the controls, their keys, clicks and footer lines. Goldens move where the strip is drawn (`ui.geometry`,
+    `ui.a11y`, `ui.input`).
+  - **Review revision (before merge; a four-area review with two skeptics per finding):**
+    - *Nothing steps.* Undo, redo and an A/B switch write in a batch that does not raise the engine snap
+      (`Processor::finishBatch(false)`), so OUTPUT, MAKEUP, MIX and DRIVE ramp as after any edit. A snap is still
+      raised when any batch in the open nest asked for one (a host-thread load overlapping an undo).
+    - *The compare state is the load's at once.* A load hands its `<COMPARE>` (or its absence) straight to the slots
+      under the mutex (`setLoadedCompare`), so a save that follows before any editor opened keeps B, and never writes
+      back a stale one. The slots are read and written only under that mutex.
+    - *A bracket open across a load records nothing* (the load serial is kept at its begin); the thread is checked
+      before any member is read on a host thread.
+    - *Save As names the current sound.* It is no entry, so undo and redo first give the steps either side of the
+      current position the live preset's uuid (`adoptIdentity`): undo after an edit and a Save As goes back to the
+      preset before, redo lands on the saved one, unmodified (before, redo left the old preset MODIFIED, and SAVE on a
+      factory preset then saved a duplicate).
+    - *Keys.* Cmd-Z does nothing to the sound while a browser or the settings screen is open (the key is theirs, or the
+      host's), and with nothing to take back the host keeps it. An open wheel burst (a gesture until 0.5 s after its
+      last notch) is closed into its entry before undo, redo or a switch, so "scroll, then Cmd-Z" works at once.
+    - *Tests:* `proc.history` gains a save straight after a load, a load without `<COMPARE>`, a burst open across a
+      load, undo and redo around a Save As (in the probe's sandboxed store), and `ramp.*` (a sine through the processor: the first millisecond after an undo of OUTPUT −18 dB, and after
+      an A/B switch 18 dB louder, is within 3 dB of before, and the level lands 18 dB up); `ui.edits` gains the
+      pass-through, the browser and the wheel burst. The OUTPUT gaps the review found in older-session coverage are
+      closed too: `state.absent` removes `output`, `proc.fixtures` loads v1 sessions over an OUTPUT away from 0 dB, and
+      `proc.presets` checks a preset neither moves OUTPUT nor reads MODIFIED because of it.
 
 ## HardwareReverb migration
 

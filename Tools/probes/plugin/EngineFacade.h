@@ -96,6 +96,7 @@ namespace fcmp::probe
         void                      beginBatch() override;
         void                      endBatch() override;           // the outermost end requests an engine snap
         PresetAccess&             presets() override;
+        EditAccess&               edits() override { return params_.edits(); }   // v1.2 (ADR-91)
 
         // the processor side
         FakeFacade&              params() noexcept { return params_; }   // host / automation scripting
