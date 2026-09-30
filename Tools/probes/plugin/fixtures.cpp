@@ -224,6 +224,7 @@ namespace
         setPlain(*proc, Pid::bypass, 0.2f);
         setPlain(*proc, Pid::quality, 0.0f);
         setPlain(*proc, Pid::labudget, 1.0f);
+        setPlain(*proc, Pid::output, -7.3f);                     // ADR-88: a v1 session brings it back to 0 dB
         proc->endBatch();
         proc->uiState() = fcmp::UiState{ true, fcmp::ScTab::colour };
         proc->prepareToPlay(kFs, kBlock);

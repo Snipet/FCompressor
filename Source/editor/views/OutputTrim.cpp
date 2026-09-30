@@ -132,7 +132,7 @@ namespace fcmp::ui
         g.beginDrag(port_);
         dragging_ = true;
         anchor(e.x, e.y, e.mods);
-        ctx_.focus = id_;                                        // ADR-89: a number typed next goes here
+        ctx_.focus = ctx_.typedTarget = id_;                     // ADR-89: a number typed next goes here
     }
 
     void OutputTrim::pointerDrag(const funkgui::PointerEvent& e, funkgui::GestureController& g)

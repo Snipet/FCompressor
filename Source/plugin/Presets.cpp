@@ -187,6 +187,43 @@ namespace fcmp
                 return -1;                                        // deleted, or a preset this store never had
             }
 
+            // ADR-91: the identity undo, redo and A/B carry. restoreCurrent makes the preset current with its values as
+            // the baseline (PresetManager::setCurrent: no parameter moves), from the bank or the user list; "" or an
+            // unknown uuid leaves an untitled preset whose baseline is the live values.
+            std::string currentUuid() const override { return manager_.current().uuid.toStdString(); }
+
+            void restoreCurrent(std::string_view uuid) override
+            {
+                const juce::String u = fromUtf8(uuid);
+                if (u == manager_.current().uuid)
+                    return;
+                if (const Preset* f = u.isEmpty() ? nullptr : factory::findFactory(u))
+                {
+                    manager_.setCurrent(*f);
+                    announce();
+                    return;
+                }
+                if (!u.isEmpty())
+                {
+                    refreshUsers();
+                    for (const Preset& p : users_)
+                        if (p.uuid == u)
+                        {
+                            const Preset copy = p;               // setCurrent may refresh users_
+                            manager_.setCurrent(copy);
+                            announce();
+                            return;
+                        }
+                }
+                Preset untitled = manager_.capture();            // no identity; the live values are its baseline
+                untitled.uuid = {};
+                untitled.name = {};
+                untitled.category = {};
+                untitled.isFactory = false;
+                manager_.setCurrent(untitled);
+                announce();
+            }
+
             bool modified() const override
             {
                 if (manager_.isModified())

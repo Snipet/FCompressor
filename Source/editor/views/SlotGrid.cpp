@@ -575,7 +575,8 @@ namespace fcmp::ui
         {
             captured_ = i;
             downAt_ = p;
-            ctx_.focus = sliders_[static_cast<std::size_t>(i)]->a11yId();   // ADR-89: a number typed next goes here
+            // ADR-89: a number typed next goes here
+            ctx_.focus = ctx_.typedTarget = sliders_[static_cast<std::size_t>(i)]->a11yId();
             sliders_[static_cast<std::size_t>(i)]->pointerDown(e, *ctx_.gestures, *ctx_.host);
         }
     }
@@ -663,7 +664,12 @@ namespace fcmp::ui
 
     // ---- typed values (ADR-89) ----------------------------------------------------------------------------------------
 
-    bool SlotGrid::takesTypedKeys(uint32_t id) const { return sliderOf(id) >= 0; }
+    // A locked, derived or n/a slot a click focused takes nothing: the key goes on to the host (no ring shows its reason).
+    bool SlotGrid::takesTypedKeys(uint32_t id) const
+    {
+        const int i = sliderOf(id);
+        return i >= 0 && writable(i);
+    }
 
     void SlotGrid::openEntry(int i, const funkgui::KeyEvent& opener)
     {

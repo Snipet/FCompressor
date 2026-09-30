@@ -136,8 +136,10 @@ namespace fcmp::ui::tag
     inline constexpr Tag outputValue   = 340;   // OUTPUT_VALUE    its value text
     // ---- v1.2 (ADR-89) ---------------------------------------------------------------------------------------------------
     inline constexpr Tag valueEntry    = 341;   // VALUE_ENTRY     a typed-value field: its box, text, selection, caret
+    // ---- v1.2 (ADR-91) ---------------------------------------------------------------------------------------------------
+    inline constexpr Tag editControls  = 342;   // EDIT_CONTROLS   the preset strip's UNDO and REDO arrows and A | B
 
-    inline constexpr Tag last          = 341;
+    inline constexpr Tag last          = 342;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -174,6 +176,7 @@ namespace fcmp::ui::tag
         { settingsBg, "SETTINGS_BG" },       { settingsText, "SETTINGS_TEXT" },  { settingsValue, "SETTINGS_VALUE" },
         { settingsGear, "SETTINGS_GEAR" },
         { outputTrim, "OUTPUT_TRIM" },       { outputValue, "OUTPUT_VALUE" },   { valueEntry, "VALUE_ENTRY" },
+        { editControls, "EDIT_CONTROLS" },
     } };
 
     namespace detail

@@ -33,6 +33,7 @@
 // makePresetAccess (Presets.cpp), both with contexts this processor builds.
 #pragma once
 
+#include "plugin/EditHistory.h"
 #include "plugin/ProcessorFacade.h"
 #include "plugin/SetupWatcher.h"
 #include "plugin/State.h"
@@ -139,6 +140,7 @@ namespace fcmp
         void endBatch() override;                                //   BlockParams; the outermost end raises the snap
         PresetAccess& presets() override;
         Diagnostics diagnostics() const override;                // v1.2 (ADR-85): message thread
+        EditAccess& edits() override { return history_; }       // v1.2 (ADR-91): message thread
 
         // ---- plugin internals: the glue TUs, SetupWatcher and the proc.* probes -----------------------------------
         juce::AudioProcessorValueTreeState& apvts() noexcept { return apvts_; }
@@ -152,6 +154,45 @@ namespace fcmp
     private:
         friend class SetupWatcher;
 
+        // ADR-91: the port the editor writes through: JuceParamPort's, and the history hears its gestures begin and end
+        // (host automation never comes through a port, so it is never recorded).
+        class HistoryPort final : public funkgui::ParamPort
+        {
+        public:
+            HistoryPort(juce::RangedAudioParameter& p, EditHistory& h, fcdsp::Pid pid) : port_(p), history_(h), pid_(pid) {}
+            float value01() const override { return port_.value01(); }
+            float default01() const override { return port_.default01(); }
+            int   numSteps() const override { return port_.numSteps(); }
+            void  beginGesture() override { history_.gestureBegan(pid_); port_.beginGesture(); }
+            void  setValue01(float v) override { port_.setValue01(v); }
+            void  endGesture() override { port_.endGesture(); history_.gestureEnded(pid_); }
+            const char* id() const override { return port_.id(); }
+            void* native() const override { return port_.native(); }
+
+        private:
+            funkgui::JuceParamPort port_;
+            EditHistory&           history_;
+            fcdsp::Pid             pid_;
+        };
+
+        // ADR-91: what the history reads and writes (Processor.cpp).
+        class HistoryHost final : public EditHistory::Host
+        {
+        public:
+            explicit HistoryHost(Processor& p) noexcept : p_(p) {}
+            float       raw(fcdsp::Pid) const override;
+            void        write(fcdsp::Pid, float plain) override;
+            void        beginBatch() override;
+            void        endBatch() override;
+            std::string presetUuid() const override;
+            void        restorePreset(const std::string& uuid) override;
+            uint32_t    loadSerial() const override;
+            bool        onMessageThread() const override;
+
+        private:
+            Processor& p_;
+        };
+
         struct Globals                                           // the non-Mode-filtered values BlockParams carries
         {
             bool bypass = false, delta = false, listen = false, extKey = false;
@@ -163,6 +204,7 @@ namespace fcmp
         // raw -> resolveSlot -> resolve -> BlockParams (scratch: a Resolution the caller owns)
         static void buildBlockParams(const fcdsp::RawParams&, const Globals&, fcdsp::Resolution& scratch,
                                      fcdsp::BlockParams& out) noexcept;
+        void finishBatch(bool snap);                             // endBatch; the history's batches pass false
         void pullBlockParams() noexcept FCDSP_NONBLOCKING;       // audio thread: skipped while a batch is open
         void syncUi() noexcept;                                  // message thread: adopt a loaded UiState, or mirror ui_
         void publishLoadedUi(const UiState&) noexcept;           // any thread: a load's UiState, next generation
@@ -180,7 +222,10 @@ namespace fcmp
         juce::AudioProcessorValueTreeState apvts_;
         std::array<juce::RangedAudioParameter*, fcdsp::kNumParams> params_{};     // Pid order
         std::array<std::atomic<float>*, fcdsp::kNumParams> raw_{};                // Pid order
-        std::array<std::unique_ptr<funkgui::JuceParamPort>, fcdsp::kNumParams> ports_{};
+        std::atomic<std::uint32_t> loadSerial_{0};               // ADR-91: bumps on every accepted state load
+        HistoryHost historyHost_{ *this };
+        EditHistory history_{ historyHost_ };                    // before the ports, which hold a reference to it
+        std::array<std::unique_ptr<HistoryPort>, fcdsp::kNumParams> ports_{};
 
         // audio-thread state (also written by prepareToPlay and by SetupWatcher while processing is suspended)
         fcdsp::BlockParams block_{};                             // the previous BlockParams (reused during a batch)
@@ -190,6 +235,7 @@ namespace fcmp
         std::atomic<int> batch_{0};
         std::atomic<std::uint32_t> batchEpoch_{0};
         std::atomic<bool> snapPending_{false};                   // endBatch -> requestSnap at the next block start
+        std::atomic<bool> snapWanted_{false};                    // a batch in the open nest asked for the snap
 
         // setup (prepareToPlay / SetupWatcher). cfg_ and configured_ under setupMutex_; the atomics publish the
         // configured quality/budget, latency and rate to the audio thread and to readers on any thread.

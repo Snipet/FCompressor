@@ -14,7 +14,9 @@
 //   anim.*      (v1.2, ADR-90) ANIMATION is a stepped slider "Animation" at NORMAL (ease::timeScale() 1): → writes FAST to
 //               the preference and the scale is 0.5 at once; End: OFF, 0, and with it the overlay is gone one frame
 //               after Esc (at NORMAL it is still fading then); Home: SLOW, 2; a click on its NORMAL label goes back;
-//               no parameter is written.
+//               no parameter is written. The scale follows the preference written elsewhere (another window, or the
+//               file the host re-reads when an editor opens) at the next frame. At OFF the TRANSFER curve is the new
+//               Mode's on the frame of the switch (at NORMAL it is still easing then).
 //   cells.*     a click on HQ, 5 MS and EXTERNAL is one gesture on `quality`, `labudget` and `extkey` each, to the cell's
 //               value, outside any batch, and nothing else is written; a click on the selected cell writes nothing.
 //   new.*       NEW INSTANCES' cells write the machine preferences kPrefNewQuality / kPrefNewLookahead (UiPreferences)
@@ -50,6 +52,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -281,6 +284,38 @@ namespace
         r.host.tick(1, kDt);
         P.eq("anim.label_click_normal", b(ui::AnimationModel::index() == 1 && funkgui::ease::timeScale() == 1.0f), 1);
         P.eq("anim.no_parameter_written", writesTotal(r.facade), 0);
+
+        // The preference written elsewhere (another window in this process, or UiPreferences::reload()).
+        funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, 3);
+        r.host.tick(1, kDt);
+        P.eq("anim.follows_prefs", b(funkgui::ease::timeScale() == 0.25f), 1);
+        funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, 1);
+        r.host.tick(1, kDt);
+        P.eq("anim.follows_prefs_back", b(funkgui::ease::timeScale() == 1.0f), 1);
+
+        // The TRANSFER curve on a Mode switch (THRESHOLD moved with it, so the curves differ): its prims two frames
+        // after the switch against 0.3 s after it (the ease takes 160 ms at NORMAL).
+        const auto curveLands = [](int index) {
+            funkgui::UiPreferences::get().setInt(L::settings::kPrefAnimation, index);
+            Rig m;
+            m.facade.setMode("bus-g");
+            m.facade.setPlain(Pid::thr, -40.0f);                 // with it a curve of another shape
+            m.host.tick(2, kDt);
+            const auto curve = [&m]() {
+                std::vector<funkgui::Prim> out;
+                for (const funkgui::Prim& p : m.host.draw().prims)
+                    if (p.tag == ui::tag::transferCurve)
+                        out.push_back(p);
+                return out;
+            };
+            const std::vector<funkgui::Prim> first = curve();
+            m.host.tick(18, kDt);
+            const std::vector<funkgui::Prim> later = curve();
+            return !first.empty() && first.size() == later.size()
+                   && std::memcmp(first.data(), later.data(), first.size() * sizeof(funkgui::Prim)) == 0;
+        };
+        P.eq("anim.curve_off_lands_at_once", b(curveLands(4)), 1);
+        P.eq("anim.curve_normal_eases", b(!curveLands(1)), 1);
         funkgui::ease::setTimeScale(1.0f);
     }
 

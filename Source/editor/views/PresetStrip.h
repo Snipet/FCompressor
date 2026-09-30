@@ -42,6 +42,8 @@
 // destructor, SAVE's menu API and its state); no FZ4 declaration changed.
 #pragma once
 
+#include "editor/views/EditControls.h"
+
 #include "editor/SubView.h"
 
 #include <funkgui/a11y/A11yItem.h>
@@ -150,5 +152,9 @@ namespace fcmp::ui
         char   saveSpec_[160]{};                                 // SAVE's footer line
         std::unique_ptr<funkgui::MenuLook> menuLook_;            // live-editor menus (never headless)
         std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // a menu callback checks it: this view still exists
+
+        // ---- v1.2 (ADR-91): UNDO, REDO and A | B on the second line, routed first ---------------------------------------
+        EditControls edits_;
+        bool         editsPressed_ = false;                      // the press landed on them
     };
 }

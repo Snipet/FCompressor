@@ -49,6 +49,31 @@ public:
     // S12 lead revision 11 (U6's request), additive: save the current parameters and Mode over a user row, keeping its
     // name, category, uuid and tags; it becomes current() and unmodified. Factory rows refuse. Default: refuse.
     virtual bool     overwrite(int /*index*/) { return false; }
+    // v1.2 (ADR-91), additive: the current preset's identity as its uuid ("" = none), and putting one back without
+    // moving a parameter (the preset's values become the baseline, so modified() is recomputed against them; an
+    // unknown uuid or "" leaves no preset current). Undo, redo and A/B use them. Defaults: none, nothing.
+    virtual std::string currentUuid() const { return {}; }
+    virtual void     restoreCurrent(std::string_view /*uuid*/) {}
+};
+
+// v1.2 (ADR-91), additive: undo/redo of the editor's own edits and the A/B compare, for the preset strip. Message thread
+// only. Only what the editor writes is recorded (every gesture, and every batch such as a preset or Mode change), never
+// host automation, and only the parameters a sound is made of: the Mode-filtered ones, `mode`, `extkey` and `output`
+// (never QUALITY, LOOKAHEAD, BYPASS or the monitoring latches). A state load clears the history.
+class EditAccess {
+public:
+    virtual ~EditAccess() = default;
+    virtual bool        canUndo() const = 0;
+    virtual bool        canRedo() const = 0;
+    virtual bool        undo() = 0;                   // false: nothing to undo (or a gesture is open)
+    virtual bool        redo() = 0;
+    virtual const char* undoName() const = 0;         // what undo would take back: "THRESHOLD", "PRESET", "MODE", "A/B",
+    virtual const char* redoName() const = 0;         //   "3 CHANGES"; "" when there is nothing
+    virtual int         compareSlot() const = 0;      // 0 = A, 1 = B
+    virtual bool        slotUsed(int slot) const = 0; // A always; B once it has been selected or copied into
+    virtual void        selectSlot(int slot) = 0;     // A/B: the other slot's sound (and preset); an undo step
+    virtual void        copySlot() = 0;               // the current sound into the other slot; not an undo step
+    virtual uint32_t    revision() const = 0;         // bumps on every change of the above
 };
 
 // v1.2 lead addition (ADR-85), additive: what the settings screen's DIAGNOSTICS reports about this instance. Plain
@@ -96,6 +121,7 @@ public:
     virtual void beginBatch() = 0;
     virtual void endBatch() = 0;
     virtual PresetAccess& presets() = 0;                           // an empty implementation until P3 (03 §4.9)
+    virtual EditAccess& edits() = 0;                               // v1.2 (ADR-91): undo/redo, A/B
     // v1.2 lead addition (ADR-85), additive: the DIAGNOSTICS of the settings screen. Message thread. Default: nothing
     // known.
     virtual Diagnostics diagnostics() const { return {}; }

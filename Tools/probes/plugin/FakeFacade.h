@@ -22,6 +22,7 @@
 // - The script calls (script01, setPlain, setMode, …) are a host or automation writing: no gesture, not logged.
 #pragma once
 
+#include "plugin/EditHistory.h"
 #include "plugin/ProcessorFacade.h"
 
 #include "fcdsp/params/Pid.h"
@@ -163,6 +164,11 @@ namespace fcmp::probe
         bool overwrite(int index) override;
         int  overwrites() const noexcept { return count(Call::overwrite); }
 
+        // v1.2 (ADR-91): the current row's uuid ("" for none), and making a row current by uuid without moving a
+        // parameter (unknown or "": none). Not counted.
+        std::string currentUuid() const override;
+        void        restoreCurrent(std::string_view uuid) override;
+
     private:
         FakeFacade&      owner_;
         std::vector<Row> rows_;
@@ -206,6 +212,11 @@ namespace fcmp::probe
         void                      endBatch() override;
         PresetAccess&             presets() override;
         Diagnostics               diagnostics() const override;  // v1.2 (ADR-85): see the header comment
+        // v1.2 (ADR-91): the real EditHistory over this facade: the ports' gestures and the batches record, undo writes
+        // the ports as a script does (no gesture, not logged), presets are FakePresets'. bumpLoadSerial() is a state load.
+        EditAccess&               edits() override;
+        EditHistory&              history() noexcept { return history_; }
+        void                      bumpLoadSerial() noexcept { ++loadSerial_; }
 
         // scripting (a host, automation or the audio thread; no gestures, not logged)
         bool setMode(std::string_view key);                      // the key's slot; false: unknown key (unchanged)
@@ -246,6 +257,25 @@ namespace fcmp::probe
         std::optional<fcdsp::UiFrame>          frame_;
         std::optional<fcdsp::LookaheadBudget>  budget_;
         std::vector<FakeWrite>                 writes_;
+        class HistoryHost final : public EditHistory::Host
+        {
+        public:
+            explicit HistoryHost(FakeFacade& f) noexcept : f_(f) {}
+            float       raw(fcdsp::Pid p) const override;
+            void        write(fcdsp::Pid p, float plain) override;
+            void        beginBatch() override;
+            void        endBatch() override;
+            std::string presetUuid() const override;
+            void        restorePreset(const std::string& uuid) override;
+            uint32_t    loadSerial() const override { return f_.loadSerial_; }
+            bool        onMessageThread() const override { return true; }
+
+        private:
+            FakeFacade& f_;
+        };
+        uint32_t     loadSerial_ = 0;
+        HistoryHost  historyHost_{ *this };
+        EditHistory  history_{ historyHost_ };
         uint32_t publishes_ = 0;
         int      attach_ = 0;
         int      batchDepth_ = 0;
