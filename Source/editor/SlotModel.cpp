@@ -333,7 +333,8 @@ namespace fcmp::ui
                 case fcdsp::Pid::stmode: case fcdsp::Pid::voice:  case fcdsp::Pid::drive:  case fcdsp::Pid::automu:
                 case fcdsp::Pid::s2thr:  case fcdsp::Pid::s2atk:  case fcdsp::Pid::s2rel:  case fcdsp::Pid::mode:
                 case fcdsp::Pid::extkey: case fcdsp::Pid::listen: case fcdsp::Pid::delta:  case fcdsp::Pid::bypass:
-                case fcdsp::Pid::quality: case fcdsp::Pid::labudget: case fcdsp::Pid::kCount:
+                case fcdsp::Pid::quality: case fcdsp::Pid::labudget: case fcdsp::Pid::output:
+                case fcdsp::Pid::kCount:
                     break;
             }
         }
@@ -723,7 +724,8 @@ namespace fcmp::ui
             case fcdsp::Pid::voice:  case fcdsp::Pid::drive: case fcdsp::Pid::makeup: case fcdsp::Pid::automu:
             case fcdsp::Pid::mix:    case fcdsp::Pid::s2thr: case fcdsp::Pid::s2atk: case fcdsp::Pid::s2rel:
             case fcdsp::Pid::mode:   case fcdsp::Pid::extkey: case fcdsp::Pid::listen: case fcdsp::Pid::delta:
-            case fcdsp::Pid::bypass: case fcdsp::Pid::quality: case fcdsp::Pid::labudget: case fcdsp::Pid::kCount:
+            case fcdsp::Pid::bypass: case fcdsp::Pid::quality: case fcdsp::Pid::labudget: case fcdsp::Pid::output:
+            case fcdsp::Pid::kCount:
                 return false;
         }
         return false;

@@ -36,7 +36,10 @@
 //        f. blend: wet = (1 - w) wetOut + w wetIn, w the FadeClock weight per OS sample (20 ms, equal gain, shaped);
 //        g. mix inside the OS domain against osMain: y = (1 - mix) osMain + mix wet (E §5.3); delta: y = mix (osMain -
 //           sum_p w_p wet_p linFromDb(-preGainDb_p - makeupTotalDb_p)), faded in and out by the delta ramp;
-//        h. ONE down() (the STD Thiran section included, 01 §5.6);
+//        h. ONE down() (the STD Thiran section included, 01 §5.6), then the OUTPUT trim (v1.2, ADR-88): the linear gain
+//           of BlockParams::outputDb through the host's two-stage smoother, per base sample, on the processed signal
+//           only (the mix and delta alike; SC listen and bypass below replace it, untrimmed). A resting 0 dB touches
+//           nothing, so every output at OUTPUT 0 dB is bit-identical to the host without it;
 //        i. poison check (01 §5.8), then SC listen (the incoming path's filtered SC, delayed by the latency, decoded
 //           as the engine hears it, unity gain) and bypass (the input delayed by the latency), each a 20 ms ramp;
 //        j. the tap (incoming path) and, while attached, telemetry accumulation.
@@ -146,6 +149,16 @@ inline bool finiteF(float v) noexcept FCDSP_NONBLOCKING
 }
 
 inline float finiteOr0(float v) noexcept FCDSP_NONBLOCKING { return finiteF(v) ? v : 0.0f; }
+
+// BlockParams::outputDb as a linear gain (ADR-88): clamped to the host range (-24 ... +24 dB), a non-finite value is
+// 0 dB, and 0 dB is exactly 1 (the resting trim then touches nothing).
+inline float outputGain(float db) noexcept FCDSP_NONBLOCKING
+{
+    if (!finiteF(db) || db == 0.0f)
+        return 1.0f;
+    const float d = db < -24.0f ? -24.0f : (db > 24.0f ? 24.0f : db);
+    return fcdsp::exp2(d * kLog2PerDb);
+}
 
 inline bool finiteLanes(simd::f32x4 v) noexcept FCDSP_NONBLOCKING
 {
@@ -355,6 +368,8 @@ struct EngineHost::Impl {
     host::FadeClock fade{};
     Smoother4 mix{};                                    // lane 0: the incoming path's mix
     Smoother4 mixOut{};                                 // second stage of mix
+    Smoother4 output{};                                 // lane 0: the OUTPUT trim's linear gain (ADR-88), stage 1
+    Smoother4 outputOut{};                              // its second stage
     float lastMix = 1.0f;
     bool mixFresh = true;
     host::HostRamp bypass{}, listen{}, delta{};         // bypass/listen at the base rate, delta at the OS rate
@@ -472,6 +487,38 @@ struct EngineHost::Impl {
         mix.snap();
         mixOut.setTarget(mix.cur);
         mixOut.snap();
+    }
+    void snapOutput() noexcept FCDSP_NONBLOCKING
+    {
+        output.snap();
+        outputOut.setTarget(output.cur);
+        outputOut.snap();
+    }
+    // The OUTPUT trim on out[0..1][0, n) (file comment, step h): a resting gain is one multiply per sample, or nothing
+    // at exactly 1; a moving one ticks both stages per base sample.
+    void applyOutput(int n) noexcept FCDSP_NONBLOCKING
+    {
+        float* const o0 = out[0].data();
+        float* const o1 = out[1].data();
+        const float t = simd::lane<0>(output.tgt);
+        if (simd::lane<0>(output.cur) == t && simd::lane<0>(outputOut.cur) == t)
+        {
+            if (t == 1.0f)
+                return;
+            for (int i = 0; i < n; ++i)
+            {
+                o0[i] *= t;
+                o1[i] *= t;
+            }
+            return;
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            outputOut.setTarget(output.tick());
+            const float g = simd::lane<0>(outputOut.tick());
+            o0[i] *= g;
+            o1[i] *= g;
+        }
     }
     simd::f32x4 tickGain(int i) noexcept FCDSP_NONBLOCKING
     {
@@ -687,6 +734,8 @@ void EngineHost::configure(const HostConfig& cfg, const BlockParams& initial)
     s.os.configure(cfg.quality, cfg.maxBlock, 2);
     s.mix.prepare(s.fs, kGainSmoothMs);
     s.mixOut.prepare(s.fs, kGainSmoothMs);
+    s.output.prepare(s.fs, kGainSmoothMs);
+    s.outputOut.prepare(s.fs, kGainSmoothMs);
     s.bypass.prepare(s.fs);
     s.listen.prepare(s.fs);
     s.delta.prepare(s.fsOs);
@@ -702,6 +751,8 @@ void EngineHost::configure(const HostConfig& cfg, const BlockParams& initial)
     }
     s.mix.setTarget(simd::set1(eng.mix));
     s.snapMix();
+    s.output.setTarget(simd::set1(outputGain(initial.outputDb)));
+    s.snapOutput();
     s.bypass.setTarget(initial.bypass);
     s.bypass.snap();
     s.listen.setTarget(initial.listen);
@@ -777,6 +828,7 @@ void EngineHost::process(const ProcessIo& io, const BlockParams& bp) noexcept FC
         s.scDelay[in].setTarget(s.scDelayFor(in));
     }
     s.mix.setTarget(simd::set1(p.eng.mix));
+    s.output.setTarget(simd::set1(outputGain(bp.outputDb)));
     s.bypass.setTarget(bp.bypass || io.hostBypassed);
     s.listen.setTarget(bp.listen);
     s.delta.setTarget(bp.delta);
@@ -792,6 +844,7 @@ void EngineHost::process(const ProcessIo& io, const BlockParams& bp) noexcept FC
             s.scDelay[i].setDelay(s.scDelayFor(i));
         }
         s.snapMix();
+        s.snapOutput();
         s.bypass.snap();
         s.listen.snap();
         s.delta.snap();
@@ -952,11 +1005,12 @@ void EngineHost::process(const ProcessIo& io, const BlockParams& bp) noexcept FC
             float* dnOut[2] = { s.out[0].data(), s.out[1].data() };
             s.os.down(dnIn, nOs, dnOut);
         }
+        s.applyOutput(n);
 
         // i. poison (01 §5.8), then listen and bypass against their latency-aligned signals
         bool ok = allFinite(s.out[0].data(), n) && allFinite(s.out[1].data(), n) && s.path[cur].engine->finite()
                && s.smoothersFinite(cur) && s.scf[cur].finite() && finiteLanes(s.mix.cur)
-               && finiteLanes(s.mixOut.cur);
+               && finiteLanes(s.mixOut.cur) && finiteLanes(s.output.cur) && finiteLanes(s.outputOut.cur);
         if (fading)
             ok = ok && s.path[old].engine->finite() && s.smoothersFinite(old) && s.scf[old].finite();
         if (!ok)
@@ -1125,6 +1179,7 @@ void EngineHost::reset() noexcept FCDSP_NONBLOCKING
     s.mixFresh = true;
     s.snapGain(in);
     s.snapMix();
+    s.snapOutput();
     s.bypass.snap();
     s.listen.snap();
     s.delta.snap();

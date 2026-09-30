@@ -51,6 +51,13 @@
 //                                   for bit; another route: <= -120 dB against the decoded reference (NOTE)
 //   null.<q>.listen.key.mismatches  ... on an active external key: delay(key, L)
 //   null.<q>.listen.<on|off>.hf_ratio_db  the listen edge at a waveform peak of the 110 Hz tone: <= +3 dB
+//   null.<q>.output.mismatches      OUTPUT -6 dB (v1.2, ADR-88; BlockParams::outputDb from configure): every sample ==
+//                                   the 0 dB output times fcdsp::exp2(-6 kLog2PerDb), bit for bit (the trim is the
+//                                   last gain on the processed signal and nothing else moves)
+//   null.<q>.output.bypass.mismatches  bypass with OUTPUT -6 dB: delay(x, L) bit for bit (bypass is untrimmed)
+//   null.<q>.output.listen.mismatches  SC listen with OUTPUT -6 dB, as .listen.mismatches (listen is untrimmed)
+//   null.<q>.output.<on|off>.hf_ratio_db  OUTPUT 0 -> -12 dB and back at a waveform peak of the 110 Hz tone: <= +3 dB
+//   null.eco.output.clamp.mismatches   outputDb +100 renders exactly as +24 (the host range), NaN exactly as 0 dB
 // Character Modes: null.eco.thd_db, the THD of a 1 kHz tone at -10 dBFS, golden abs:0.5 (no spec row).
 // Latency and tail (01 §5.4, §5.6):
 //   null.latency.design_mismatches  EngineHost::latencyFor over Quality x budget at 44.1/48/96 kHz against
@@ -69,6 +76,7 @@
 #include "Tolerances.h"
 
 #include "fcdsp/analysis/Analysis.h"
+#include "fcdsp/core/FastMath.h"
 #include "fcdsp/core/Simd.h"
 #include "fcdsp/engine/EngineHost.h"
 #include "fcdsp/engine/IEngine.h"
@@ -87,6 +95,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <span>
@@ -641,6 +650,56 @@ FCMP_PROBE(dsp, null)
             BlockParams pOff = blockOf(en, raw), pOn = pOff;
             pOn.listen = true;
             clickRows(P, q + ".listen", cfg, pOff, pOn, false, false);
+        }
+
+        // ---- OUTPUT (v1.2, ADR-88): the processed signal times the trim; bypass and listen are untrimmed ------------
+        {
+            const BlockParams unity = blockOf(en, base);
+            BlockParams trim = unity;
+            trim.outputDb = -6.0f;
+            const Run y0 = render(cfg, unity, stereo), y6 = render(cfg, trim, stereo);
+            const float g = fcdsp::exp2(-6.0f * kLog2PerDb);
+            std::vector<float> wl(n), wr(n);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                wl[i] = y0.l[i] * g;
+                wr[i] = y0.r[i] * g;
+            }
+            P.eq(q + ".output.mismatches", mismatches(y6.l, wl) + mismatches(y6.r, wr), 0);
+
+            BlockParams byp = trim;
+            byp.bypass = true;
+            const Run rb = render(cfg, byp, stereo);
+            P.eq(q + ".output.bypass.mismatches",
+                 mismatches(rb.l, delayed(xl, rb.latency)) + mismatches(rb.r, delayed(xr, rb.latency)), 0);
+
+            BlockParams ls = trim;
+            ls.eng.scHpfHz = 0.0f;
+            ls.eng.sceDbOct = 0.0f;
+            ls.listen = true;
+            if (host::routeOf(ls.eng.stmode).domain == LaneDomain::lr)
+            {
+                const Run rl = render(cfg, ls, stereo);
+                P.eq(q + ".output.listen.mismatches",
+                     mismatches(rl.l, delayed(xl, rl.latency)) + mismatches(rl.r, delayed(xr, rl.latency)), 0);
+            }
+
+            RawParams raw = base;
+            raw[Pid::thr] = static_cast<float>(-6.0 - 8.0 - peakOff + static_cast<double>(e0.preGainDb));
+            BlockParams pOff = blockOf(en, raw), pOn = pOff;
+            pOn.outputDb = -12.0f;
+            clickRows(P, q + ".output", cfg, pOff, pOn, false, false);
+
+            if (qu == Quality::eco)
+            {
+                BlockParams over = unity, top = unity, nan = unity;
+                over.outputDb = 100.0f;
+                top.outputDb = 24.0f;
+                nan.outputDb = std::numeric_limits<float>::quiet_NaN();
+                const Run ro = render(cfg, over, stereo), rt = render(cfg, top, stereo), rn = render(cfg, nan, stereo);
+                P.eq(q + ".output.clamp.mismatches", mismatches(ro.l, rt.l) + mismatches(ro.r, rt.r)
+                                                     + mismatches(rn.l, y0.l) + mismatches(rn.r, y0.r), 0);
+            }
         }
     }
 

@@ -231,6 +231,7 @@ part of the text (K2 #25a). Host **names** are universal forever; only the text 
 | 26 | `bypass` | Bypass | Bool | | | 0 | (`getBypassParameter`) | host | no |
 | 27 | `quality` | Quality | Choice | ECO, STD, HQ | Index | STD | | **no** | no |
 | 28 | `labudget` | Lookahead Budget | Choice | OFF, 5 MS, 20 MS | Index | OFF | | **no** | no |
+| 29 | `output` | Output | Float | −24 … +24 dB | Linear | 0 | dB, one decimal (`fcdsp::formatOutput`); version hint 2 (v1.2, ADR-88) | yes | no |
 
 **Rules.**
 - The **APVTS layout order is `kApvtsOrder`** (§3.2), which equals this table's order for v1 and is frozen forever; later parameters are appended to it. `Pid` order is internal and may regroup (K2 #9). The IDs, not the order, are the automation identity: VST3 and AU parameter IDs are hashes of the string IDs, and state is keyed by ID.
@@ -1763,7 +1764,7 @@ struct PresetHooks {                                          // NEW: PresetMana
 - **Payload.** Parameters are **plain host units keyed by parameter ID** (HR `PresetTypes.h`), plus `attributes["modeId"]` and `attributes["modeRev"]`.
   - The `mode` index is **not** written as a `PARAM`, because `modeId` is authoritative.
   - A missing `modeId` loads `clean`.
-- **`isPresetParameter`:** every Mode-filtered parameter (§3.1 `inPresets`). It excludes `mode` (carried by `modeId`), `extkey`, `listen`, `delta`, `bypass`, `quality` and `labudget`.
+- **`isPresetParameter`:** every Mode-filtered parameter (§3.1 `inPresets`). It excludes `mode` (carried by `modeId`), `extkey`, `listen`, `delta`, `bypass`, `quality`, `labudget` and (v1.2) `output`.
 - **Apply order:**
   1. `beginApply` opens the batch;
   2. `applyBefore` sets `mode`;
@@ -2276,7 +2277,7 @@ Draft 1's questions, answered by this synthesis:
 1. **UI placement of 29 parameters** — answered by 02 §6.4: 21 slots in 3 rows of 7, AUTO/EXT/LISTEN words, globals in the chrome; no compound cells.
 2. **Lookahead budget UX** — the resolver locks `look` at 0 with a reason while the budget is OFF, and the footer shows a hint for any Mode with `wantsLookahead` (02 §6.6). Latency is never changed implicitly.
 3. **FunkGui scope** — 02 accepts `FunkPresets`; the user must confirm (`DECISIONS.md` Q2).
-4. **Candidate appends (v2 hints):** `lshape` (API link shape), `out` (global output trim), a reference-level parameter, per-Mode memory. Each is appended to `kApvtsOrder` with version hint 2.
+4. **Candidate appends (v2 hints):** `lshape` (API link shape), `out` (global output trim), a reference-level parameter, per-Mode memory. Each is appended to `kApvtsOrder` with version hint 2. The output trim shipped in v1.2 as `output` (ADR-88).
 5. **[H] constants that shape host ranges** (FET T0 = −12 dBFS and the dial law; Opto PEAK RED./GAIN laws; Bus G dial offset) must be fitted before a Mode enters `modes-ever.tsv`; after that, changing them needs `revision++` (§0).
 6. **`mix` 0–200 %** — a user-level choice: `DECISIONS.md` Q5 (recommended: keep, Clean only).
 7. **`kStdLatency`/`kHqLatency`** — frozen at FZ2 by the oversampler spike F6 (§5.6).

@@ -41,7 +41,8 @@ Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio is 
 
 - Windows, Linux, AAX, iOS; a resizable editor; plugin-side undo; host programs (`getNumPrograms() == 1`).
 - An Intel slice that has never run: v1 ships arm64-only unless an x86 verify has passed (ADR-47, Q6).
-- Per-Mode parameter memory, a global output trim, a link-shape or reference-level parameter (candidate v2 appends).
+- Per-Mode parameter memory, a link-shape or reference-level parameter (candidate v2 appends; the global output trim
+  shipped in v1.2 as `output`, ADR-88).
 - Modelling fidelity claims before the [H] (heuristic) constants are fitted (E's tag); every Mode states its `Rigor`.
 - Editing HardwareReverb. It is read-only; it migrates onto FunkGui only after FCompressor v1, once its goldens prove
   identical (user decision, ADR-04).

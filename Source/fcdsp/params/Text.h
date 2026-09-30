@@ -7,11 +7,12 @@
 //
 // Pid precondition (FZ0 errata, R-F0 #5): every function here takes a MODE-FILTERED Pid, idx(pid) < kNumModeParams
 // (the 22 values RawParams/ParamView hold; their indexers assert it). Calling formatHost/parseHost with a global is
-// out of bounds. The 7 globals are formatted by the plugin's host-text glue (plugin/HostText.cpp, P1), never here:
+// out of bounds. The 7 v1 globals are formatted by the plugin's host-text glue (plugin/HostText.cpp, P1), never here:
 //   mode                           the Mode's name from the registry: resolveSlot(slot).entry->desc->name (entry is
 //                                  nullptr on the null row, before slot 0 is registered)
 //   quality, labudget              kHostParams[idx(pid)].choices[index] ("ECO"/"STD"/"HQ", "OFF"/"5 MS"/"20 MS")
 //   extkey, listen, delta, bypass  "OFF" / "ON" (kit::kOffOn's labels)
+// The v1.2 global `output` (ADR-88) is a number, so it has its own pair below, shared by the host text and the UI.
 
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Resolve.h"
@@ -36,5 +37,12 @@ int formatHost(const ModeEntry&, const RawParams& current, Pid, float plain, cha
 // Host textToValue: accepts step labels/texts, Mode display numbers and units, universal units. false = no parse.
 // Mode-filtered Pid only (precondition above).
 bool parseHost(const ModeEntry&, const RawParams& current, Pid, std::string_view text, float& plainOut) noexcept;
+
+// The OUTPUT trim (v1.2, ADR-88): one decimal and "DB", U+2212 for a negative value ("−3.0 DB", "0.0 DB", "6.0 DB";
+// spoken "minus 3.0 decibels"). parseOutput takes a number with an optional DB ('-', U+2212 or '+'; "(...)", "=" and
+// "~" decorations ignored, as parseHost) and returns it legal (clamped to -24 ... +24); false = no parse.
+void formatOutputParts(float db, FormattedValue&) noexcept;
+int  formatOutput(float db, char* out, int cap) noexcept;
+bool parseOutput(std::string_view text, float& dbOut) noexcept;
 
 } // namespace fcdsp

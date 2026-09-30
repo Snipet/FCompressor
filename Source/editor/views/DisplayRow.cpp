@@ -1,5 +1,5 @@
 // Source/editor/views/DisplayRow.cpp — the display row (see DisplayRow.h): the big readout and its sub-readout, the
-// QUALITY and LOOKAHEAD cells, and the DELTA, BYPASS and CHARACTERISTICS latches.
+// OUTPUT trim, the QUALITY and LOOKAHEAD cells, and the DELTA, BYPASS and CHARACTERISTICS latches.
 #include "editor/views/DisplayRow.h"
 
 #include "editor/Layout.h"
@@ -48,6 +48,7 @@ namespace fcmp::ui
         constexpr uint32_t kDeltaLocal   = 48;
         constexpr uint32_t kBypassLocal  = 49;
         constexpr uint32_t kCharsLocal   = 50;
+        constexpr uint32_t kOutputLocal  = 64;                   // v1.2 (ADR-88)
 
         constexpr float kValueMaxW = D::kSubX - 8.0f - D::kValue.x;   // value + unit end 8 px before the sub-readout
         constexpr float kUnitGap   = 6.0f;                               // value, then unit (HR, RuleSlider)
@@ -285,7 +286,8 @@ namespace fcmp::ui
                   "LOOKAHEAD", D::kLookaheadCaption, a11yId(ViewIndex::displayRow, kBudgetLocal)),
           delta_(deltaModel_, D::kDelta, "DELTA", a11yId(ViewIndex::displayRow, kDeltaLocal)),
           bypass_(bypassModel_, D::kBypass, "BYPASS", a11yId(ViewIndex::displayRow, kBypassLocal)),
-          chars_(charsModel_, D::kCharacteristics, "CHARACTERISTICS", a11yId(ViewIndex::displayRow, kCharsLocal))
+          chars_(charsModel_, D::kCharacteristics, "CHARACTERISTICS", a11yId(ViewIndex::displayRow, kCharsLocal)),
+          output_(ctx, a11yId(ViewIndex::displayRow, kOutputLocal))
     {
         quality_.setSpokenTitle("Quality");
         budget_.setSpokenTitle("Lookahead budget");
@@ -301,6 +303,8 @@ namespace fcmp::ui
 
     int DisplayRow::widgetAt(funkgui::Point p) const noexcept
     {
+        if (output_.contains(p))
+            return wOutput;
         if (quality_.contains(p))
             return wQuality;
         if (budget_.contains(p))
@@ -329,6 +333,8 @@ namespace fcmp::ui
             return wBypass;
         if (id == chars_.a11yId())
             return wChars;
+        if (id == output_.a11yId())
+            return wOutput;
         return -1;
     }
 
@@ -406,6 +412,7 @@ namespace fcmp::ui
         delta_.tick(dt, p);
         bypass_.tick(dt, p);
         chars_.tick(dt, p);
+        output_.tick(dt, captured_ == wOutput || (captured_ < 0 && widgetAt(p) == wOutput));
 
         // The readout's dwell (HR :983-987): the last dragged or hovered Mode parameter stays 0.9 s after the hand
         // leaves it. PanelContext::hand is the last completed tick's.
@@ -425,10 +432,13 @@ namespace fcmp::ui
                 case wDelta:   ctx_.offerHand(fcdsp::Pid::delta, kind, delta_.a11yId(), kDeltaSpec); break;
                 case wBypass:  ctx_.offerHand(fcdsp::Pid::bypass, kind, bypass_.a11yId(), kBypassSpec); break;
                 case wChars:   ctx_.offerHand(fcdsp::kNoPid, kind, chars_.a11yId(), kCharsSpec); break;
+                case wOutput:  ctx_.offerHand(fcdsp::Pid::output, kind, output_.a11yId(), output_.spec()); break;
                 default:       break;
             }
         };
-        if (pointerOver_)
+        if (output_.dragging())
+            offer(wOutput, HandKind::drag);
+        else if (pointerOver_)
             offer(widgetAt(ctx_.pointer), HandKind::hover);
         if (ctx_.focusVisible)
             offer(widgetOf(ctx_.focus), HandKind::focus);
@@ -439,7 +449,7 @@ namespace fcmp::ui
         const bool active = activeAt_ >= 0.0 && ctx_.seconds - activeAt_ < static_cast<double>(layout::live::kActiveS);
         const bool falling = grBar_ > 0.0f && telemetry::feed(ctx_) != telemetry::Feed::fresh;   // the bar falls
         return !quality_.settled() || !budget_.settled() || !delta_.settled() || !bypass_.settled()
-            || !chars_.settled() || active || falling;
+            || !chars_.settled() || !output_.settled() || active || falling;
     }
 
     fcdsp::Pid DisplayRow::shownPid() const noexcept
@@ -667,6 +677,7 @@ namespace fcmp::ui
             drawGrBar(c, th);                                    // only beside GAIN REDUCTION
 
         const auto focused = [this](uint32_t id) { return ctx_.focusVisible && ctx_.focus == id; };
+        output_.draw(c, th, focused(output_.a11yId()));
         quality_.draw(c, th, focused(quality_.a11yId()));
         budget_.draw(c, th, focused(budget_.a11yId()));
         delta_.draw(c, th, focused(delta_.a11yId()));
@@ -695,6 +706,7 @@ namespace fcmp::ui
         funkgui::GestureController& g = *ctx_.gestures;
         switch (captured_)
         {
+            case wOutput:  output_.pointerDown(e, g); break;      // a drag is one gesture
             case wQuality: quality_.pointerDown(e, g); break;     // selects on down (HR :1709)
             case wBudget:  budget_.pointerDown(e, g); break;
             case wDelta:   delta_.pointerDown(e, g); break;       // arms; commits on up inside
@@ -708,6 +720,10 @@ namespace fcmp::ui
     {
         switch (captured_)
         {
+            case wOutput:
+                if (ctx_.gestures != nullptr)
+                    output_.pointerDrag(e, *ctx_.gestures);
+                break;
             case wDelta:  delta_.pointerDrag(e); break;           // dragging off disarms
             case wBypass: bypass_.pointerDrag(e); break;
             case wChars:  chars_.pointerDrag(e); break;
@@ -724,6 +740,7 @@ namespace fcmp::ui
         funkgui::GestureController& g = *ctx_.gestures;
         switch (w)
         {
+            case wOutput: output_.pointerUp(g); break;
             case wDelta:  delta_.pointerUp(e, g); break;
             case wBypass: bypass_.pointerUp(e, g); break;
             case wChars:  chars_.pointerUp(e, g); break;
@@ -738,6 +755,7 @@ namespace fcmp::ui
         funkgui::GestureController& g = *ctx_.gestures;
         switch (widgetOf(ctx_.focus))
         {
+            case wOutput:  return output_.key(e, g);
             case wQuality: return quality_.key(e, g);
             case wBudget:  return budget_.key(e, g);
             case wDelta:   return delta_.key(e, g);
@@ -751,6 +769,7 @@ namespace fcmp::ui
     {
         switch (widgetAt(p))
         {
+            case wOutput:  return funkgui::Cursor::leftRight;
             case wQuality: return quality_.cursorAt(p);
             case wBudget:  return budget_.cursorAt(p);
             case wDelta:   return delta_.cursorAt(p);
@@ -776,6 +795,7 @@ namespace fcmp::ui
             it.description = r.sub;
         it.readOnly = true;
         out.push_back(std::move(it));
+        output_.accessibility(out);
         quality_.accessibility(out);
         budget_.accessibility(out);
         delta_.accessibility(out);
@@ -785,8 +805,8 @@ namespace fcmp::ui
 
     int DisplayRow::focusOrder(std::span<uint32_t> out) const
     {
-        const std::array<uint32_t, 5> stops { quality_.a11yId(), budget_.a11yId(), delta_.a11yId(), bypass_.a11yId(),
-                                              chars_.a11yId() };
+        const std::array<uint32_t, 6> stops { output_.a11yId(), quality_.a11yId(), budget_.a11yId(), delta_.a11yId(),
+                                              bypass_.a11yId(), chars_.a11yId() };
         const std::size_t n = std::min(out.size(), stops.size());
         std::copy_n(stops.begin(), n, out.begin());
         return static_cast<int>(n);
@@ -804,7 +824,21 @@ namespace fcmp::ui
             case wDelta:   delta_.a11yAction(id, a, g); break;
             case wBypass:  bypass_.a11yAction(id, a, g); break;
             case wChars:   chars_.a11yAction(id, a, g); break;
+            case wOutput:  output_.a11yAction(a, value, g); break;
             default:       break;
         }
+    }
+
+    void DisplayRow::doubleClick(const funkgui::PointerEvent& e)
+    {
+        if (ctx_.gestures != nullptr && (captured_ == wOutput || (captured_ < 0 && widgetAt({ e.x, e.y }) == wOutput)))
+            output_.reset(*ctx_.gestures);
+    }
+
+    bool DisplayRow::wheel(const funkgui::WheelEvent& e)
+    {
+        if (ctx_.gestures == nullptr || ctx_.host == nullptr || widgetAt({ e.x, e.y }) != wOutput)
+            return false;
+        return output_.wheel(e, *ctx_.gestures, ctx_.host->nowSeconds());
     }
 }

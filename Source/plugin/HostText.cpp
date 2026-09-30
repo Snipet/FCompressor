@@ -1,4 +1,4 @@
-// Source/plugin/HostText.cpp: host value text for the 29 parameters (P1, S7; 01 §3.1 "Unit / host text", §4.6; K2
+// Source/plugin/HostText.cpp: host value text for the 30 parameters (P1, S7; 01 §3.1 "Unit / host text", §4.6; K2
 // #25a-b; S0 review R-F0 #5).
 //
 // Mode-filtered Pids (idx < kNumModeParams) go through fcdsp::formatHost / parseHost with the processor's currentRaw()
@@ -12,6 +12,7 @@
 //                                  spaces ignored ("5ms"), or the index.
 //   extkey, listen, delta, bypass  "OFF"/"ON" (kit::kOffOn's labels, 01 §4.6); parse OFF/ON, 0/1, FALSE/TRUE, and
 //                                  EXT for extkey (01 §3.1's "OFF/EXT").
+//   output (v1.2, ADR-88)          fcdsp::formatOutput / parseOutput ("−3.0 DB"), the UI's text.
 // Thread-safe (JUCE calls value text from any thread; validate.sh's pluginval exercises it): no state, relaxed loads,
 // pure fcdsp functions over stack buffers. Not for the audio thread (juce::String allocates).
 #include "plugin/Processor.h"
@@ -151,6 +152,12 @@ namespace fcmp
                 return modeText(plain);
             if (h.choices != nullptr)
                 return juce::String(h.choices[choiceOf(h, plain)]);
+            if (pid == Pid::output)
+            {
+                char buf[kTextCapacity];
+                fcdsp::formatOutput(plain, buf, kTextCapacity);
+                return juce::String::fromUTF8(buf);
+            }
             return plain >= 0.5f ? "ON" : "OFF";                  // extkey, listen, delta, bypass
         }
     } // namespace
@@ -198,6 +205,8 @@ namespace fcmp
         const fcdsp::HostParam& h = fcdsp::kHostParams[i];
         if (h.choices != nullptr)
             return parseChoice(h, text, plainOut);
+        if (pid == Pid::output)
+            return fcdsp::parseOutput(std::string_view(text.toRawUTF8()), plainOut);
         return parseSwitch(pid, text, plainOut);
     }
 } // namespace fcmp

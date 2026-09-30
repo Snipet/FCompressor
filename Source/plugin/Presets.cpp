@@ -5,7 +5,7 @@
 //
 // Hooks (01 §9.2):
 //   isPresetParameter  the 22 Mode-filtered parameters (kHostParams inPresets): never mode, extkey, listen, delta,
-//                      bypass, quality or labudget (01 §3.1 rules)
+//                      bypass, quality, labudget or (v1.2, ADR-88) output (01 §3.1 rules)
 //   beginApply         facade.beginBatch(): the audio thread keeps the previous BlockParams (K2 #23)
 //   applyBefore        `mode` from the preset's modeId (registered, or retired -> its successor; missing or unknown ->
 //                      clean); a plain Mode write, snapped on read like every other (K2 #4)

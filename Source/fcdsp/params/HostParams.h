@@ -1,7 +1,8 @@
 #pragma once
 
-// The universal host-parameter superset (01 §3.1, §3.3): 29 parameters, their plain ranges, the normalised <-> plain
-// maps and the defaults. IDs, plain ranges, maps and defaults are v1-forever. Implemented in HostParams.cpp.
+// The universal host-parameter superset (01 §3.1, §3.3): 30 parameters (29 at v1, `output` since v1.2, ADR-88), their
+// plain ranges, the normalised <-> plain maps and the defaults. IDs, plain ranges, maps and defaults are v1-forever.
+// Implemented in HostParams.cpp.
 //
 // The host maps use libm (params/ is exempt from the audio-path rule, 01 §2.2): they are not the per-sample path, and
 // the resolver snaps their result anyway. Golden rows that depend on host-map values use absrel, never exact (K2 #14).

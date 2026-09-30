@@ -141,6 +141,7 @@ namespace fcmp::probe
         bp.delta = on(params_, fcdsp::Pid::delta);
         bp.listen = on(params_, fcdsp::Pid::listen);
         bp.extKey = on(params_, fcdsp::Pid::extkey);
+        bp.outputDb = params_.fakePort(fcdsp::Pid::output).plain();
         return bp;
     }
 

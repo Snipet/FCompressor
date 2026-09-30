@@ -152,9 +152,10 @@ namespace fcmp
     private:
         friend class SetupWatcher;
 
-        struct Globals                                           // the non-Mode-filtered switches BlockParams carries
+        struct Globals                                           // the non-Mode-filtered values BlockParams carries
         {
             bool bypass = false, delta = false, listen = false, extKey = false;
+            float outputDb = 0.0f;                               // v1.2 (ADR-88): the OUTPUT trim
         };
 
         void snapshot(fcdsp::RawParams&) const noexcept;         // the 22 raw values, effective slot, configured budget

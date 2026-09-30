@@ -46,6 +46,7 @@ struct BlockParams {                                   // built by the processor
     uint8_t slot = 0;                                  // effective Mode slot
     EngineParams eng{};                                // resolve(slot, raw).eng
     bool bypass = false, delta = false, listen = false, extKey = false;
+    float outputDb = 0.0f;                             // v1.2 (ADR-88): the OUTPUT trim, dB (legal: -24 ... +24)
 };
 
 struct ProcessIo {
