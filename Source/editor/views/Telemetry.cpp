@@ -30,6 +30,12 @@ namespace fcmp::ui::telemetry
         return f.fresh ? Feed::fresh : Feed::stale;
     }
 
+    float sampleRate(const PanelContext& ctx) noexcept
+    {
+        const FrameState& f = ctx.frame;
+        return feed(ctx) != Feed::none && f.ui.sampleRate > 0.0f ? f.ui.sampleRate : kDefaultFs;
+    }
+
     fcdsp::UiFrame atRest(const fcdsp::UiFrame& u) noexcept
     {
         fcdsp::UiFrame r = u;
