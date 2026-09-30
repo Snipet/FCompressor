@@ -4,6 +4,7 @@
 //
 //   fcmp_probe_plugin ui.dump --mode <key> --golden-root <dir> --arch <arch> -- --view <id> --out <x.dump> [--png <x.png>]
 //                                  [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] [--live <seconds>]
+//                                  [--focus <view>:<local>] [--keys <spec>]
 //                                  (flags after "--" are ui.dump's own; S5 lead revision)
 //
 // It renders one view of fcmp::ui::views() for one Mode exactly as ui.geometry does (a FakeFacade, Panel{skipHint,
@@ -12,6 +13,8 @@
 // --theme 0. `funkgui_framerender x.dump x.png 2` renders any dump the same way. Missing parent directories of the
 // outputs are created. --wheel (ADR-84) sends one trackpad scroll of that many points (> 0: the content moves up) at the
 // overlay's centre after the view is set, to look at a list scrolled by the pixel.
+// --focus (v1.2) gives the keyboard focus to the a11y id (ViewIndex number):(local), ring shown; --keys then sends
+// HeadlessHost::keys(spec) (a typed-value field, ADR-89, is drawn open this way: --focus 5:1 --keys return).
 // --preset (v1.2) loads the Mode's factory preset of that name (its values, and the strip shows it current). --live
 // (v1.2, the README's screenshot) puts the Panel over EngineFacade, a real EngineHost, and plays a deterministic groove
 // through it for that many seconds at 60 frames per second before the frame is written, so the meters, the GR readout,
@@ -71,6 +74,8 @@ namespace
         float       wheelPoints = 0.0f;                          // --wheel: one smooth wheel event, points
         std::string preset;                                      // --preset: a factory preset of the Mode
         float       liveSeconds = 0.0f;                          // --live: seconds of the groove through the engine
+        std::string focus;                                       // --focus <view>:<local>
+        std::string keys;                                        // --keys <HeadlessHost::keys spec>
         std::string error;                                       // non-empty: a usage error
     };
 
@@ -87,7 +92,8 @@ namespace
             const bool hasValue = i + 1 < argc && argv[i + 1] != nullptr;
             const std::string value = hasValue ? argv[i + 1] : "";
             if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme"
-                || flag == "--wheel" || flag == "--preset" || flag == "--live")
+                || flag == "--wheel" || flag == "--preset" || flag == "--live" || flag == "--focus"
+                || flag == "--keys")
             {
                 if (!hasValue || value.empty() || value.starts_with("--"))
                 {
@@ -109,6 +115,10 @@ namespace
                     a.preset = value;
                 else if (flag == "--live")
                     a.liveSeconds = std::strtof(value.c_str(), nullptr);
+                else if (flag == "--focus")
+                    a.focus = value;
+                else if (flag == "--keys")
+                    a.keys = value;
                 else
                     a.theme = value == "0" ? 0 : value == "1" ? 1 : -1;
             }
@@ -172,7 +182,7 @@ namespace
         {
             std::fprintf(stderr, "ui.dump: %s\nusage: fcmp_probe_plugin ui.dump --view <id> --mode <key> --out <x.dump> "
                                  "[--png <x.png>] [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] "
-                                 "[--live <seconds>]\n", a.error.c_str());
+                                 "[--live <seconds>] [--focus <view>:<local>] [--keys <spec>]\n", a.error.c_str());
             return 1;
         }
         const ui::ViewSpec* view = ui::findView(a.view);
@@ -217,6 +227,19 @@ namespace
             w.dy = -a.wheelPoints / 512.0f;                      // JUCE on macOS: scrollingDeltaY / 512
             w.smooth = true;
             panel.wheel(w);
+        }
+        if (!a.focus.empty() || !a.keys.empty())
+        {
+            host.settle(kMaxSettle, kDt);
+            if (const std::size_t colon = a.focus.find(':'); colon != std::string::npos)
+            {
+                const auto v = static_cast<uint32_t>(std::strtoul(a.focus.substr(0, colon).c_str(), nullptr, 10));
+                const auto l = static_cast<uint32_t>(std::strtoul(a.focus.substr(colon + 1).c_str(), nullptr, 10));
+                panel.a11yAction(ui::a11yId(static_cast<ui::ViewIndex>(v), l), funkgui::A11yAction::focus);
+                host.tick(1, kDt);
+            }
+            if (!a.keys.empty())
+                host.keys(a.keys.c_str());
         }
         int frames = 0;
         if (engine)
