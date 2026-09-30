@@ -2,6 +2,7 @@
 #include "editor/views/ValueEntry.h"
 
 #include "editor/Tags.h"
+#include "editor/views/AnimationModel.h"
 
 #include <funkgui/canvas/Canvas.h>
 #include <funkgui/core/Col.h>
@@ -101,7 +102,7 @@ namespace fcmp::ui
 
     void ValueEntry::tick(float dt) noexcept
     {
-        flash_ = std::max(0.0f, flash_ - std::max(dt, 0.0f) / kFlashS);
+        flash_ = std::max(0.0f, flash_ - AnimationModel::scaledStep(dt, kFlashS));   // ADR-90's speed
     }
 
     void ValueEntry::draw(funkgui::Canvas& c, const funkgui::Theme& th) const

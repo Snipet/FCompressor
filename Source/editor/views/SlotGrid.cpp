@@ -15,6 +15,7 @@
 #include "fcdsp/telemetry/UiFrame.h"
 
 #include <funkgui/canvas/Canvas.h>
+#include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
 #include <funkgui/panel/HostServices.h>
@@ -303,7 +304,7 @@ namespace fcmp::ui
             ctx_.slot(layout::kSlots[i].pid).view(after);
             const bool changed = before.state != after.state || !sameText(before.label, after.label)
                               || !sameText(before.tag, after.tag);
-            sliders_[i]->flashLabel(changed ? layout::landing::kFlashS : 0.0f);
+            sliders_[i]->flashLabel(changed ? layout::landing::kFlashS * funkgui::ease::timeScale() : 0.0f);   // ADR-90
         }
         modeSerial_ = ctx_.frame.modeSerial;
     }

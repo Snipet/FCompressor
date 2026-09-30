@@ -16,6 +16,7 @@
 #include "editor/views/PresetBrowser.h"
 #include "editor/views/PresetStrip.h"
 #include "editor/views/Settings.h"
+#include "editor/views/AnimationModel.h"
 #include "editor/views/SlotGrid.h"
 #include "editor/views/ValueEntry.h"
 
@@ -199,6 +200,7 @@ namespace fcmp::ui
           ctx_(*this, facade, options_, funkgui::FontService::get().atlas(), *history_, *preview_)
     {
         tag::registerTagNames();
+        AnimationModel::apply();                                 // ADR-90: the machine's ANIMATION speed
         for (std::size_t i = 0; i < fcdsp::kNumModeParams; ++i)
         {
             slots_[i] = std::make_unique<SlotModel>(facade_, ctx_.frame, static_cast<fcdsp::Pid>(i));
@@ -451,7 +453,7 @@ namespace fcmp::ui
             colourAmt_ = colourFrom_ == colourTo_ ? 1.0f : 0.0f;
         }
         if (colourAmt_ < 1.0f)
-            colourAmt_ = std::min(1.0f, colourAmt_ + dt / layout::kModeColourS);
+            colourAmt_ = std::min(1.0f, colourAmt_ + AnimationModel::scaledStep(dt, layout::kModeColourS));   // ADR-90
         overlayAmt_ = funkgui::ease::toward(overlayAmt_, overlay_ != Overlay::none ? 1.0f : 0.0f, dt,
                                             layout::browser::kOpenTau, layout::chars::kScreenFadeSnap);
         if (overlayAmt_ <= 0.0f && overlay_ == Overlay::none)

@@ -271,7 +271,8 @@ namespace fcmp::ui
                       a11yId(ViewIndex::settings, kNewQualityLocal)),
           newBudget_(newBudgetModel_, choiceCells(ctx.atlas, fcdsp::Pid::labudget, S::kNewBudgetY),
                      funkgui::CellStyle::text, "LOOKAHEAD", captionAt(S::kNewBudgetY),
-                     a11yId(ViewIndex::settings, kNewBudgetLocal))
+                     a11yId(ViewIndex::settings, kNewBudgetLocal)),
+          animation_(animationModel_, S::kAnimation, a11yId(ViewIndex::settings, kAnimationLocal))
     {
         groups_ = { &quality_, &budget_, &key_, &newQuality_, &newBudget_ };
         quality_.setSpokenTitle("Quality");
@@ -605,6 +606,18 @@ namespace fcmp::ui
             s->tick(dt, pointer);
         const bool overCopy = copyRect_.contains(pointer);
         copyHover_ = funkgui::ease::hover(copyHover_, overCopy, dt);
+        const uint32_t animId = animation_.a11yId();
+        const bool animFocus = ctx_.focusVisible && ctx_.focus == animId;
+        const bool overAnim = animation_.contains(pointer);
+        animation_.tick(dt, overAnim || animationCaptured_, animFocus, ctx_.alwaysChrome);
+        char animSpec[sizeof ctx_.handNext.spec];
+        animation_.specLine(animSpec, sizeof animSpec);
+        if (animationCaptured_ && ctx_.pointerPressed)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::drag, animId, animSpec);
+        if (overAnim)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::hover, animId, animSpec);
+        if (animFocus)
+            ctx_.offerHand(fcdsp::kNoPid, HandKind::focus, animId, animSpec);
 
         for (int g = 0; g < kGroups; ++g)
         {
@@ -628,6 +641,8 @@ namespace fcmp::ui
         for (const funkgui::SegmentedSelector* s : groups_)
             if (!s->settled())
                 return true;
+        if (!animation_.settled())
+            return true;
         const bool overCopy = copyRect_.contains(pointerForWidgets());
         return copiedUntil_ >= 0.0 || !funkgui::ease::sameBits(copyHover_, overCopy ? 1.0f : 0.0f);
     }
@@ -645,6 +660,7 @@ namespace fcmp::ui
             c.hairlineH(a.x, a.bottom() - 1.0f, a.w, th.ink16);
             c.hairlineV(S::kDividerX, S::kHeadingY + 16.0f, barRuleY - S::kHeadingY - 28.0f, th.ink16);
             c.hairlineH(a.x, S::kRuleY, S::kColumnRight - a.x, th.ink16);
+            c.hairlineH(a.x, S::kInterfaceRuleY, S::kColumnRight - a.x, th.ink16);
             c.hairlineH(a.x, barRuleY, a.w, th.ink16);
         }
 
@@ -665,6 +681,9 @@ namespace fcmp::ui
             heading("AUDIO", "THIS INSTANCE", S::kLabelX, S::kHeadingY);
             heading("DIAGNOSTICS", nullptr, S::kDiagKeyX, S::kHeadingY);
             heading("NEW INSTANCES", "THIS COMPUTER", S::kLabelX, S::kNewHeadingY);
+            heading("INTERFACE", "THIS COMPUTER", S::kLabelX, S::kInterfaceHeadingY);
+            fitText("HOW FAST THE PANEL MOVES", S::kAnimationNote.x, S::kAnimationNote.y,
+                    S::kColumnRight - S::kAnimationNote.x, T::kMicro, th.ink32);
 
             // QUALITY's table and LOOKAHEAD's, each value centred on its cell; the selected column ink70.
             const int q = qualityModel_.active();
@@ -710,6 +729,7 @@ namespace fcmp::ui
 
         for (int g = 0; g < kGroups; ++g)
             group(g).draw(c, th, ctx_.focusVisible && groupOf(ctx_.focus) == g);
+        animation_.draw(c, th, ctx_.focusVisible && ctx_.focus == animation_.a11yId());
 
         // DIAGNOSTICS.
         for (std::size_t i = 0; i < rows_.size(); ++i)
@@ -765,12 +785,21 @@ namespace fcmp::ui
             return;
         for (funkgui::SegmentedSelector* s : groups_)
             s->pointerDown(e, *ctx_.gestures);                   // each takes only a press on its own cells
+        animationCaptured_ = false;
+        if (animation_.contains({ e.x, e.y }) && ctx_.host != nullptr)
+        {
+            animationCaptured_ = true;
+            ctx_.focus = animation_.a11yId();                    // the ring hidden, as a slot's (ADR-89)
+            animation_.pointerDown(e, *ctx_.gestures, *ctx_.host);
+        }
         if (!e.popup && copyRect_.contains({ e.x, e.y }))
             copyArmed_ = true;                                   // COPY REPORT fires on a release inside
     }
 
     void Settings::pointerDrag(const funkgui::PointerEvent& e)
     {
+        if (animationCaptured_ && ctx_.gestures != nullptr)
+            animation_.pointerDrag(e, *ctx_.gestures);
         if (copyArmed_ && !copyRect_.contains({ e.x, e.y }))
             copyArmed_ = false;                                  // dragging off cancels
     }
@@ -779,6 +808,9 @@ namespace fcmp::ui
     {
         const bool fire = copyArmed_ && copyRect_.contains({ e.x, e.y }) && isOpen();
         copyArmed_ = false;
+        if (animationCaptured_ && ctx_.gestures != nullptr)
+            animation_.pointerUp(e, *ctx_.gestures);
+        animationCaptured_ = false;
         if (fire)
             copyReport();
     }
@@ -789,6 +821,8 @@ namespace fcmp::ui
             return false;                                        // Esc: the Panel closes the overlay
         if (const int g = groupOf(ctx_.focus); g >= 0 && ctx_.focusVisible && ctx_.gestures != nullptr)
             return group(g).key(e, *ctx_.gestures);
+        if (ctx_.focusVisible && ctx_.focus == animation_.a11yId() && ctx_.gestures != nullptr)
+            return animation_.key(e, *ctx_.gestures);
         if (ctx_.focusVisible && ctx_.focus == a11yId(ViewIndex::settings, kCopyLocal)
             && (e.key == funkgui::Key::enter || e.key == funkgui::Key::space))
         {
@@ -803,6 +837,8 @@ namespace fcmp::ui
         for (const funkgui::SegmentedSelector* s : groups_)
             if (s->contains(p))
                 return s->cursorAt(p);
+        if (animation_.contains(p))
+            return funkgui::Cursor::leftRight;
         return copyRect_.contains(p) ? funkgui::Cursor::pointingHand : funkgui::Cursor::normal;
     }
 
@@ -812,6 +848,13 @@ namespace fcmp::ui
     {
         for (const funkgui::SegmentedSelector* s : groups_)
             s->accessibility(out);
+        {
+            funkgui::A11yItem anim;
+            animation_.accessibility(anim);
+            anim.title = "Animation";
+            anim.help = "How fast the panel's fades and eases run, on every FCompressor on this computer";
+            out.push_back(std::move(anim));
+        }
 
         const auto staticText = [&out](uint32_t local, const char* title, const char* value, Rect bounds) {
             funkgui::A11yItem it;
@@ -849,6 +892,8 @@ namespace fcmp::ui
         for (int g = 0; g < kGroups && n < out.size(); ++g)
             out[n++] = group(g).a11yId();
         if (n < out.size())
+            out[n++] = animation_.a11yId();                      // ADR-90
+        if (n < out.size())
             out[n++] = a11yId(ViewIndex::settings, kCopyLocal);
         return static_cast<int>(n);
     }
@@ -865,6 +910,21 @@ namespace fcmp::ui
         }
         if (const int g = groupOf(id); g >= 0 && ctx_.gestures != nullptr)
             group(g).a11yAction(id, a, value, *ctx_.gestures);
+        if (id == animation_.a11yId() && ctx_.gestures != nullptr)
+            animation_.a11yAction(a, value, *ctx_.gestures);
+    }
+
+    void Settings::doubleClick(const funkgui::PointerEvent& e)
+    {
+        if (isOpen() && ctx_.gestures != nullptr && animation_.contains({ e.x, e.y }))
+            animation_.doubleClick(*ctx_.gestures);             // NORMAL
+    }
+
+    bool Settings::wheel(const funkgui::WheelEvent& e)
+    {
+        if (!isOpen() || ctx_.gestures == nullptr || ctx_.host == nullptr || !animation_.contains({ e.x, e.y }))
+            return false;
+        return animation_.wheel(e, *ctx_.gestures, ctx_.host->nowSeconds());
     }
 
     uint32_t Settings::a11yRevision() const { return revision_; }

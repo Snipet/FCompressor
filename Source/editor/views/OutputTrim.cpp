@@ -11,6 +11,7 @@
 
 #include <funkgui/canvas/Canvas.h>
 #include <funkgui/core/Col.h>
+#include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
 #include <funkgui/panel/HostServices.h>
@@ -31,7 +32,6 @@ namespace fcmp::ui
         namespace T = funkgui::type;
 
         constexpr fcdsp::Pid kPid = fcdsp::Pid::output;
-        constexpr float kHoverInS = 0.09f, kHoverOutS = 0.16f;   // RuleSlider's hover ease
         constexpr float kSpanFinePx = 1200.0f, kSpanUltraPx = 6000.0f;
         constexpr float kWheelStep = 0.025f, kWheelFine = 0.005f;   // track per wheel unit (RuleSlider)
 
@@ -53,7 +53,7 @@ namespace fcmp::ui
 
     bool OutputTrim::settled() const noexcept
     {
-        return !dragging_ && (hover_ <= 0.0f || hover_ >= 1.0f) && entry_.settled();
+        return !dragging_ && (hover_ == 0.0f || hover_ == 1.0f) && entry_.settled();
     }
 
     const char* OutputTrim::spec() const noexcept { return entry_.open() ? kEntrySpec : kSpec; }
@@ -81,9 +81,7 @@ namespace fcmp::ui
     void OutputTrim::tick(float dt, bool underHand)
     {
         entry_.tick(dt);
-        const float target = underHand || dragging_ ? 1.0f : 0.0f;
-        const float step = std::max(dt, 0.0f) / (target > hover_ ? kHoverInS : kHoverOutS);
-        hover_ = target > hover_ ? std::min(target, hover_ + step) : std::max(target, hover_ - step);
+        hover_ = funkgui::ease::hover(hover_, underHand || dragging_, dt);   // RuleSlider's ease (and ADR-90's speed)
     }
 
     void OutputTrim::draw(funkgui::Canvas& c, const funkgui::Theme& th, bool focusRing) const

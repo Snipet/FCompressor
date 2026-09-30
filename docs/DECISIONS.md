@@ -860,6 +860,23 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     nothing is written, the field stays with the text selected and its border flashes. A Mode change closes it.
   - **Tests:** `ui.entry` (34 rows): each way to open, commit and cancel, the refusal, units, a stepped slot, refused
     slots, a Mode change and OUTPUT. No golden moves: a closed field draws nothing.
+- **ADR-90 An ANIMATION speed in the settings screen (v1.2).** The user asked for a slider controlling how fast the fading
+  animations run, the fastest setting being none.
+  - **FunkGui v0.10.0** (`ease::setTimeScale`): every tau `ease::toward`, `hover` and `shown` take is multiplied by a
+    process-wide scale, 1 by default (bit for bit the eases as before), 0 for none. That covers every widget, the
+    screen crossfade and the browser and settings fades, the Mode texts' crossfade and the preset browser's notch
+    glide. The product's own timed fades follow it through `AnimationModel::scaledStep`: the Mode colour (0.25 s),
+    the live marks' fade when the audio stops (0.4 s), a typed field's refusal flash; the landing flash of a Mode
+    change is scaled likewise. Meters, clocks, dwells and messages (SAVED, COPIED, the first-run hint) are not
+    animations and keep their time.
+  - **The setting:** INTERFACE · THIS COMPUTER, under NEW INSTANCES: ANIMATION, a stepped slider (a RuleSlider over
+    `views/AnimationModel.h`, which is its own `ParamPort` so the slider writes it as it writes a parameter) with
+    SLOW (×2), NORMAL (×1, the default), FAST (×0.5), FASTER (×0.25) and OFF. It is a machine preference
+    (`animationSpeed` in UiPreferences, the detent index), set at once in the process (every open editor follows)
+    and applied by each Panel when it is built. It is the settings screen's Tab stop before COPY REPORT.
+  - **Tests:** `ui.settings` gains `anim.*` (the slider, its keys and a label click, the scale at each step, the
+    overlay gone one frame after Esc at OFF and still fading at NORMAL, no parameter written); `fg.ease` (FunkGui)
+    12 rows. Goldens move only for the settings view (`ui.geometry`, `ui.a11y`).
 
 ## HardwareReverb migration
 
