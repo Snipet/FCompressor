@@ -14,7 +14,8 @@
 // outputs are created. --wheel (ADR-84) sends one trackpad scroll of that many points (> 0: the content moves up) at the
 // overlay's centre after the view is set, to look at a list scrolled by the pixel.
 // --focus (v1.2) gives the keyboard focus to the a11y id (ViewIndex number):(local), ring shown; --keys then sends
-// HeadlessHost::keys(spec) (a typed-value field, ADR-89, is drawn open this way: --focus 5:1 --keys return).
+// HeadlessHost::keys(spec) (a typed-value field, ADR-89, is drawn open this way: --focus 2:1 --keys return, THRESHOLD:
+// the slot grid is view 2, its slots are 1 + their layout::kSlots index).
 // --preset (v1.2) loads the Mode's factory preset of that name (its values, and the strip shows it current). --live
 // (v1.2, the README's screenshot) puts the Panel over EngineFacade, a real EngineHost, and plays a deterministic groove
 // through it for that many seconds at 60 frames per second before the frame is written, so the meters, the GR readout,
@@ -79,6 +80,18 @@ namespace
         std::string error;                                       // non-empty: a usage error
     };
 
+
+    // "<view>:<local>": both decimal, the view a ViewIndex.
+    bool focusValid(const std::string& f)
+    {
+        const std::size_t colon = f.find(':');
+        if (colon == std::string::npos || colon == 0 || colon + 1 >= f.size())
+            return false;
+        for (std::size_t i = 0; i < f.size(); ++i)
+            if (i != colon && (f[i] < '0' || f[i] > '9'))
+                return false;
+        return std::strtoul(f.substr(0, colon).c_str(), nullptr, 10) < static_cast<unsigned long>(ui::kSubViewCount);
+    }
     Args parseArgs(std::string_view modeKey)
     {
         Args a;
@@ -131,6 +144,8 @@ namespace
             a.error = "--theme must be 0 or 1";
         else if (!(a.liveSeconds >= 0.0f && a.liveSeconds <= 60.0f))
             a.error = "--live must be 0 to 60 seconds";
+        else if (!a.focus.empty() && !focusValid(a.focus))
+            a.error = "--focus must be <view 0-" + std::to_string(ui::kSubViewCount - 1) + ">:<local>";
         return a;
     }
 

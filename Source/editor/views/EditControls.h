@@ -8,7 +8,7 @@
 //   other one switches (EditAccess::selectSlot, an undo step). A popup click, or a11y showMenu, opens a menu with "Copy A
 //   to B" (or B to A) in a live editor; headless no menu opens. A11y: a radioGroup "Compare" of two radioButtons.
 // - Keys (focused, 02 §8.9): Return / Space on UNDO or REDO; on the group, ← → Home End choose a slot and Return / Space
-//   switch to the other. Cmd-Z and Shift-Cmd-Z anywhere are the Panel's (Panel::key).
+//   switch to the other. Cmd-Z and Shift-Cmd-Z anywhere on the panel are the Panel's (Panel::key).
 #pragma once
 
 #include <funkgui/a11y/A11yItem.h>
@@ -28,6 +28,11 @@ namespace funkgui
     struct Theme;
 }
 
+namespace fcmp
+{
+    class EditAccess;
+}
+
 namespace fcmp::ui
 {
     struct PanelContext;
@@ -40,6 +45,11 @@ namespace fcmp::ui
         static constexpr uint32_t kUndoLocal = 5;               // a11yId(ViewIndex::presetStrip, local)
         static constexpr uint32_t kRedoLocal = 6;
         static constexpr uint32_t kGroupLocal = 7;              // the radioGroup; A and B are 8 and 9
+
+        // The edit history, once an open wheel burst has become its entry: a burst is one gesture, open until 0.5 s
+        // after its last notch, and the history refuses to undo, redo or switch while a gesture is open. A drag stays
+        // open (and the history refuses).
+        static EditAccess& edits(PanelContext&);
 
         explicit EditControls(PanelContext&);
         ~EditControls();

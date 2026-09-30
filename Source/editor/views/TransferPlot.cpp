@@ -319,7 +319,8 @@ namespace fcmp::ui
 
         // Mode-switch landing (02 §8.7)
         Curve    prev, shown;                                    // the previous Mode's curve; the eased one drawn
-        float    landT = std::numeric_limits<float>::infinity(); // seconds since the switch
+        float    landT = std::numeric_limits<float>::infinity(); // seconds since the switch (the ghost's hold)
+        float    easeA = 1.0f;                                   // the curve's ease, 0 … 1 (ADR-90's speed)
         bool     landing = false;
 
         // pointer, handles, drag
@@ -707,6 +708,7 @@ namespace fcmp::ui
             {
                 s.prev = s.landing && s.shown.n > 1 ? s.shown : s.curve;   // mid-ease: from what is on screen
                 s.landT = 0.0f;
+                s.easeA = 0.0f;
                 s.landing = true;
             }
         }
@@ -714,6 +716,10 @@ namespace fcmp::ui
         {
             s.landT += std::max(dt, 0.0f);
         }
+        // ADR-90: the ease follows the ANIMATION speed (at OFF it lands on the switch itself); the ghost's hold is a
+        // dwell and keeps its time.
+        if (s.landing)
+            s.easeA = std::min(1.0f, s.easeA + AnimationModel::scaledStep(modeChanged ? 0.0f : dt, B::kCurveEaseS));
         if (s.landing && s.landT >= B::kGhostHoldS)
             s.landing = false;
 
@@ -723,9 +729,9 @@ namespace fcmp::ui
             s.buildGhosts(ctx_, geom_);
 
         // The eased curve while landing: the old curve read at the new x, blended by a smoothstep over 160 ms.
-        if (s.landing && s.landT < B::kCurveEaseS && s.prev.n > 1)
+        if (s.landing && s.easeA < 1.0f && s.prev.n > 1)
         {
-            const float a = std::clamp(s.landT / B::kCurveEaseS, 0.0f, 1.0f);
+            const float a = std::clamp(s.easeA, 0.0f, 1.0f);
             const float w = a * a * (3.0f - 2.0f * a);
             s.shown.n = s.curve.n;
             int j = 0;

@@ -15,6 +15,7 @@
 #include <funkgui/core/TypeScale.h>
 #include <funkgui/juce/MenuLook.h>
 #include <funkgui/panel/HostServices.h>
+#include <funkgui/params/GestureController.h>
 #include <funkgui/widgets/FocusRing.h>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -71,6 +72,13 @@ namespace fcmp::ui
             const float hy[3] = { ty - kHead, ty + 0.5f, ty - kHead };
             c.polyline(hx, hy, 3, kStroke, ink);
         }
+    }
+
+    EditAccess& EditControls::edits(PanelContext& ctx)
+    {
+        if (ctx.gestures != nullptr && ctx.gestures->wheeling() && !ctx.gestures->dragging())
+            ctx.gestures->closeAll();                            // only the burst is open: it becomes an entry
+        return ctx.facade.edits();
     }
 
     EditControls::EditControls(PanelContext& ctx) : ctx_(ctx) {}
@@ -201,7 +209,7 @@ namespace fcmp::ui
 
     void EditControls::fire(Part p)
     {
-        EditAccess& e = ctx_.facade.edits();
+        EditAccess& e = edits(ctx_);
         switch (p)
         {
             case Part::undo: e.undo(); break;
@@ -253,7 +261,7 @@ namespace fcmp::ui
                 fire(f);
             return press;
         }
-        EditAccess& ed = ctx_.facade.edits();
+        EditAccess& ed = edits(ctx_);
         switch (e.key)
         {
             case funkgui::Key::left: case funkgui::Key::up: case funkgui::Key::home:     ed.selectSlot(0); return true;
@@ -293,7 +301,7 @@ namespace fcmp::ui
                         [this, alive](int id) {
                             if (alive.expired() || id <= 0)
                                 return;
-                            ctx_.facade.edits().copySlot();      // the live sound into the other slot
+                            edits(ctx_).copySlot();              // the live sound into the other slot
                             if (ctx_.host != nullptr)
                                 ctx_.host->nudgeFullRate();
                         });

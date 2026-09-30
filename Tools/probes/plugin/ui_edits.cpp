@@ -8,7 +8,10 @@
 //                of radioButtons "A" (checked) and "B"; they follow SAVE in the Tab order
 //   click.*      after one THRESHOLD gesture Undo is enabled and its footer line is "UNDO THRESHOLD   CMD-Z"; a click on
 //                UNDO puts the value back, a click on REDO the new one
-//   keys.*       Cmd-Z undoes and Shift-Cmd-Z redoes, whatever has the focus
+//   keys.*       Cmd-Z undoes and Shift-Cmd-Z redoes, whatever has the focus; with nothing to take back the host keeps
+//                the key (Panel::key false); under the preset browser Cmd-Z takes nothing back
+//   wheel.*      Cmd-Z at once after a wheel burst on THRESHOLD (still open: it closes 0.5 s after its last notch) undoes
+//                the burst
 //   ab.*         a click on B selects it (and fills it); a click on A comes back; on the focused group → selects B, ←
 //                A, Return the other one
 //   popup        a ctrl-click on A headless opens nothing and changes nothing
@@ -144,6 +147,49 @@ namespace
         P.eq("keys.shift_cmd_z", b(r.raw(Pid::thr) == after), 1);
     }
 
+    funkgui::KeyEvent undoKey(bool shift)
+    {
+        funkgui::KeyEvent k;
+        k.key = funkgui::Key::character;
+        k.ch = U'z';
+        k.mods.cmd = true;
+        k.mods.shift = shift;
+        return k;
+    }
+
+    void passRows(Probe& P)
+    {
+        {
+            Rig r;
+            P.eq("keys.nothing_passes", b(!r.panel.key(undoKey(false)) && !r.panel.key(undoKey(true))), 1);
+        }
+        {
+            Rig r;
+            r.edit(Pid::thr, -36.0f);
+            const float after = r.raw(Pid::thr);
+            r.panel.setView({ nullptr, ui::Screen::panel, r.panel.scTab(), ui::Overlay::presetBrowser });
+            r.tick();
+            r.host.keys("cmd+z");
+            r.tick();
+            P.eq("keys.overlay_keeps", b(r.raw(Pid::thr) == after && r.facade.edits().canUndo()), 1);
+        }
+        {
+            Rig r;
+            const float before = r.raw(Pid::thr);
+            funkgui::Rect s{};
+            for (const funkgui::A11yItem& it : r.host.accessibility())
+                if (it.id == ui::a11yId(ui::ViewIndex::slotGrid, 1))     // THRESHOLD: kSlots[0]
+                    s = it.bounds;
+            r.host.wheel(s.centreX(), s.centreY(), 1.0f);
+            r.host.wheel(s.centreX(), s.centreY(), 1.0f);
+            r.tick();
+            const bool moved = r.raw(Pid::thr) != before;
+            r.host.keys("cmd+z");
+            r.tick();
+            P.eq("wheel.undo_at_once", b(moved && r.raw(Pid::thr) == before), 1);
+        }
+    }
+
     void abRows(Probe& P)
     {
         Rig r;
@@ -181,6 +227,7 @@ FCMP_PROBE(ui, edits)
     a11yRows(P);
     clickRows(P);
     keyRows(P);
+    passRows(P);
     abRows(P);
     return P.finish();
 }

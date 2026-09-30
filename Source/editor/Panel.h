@@ -176,6 +176,7 @@ namespace fcmp::ui
         bool     ticked_   = false;
         bool     shutDown_ = false;
         uint32_t a11yRevision_ = 1;
+        uint32_t prefsRevision_ = 0;                             // ADR-90: UiPreferences' revision the scale follows
 
         std::array<std::unique_ptr<SubView>, kSubViewCount> views_;   // last: destroyed first (they reference the above)
     };
