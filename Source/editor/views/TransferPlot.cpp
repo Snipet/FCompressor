@@ -7,6 +7,7 @@
 #include "editor/Panel.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/AnimationModel.h"
 #include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
@@ -694,7 +695,7 @@ namespace fcmp::ui
         }
         else
         {
-            s.liveAmt = std::max(0.0f, s.liveAmt - std::max(dt, 0.0f) / layout::live::kFadeS);
+            s.liveAmt = std::max(0.0f, s.liveAmt - AnimationModel::scaledStep(dt, layout::live::kFadeS));   // ADR-90
         }
 
         // A Mode switch (02 §8.7): the drawn curve becomes the previous one, eased from over 160 ms, ghosted 0.9 s.

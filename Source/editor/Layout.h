@@ -780,6 +780,14 @@ namespace fcmp::ui::layout
         // COPY REPORT, a text cell right-aligned to the content edge, and its note left of it.
         inline constexpr float kCopyY = 566.0f;
         inline constexpr double kCopiedS = 2.0;                  // "COPIED" stays this long
+
+        // v1.2 (ADR-90): INTERFACE · THIS COMPUTER under NEW INSTANCES — a rule, the heading, the ANIMATION slider (a
+        // secondary slot, views/AnimationModel.h) and a note right of its value.
+        inline constexpr char  kPrefAnimation[] = "animationSpeed";   // UiPreferences: the detent index 0 … 4
+        inline constexpr float kInterfaceRuleY = 440.0f;
+        inline constexpr float kInterfaceHeadingY = 452.0f;
+        inline constexpr funkgui::SlotGeom kAnimation { 40.0f, 474.0f, 240.0f, funkgui::SlotSize::secondary };
+        inline constexpr Point kAnimationNote { 300.0f, 490.0f };       // kMicro ink32, fitted to kColumnRight
     }
 
     // ---- v1.2 (ADR-88): the OUTPUT trim ---------------------------------------------------------------------------------
