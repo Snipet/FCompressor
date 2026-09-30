@@ -843,6 +843,23 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     an out-of-range or NaN value clamps. `dsp.hostparams`, `proc.state` and `ui.charscreen` count and order the new
     parameter. Goldens move where they list parameters or the display row: `proc.layout`, `proc.text`, `ui.geometry`,
     `ui.a11y`, `ui.input`.
+- **ADR-89 Typed values (v1.2).** The second of the lead's pick: a professional user types an exact value ("−18.5").
+  Double-click already resets a control to its default (02 §8.4.6), and a click alone starts every drag, so neither
+  can open a field.
+  - **How it opens:** Return, a digit, '.', '-' or '+' on a focused value control (a slot or OUTPUT). Tab gives the
+    focus as before; a press on a control now also gives it the keyboard focus with the ring hidden, so "click, then
+    type a number" works (the way many hosts do it). Opened by Return the field holds the current value, selected;
+    opened by a character it starts with it. Locked, derived and n/a slots open nothing. The first-run hint says so.
+  - **The field** (`views/ValueEntry.h`, FunkGui's state-only `LineEdit`, tag VALUE_ENTRY) sits over the value text in
+    the value's own style. While it is open the Panel gives its view every key (`PanelContext::textEntry`): Return or
+    Tab sets the value (Tab then moves on), Esc cancels without leaving the screen or hiding the ring, and a click
+    elsewhere (or the wheel) sets it first; a click inside it does nothing, a double-click there resets nothing.
+  - **Parsing is the host's:** a slot's text goes through `fcdsp::parseHost` with the frame's raw values, so it takes
+    what a host lane takes (the Mode's own numbers and step labels, "−18 dB", "500 us", "4:1", "inf"); OUTPUT's goes
+    through `parseOutput`. The result is one tap (begin, set, end) on the port. A text that is no value is refused:
+    nothing is written, the field stays with the text selected and its border flashes. A Mode change closes it.
+  - **Tests:** `ui.entry` (34 rows): each way to open, commit and cancel, the refusal, units, a stepped slot, refused
+    slots, a Mode change and OUTPUT. No golden moves: a closed field draws nothing.
 
 ## HardwareReverb migration
 
