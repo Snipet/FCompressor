@@ -17,6 +17,7 @@
 #include "editor/views/PresetStrip.h"
 #include "editor/views/Settings.h"
 #include "editor/views/SlotGrid.h"
+#include "editor/views/ValueEntry.h"
 
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/Resolve.h"
@@ -437,6 +438,9 @@ namespace fcmp::ui
         ctx_.seconds += static_cast<double>(dt);
         refreshFrame(dt);
         history_->drain(facade_.history());
+        // ADR-89: a field whose view is no longer shown (the screen changed under it) closes without writing.
+        if (ctx_.textEntry >= 0 && !live(static_cast<ViewIndex>(ctx_.textEntry)))
+            views_[static_cast<std::size_t>(ctx_.textEntry)]->endTextEntry(false);
         fader_.tick(dt);                                         // τ 0.12 s, snaps within 1e−3 (layout::chars)
         // ADR-75: a new Mode starts the colour ease from the colour the previous one had (the target so far).
         if (const std::string_view key = ctx_.frame.entry != nullptr ? ctx_.frame.entry->desc->key : std::string_view{};
@@ -577,6 +581,15 @@ namespace fcmp::ui
             ctx_.alwaysChrome = true;                            // a touch screen or tablet (HR :1488)
         ++ctx_.pointerDowns;
         ctx_.focusVisible = false;                               // the pointer is the affordance now (HR)
+        if (ctx_.textEntry >= 0)                                 // ADR-89: an open typed-value field
+        {
+            if (ctx_.textEntryBox.contains(ctx_.pointer))
+            {
+                captured_ = -1;                                  // inside it: nothing
+                return;
+            }
+            views_[static_cast<std::size_t>(ctx_.textEntry)]->endTextEntry(true);   // elsewhere: the value is set
+        }
         if (overlay_ != Overlay::none && !overlayArea(overlay_).contains(ctx_.pointer))
         {
             closeOverlay();                                      // 02 §8.6: clicking outside cancels
@@ -608,6 +621,8 @@ namespace fcmp::ui
     void Panel::doubleClick(const funkgui::PointerEvent& e)
     {
         ctx_.pointer = { e.x, e.y };
+        if (ctx_.textEntry >= 0 && ctx_.textEntryBox.contains(ctx_.pointer))
+            return;                                              // ADR-89: inside an open field, nothing
         const int v = captured_ >= 0 ? captured_ : hitView(ctx_.pointer);
         if (v >= 0 && live(static_cast<ViewIndex>(v)))
             views_[static_cast<std::size_t>(v)]->doubleClick(e);
@@ -616,6 +631,8 @@ namespace fcmp::ui
     bool Panel::wheel(const funkgui::WheelEvent& e)
     {
         ctx_.pointer = { e.x, e.y };
+        if (ctx_.textEntry >= 0)                                 // ADR-89: the wheel sets an open field's value first
+            views_[static_cast<std::size_t>(ctx_.textEntry)]->endTextEntry(true);
         const int v = hitView(ctx_.pointer);
         return v >= 0 && views_[static_cast<std::size_t>(v)]->wheel(e);
     }
@@ -663,6 +680,14 @@ namespace fcmp::ui
 
     bool Panel::key(const funkgui::KeyEvent& e)
     {
+        // ADR-89: an open typed-value field takes every key (Return and Tab set the value, Esc cancels); a Tab that set
+        // it then moves the focus as usual.
+        if (ctx_.textEntry >= 0)
+        {
+            views_[static_cast<std::size_t>(ctx_.textEntry)]->key(e);
+            if (e.key != funkgui::Key::tab || ctx_.textEntry >= 0)
+                return true;
+        }
         if (e.key == funkgui::Key::tab)
             return moveFocus(e.mods.shift ? -1 : 1);             // false without a Tab stop: the host keeps Tab
         if (e.key == funkgui::Key::escape)
@@ -694,6 +719,14 @@ namespace fcmp::ui
         {
             const int v = viewIndexOf(ctx_.focus);
             if (v >= 0 && v < kSubViewCount && live(static_cast<ViewIndex>(v)))
+                return views_[static_cast<std::size_t>(v)]->key(e);
+        }
+        // ADR-89: a value control a click focused (the ring hidden) takes the keys that open a typed-value field.
+        if (ctx_.focus != 0 && !ctx_.focusVisible && ValueEntry::opens(e))
+        {
+            const int v = viewIndexOf(ctx_.focus);
+            if (v >= 0 && v < kSubViewCount && live(static_cast<ViewIndex>(v))
+                && views_[static_cast<std::size_t>(v)]->takesTypedKeys(ctx_.focus))
                 return views_[static_cast<std::size_t>(v)]->key(e);
         }
         return false;

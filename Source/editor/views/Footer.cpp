@@ -40,7 +40,8 @@ namespace fcmp::ui
         constexpr uint32_t kThemeLocal = 16;                     // the THEME radioGroup; its cells are 17, 18
         constexpr uint32_t kZoomLocal  = 32;                     // the ZOOM radioGroup; its cells are 33 … 36
 
-        constexpr const char* kFirstRun = "DRAG A VALUE OR THE CURVE. DOUBLE-CLICK TO RESET.";   // 02 §6.6
+        constexpr const char* kFirstRun =                        // 02 §6.6; ADR-89 adds typing
+            "DRAG A VALUE OR THE CURVE. DOUBLE-CLICK RESETS. CLICK, THEN TYPE A NUMBER.";
         constexpr const char* kPoison   = "AUDIO RESET AFTER A NON-FINITE SAMPLE";
         constexpr const char* kNewer    = "SESSION FROM A NEWER FCOMPRESSOR \xE2\x80\x94 LOADED BEST EFFORT";
         // UF1b: the preference specs fit the line's kSpecLineW (554 px; THEME's was "… FOR EVERY FCOMPRESSOR ON THIS

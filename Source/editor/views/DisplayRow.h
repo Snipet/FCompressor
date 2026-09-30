@@ -83,6 +83,8 @@ namespace fcmp::ui
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         void doubleClick(const funkgui::PointerEvent&) override;   // v1.2: OUTPUT to 0 dB
         bool wheel(const funkgui::WheelEvent&) override;           // v1.2: OUTPUT
+        void endTextEntry(bool commit) override;                   // v1.2 (ADR-89): OUTPUT's typed field
+        bool takesTypedKeys(uint32_t id) const override;
 
     private:
         // The CHARACTERISTICS latch: on = the target screen is CHARACTERISTICS; set() goes through Panel::setView.

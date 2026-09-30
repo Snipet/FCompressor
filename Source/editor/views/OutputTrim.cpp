@@ -35,6 +35,7 @@ namespace fcmp::ui
         constexpr float kSpanFinePx = 1200.0f, kSpanUltraPx = 6000.0f;
         constexpr float kWheelStep = 0.025f, kWheelFine = 0.005f;   // track per wheel unit (RuleSlider)
 
+        constexpr const char* kEntrySpec = "OUTPUT   TYPE A VALUE IN DB, \xE2\x88\x92" "24 TO 24   RETURN SETS IT   ESC CANCELS";
         constexpr const char* kSpec =
             "OUTPUT   THE LAST GAIN, AFTER THE MIX   \xC2\xB1" "24 DB   BYPASS AND SC LISTEN STAY UNTRIMMED";
 
@@ -50,9 +51,12 @@ namespace fcmp::ui
 
     bool OutputTrim::contains(funkgui::Point p) const noexcept { return O::kHit.contains(p); }
 
-    bool OutputTrim::settled() const noexcept { return !dragging_ && (hover_ <= 0.0f || hover_ >= 1.0f); }
+    bool OutputTrim::settled() const noexcept
+    {
+        return !dragging_ && (hover_ <= 0.0f || hover_ >= 1.0f) && entry_.settled();
+    }
 
-    const char* OutputTrim::spec() const noexcept { return kSpec; }
+    const char* OutputTrim::spec() const noexcept { return entry_.open() ? kEntrySpec : kSpec; }
 
     float OutputTrim::db() const { return fcdsp::toPlain(kPid, port_.value01()); }
 
@@ -76,6 +80,7 @@ namespace fcmp::ui
 
     void OutputTrim::tick(float dt, bool underHand)
     {
+        entry_.tick(dt);
         const float target = underHand || dragging_ ? 1.0f : 0.0f;
         const float step = std::max(dt, 0.0f) / (target > hover_ ? kHoverInS : kHoverOutS);
         hover_ = target > hover_ ? std::min(target, hover_ + step) : std::max(target, hover_ - step);
@@ -114,6 +119,7 @@ namespace fcmp::ui
         }
         if (focusRing)
             funkgui::drawFocusRing(c, O::kHit, th.accent);
+        entry_.draw(c, th);                                      // ADR-89: over the value
     }
 
     // ---- input ----------------------------------------------------------------------------------------------------------
@@ -128,6 +134,7 @@ namespace fcmp::ui
         g.beginDrag(port_);
         dragging_ = true;
         anchor(e.x, e.y, e.mods);
+        ctx_.focus = id_;                                        // ADR-89: a number typed next goes here
     }
 
     void OutputTrim::pointerDrag(const funkgui::PointerEvent& e, funkgui::GestureController& g)
@@ -172,6 +179,21 @@ namespace fcmp::ui
 
     bool OutputTrim::key(const funkgui::KeyEvent& e, funkgui::GestureController& g)
     {
+        if (entry_.open())                                       // ADR-89: the field takes every key
+        {
+            switch (entry_.key(e))
+            {
+                case ValueEntry::Result::commit: commitEntry(g); break;
+                case ValueEntry::Result::cancel: closeEntry(); break;
+                case ValueEntry::Result::typing: break;
+            }
+            return true;
+        }
+        if (ValueEntry::opens(e))
+        {
+            openEntry(e);
+            return true;
+        }
         const float step = e.mods.shift ? O::kKeyFineDb : O::kKeyDb;
         switch (e.key)
         {
@@ -187,6 +209,44 @@ namespace fcmp::ui
                 return false;
         }
         return false;
+    }
+
+    // ---- typed values (ADR-89) ----------------------------------------------------------------------------------------
+
+    void OutputTrim::openEntry(const funkgui::KeyEvent& opener)
+    {
+        fcdsp::FormattedValue f;
+        fcdsp::formatOutputParts(db(), f);
+        const std::string current = std::string(f.value) + " " + f.unit;
+        entry_.begin(O::kEntryBox, T::kLabel, opener, current);
+        ctx_.textEntry = static_cast<int>(ViewIndex::displayRow);
+        ctx_.textEntryBox = O::kEntryBox;
+    }
+
+    bool OutputTrim::commitEntry(funkgui::GestureController& g)
+    {
+        float v = 0.0f;
+        if (!fcdsp::parseOutput(entry_.text(), v) || !std::isfinite(v))
+        {
+            entry_.refuse();
+            return false;
+        }
+        tapDb(v, g);
+        closeEntry();
+        return true;
+    }
+
+    void OutputTrim::closeEntry() noexcept
+    {
+        if (entry_.open() && ctx_.textEntry == static_cast<int>(ViewIndex::displayRow))
+            ctx_.textEntry = -1;
+        entry_.end();
+    }
+
+    void OutputTrim::endEntry(bool commit, funkgui::GestureController& g)
+    {
+        if (!commit || !commitEntry(g))
+            closeEntry();
     }
 
     // ---- accessibility --------------------------------------------------------------------------------------------------

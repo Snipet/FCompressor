@@ -800,5 +800,6 @@ namespace fcmp::ui::layout
         inline constexpr float kKeyDb = 0.5f;                              // arrows; Shift 0.1 dB; Page 3 dB
         inline constexpr float kKeyFineDb = 0.1f;
         inline constexpr float kPageDb = 3.0f;
+        inline constexpr Rect  kEntryBox { 280.0f, 60.0f, 76.0f, 20.0f };  // ADR-89: the typed field, over the value
     }
 }
