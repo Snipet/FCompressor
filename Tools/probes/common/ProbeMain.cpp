@@ -34,6 +34,8 @@ namespace fcmp::probe
     namespace
     {
         constinit const Registration* gHead = nullptr;      // constant-initialised before any Registration runs
+        constinit int gArgc = 0;                            // main()'s, recorded first thing (argc(), argv())
+        constinit char** gArgv = nullptr;
     }
 
     Registration::Registration(const char* layerDotName, ProbeFn f) noexcept
@@ -43,6 +45,8 @@ namespace fcmp::probe
     }
 
     const Registration* registrations() noexcept { return gHead; }
+    int argc() noexcept { return gArgc; }
+    char** argv() noexcept { return gArgv; }
 } // namespace fcmp::probe
 
 namespace
@@ -136,6 +140,8 @@ namespace
 
 int main(int argc, char** argv)
 {
+    fcmp::probe::gArgc = argc;
+    fcmp::probe::gArgv = argv;
     const char* exe = baseName(argc > 0 && argv[0] != nullptr ? argv[0] : "fcmp_probe");
     const std::vector<const Registration*> probes = sortedRegistrations();
 

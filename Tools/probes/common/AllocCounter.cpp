@@ -16,7 +16,11 @@
 
 namespace
 {
-    constinit std::atomic<pthread_t> gArmed{nullptr};
+    // No armed thread: a value-initialised pthread_t, null on macOS (a pointer) and 0 on Linux (an unsigned long),
+    // which no running thread ever has (ADR-91).
+    constexpr pthread_t kNoThread{};
+
+    constinit std::atomic<pthread_t> gArmed{kNoThread};
     constinit std::atomic<std::uint64_t> gAllocations{0};
     constinit std::atomic<std::uint64_t> gDeallocations{0};
     constinit std::atomic<std::uint64_t> gBytes{0};
@@ -25,7 +29,7 @@ namespace
     bool counting() noexcept
     {
         const pthread_t armed = gArmed.load(std::memory_order_relaxed);
-        return armed != nullptr && pthread_equal(armed, pthread_self()) != 0;
+        return armed != kNoThread && pthread_equal(armed, pthread_self()) != 0;
     }
 
     void noteAllocation(std::size_t n) noexcept
@@ -84,7 +88,7 @@ namespace
 namespace fcmp::probe::alloc
 {
     void arm() noexcept { gArmed.store(pthread_self(), std::memory_order_relaxed); }
-    void disarm() noexcept { gArmed.store(nullptr, std::memory_order_relaxed); }
+    void disarm() noexcept { gArmed.store(kNoThread, std::memory_order_relaxed); }
 
     void reset() noexcept
     {

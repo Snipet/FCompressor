@@ -85,7 +85,6 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <crt_externs.h>                                         // _NSGetArgc / _NSGetArgv (macOS)
 
 #include <algorithm>
 #include <array>
@@ -1417,8 +1416,8 @@ namespace
     // `-- --png-dir <dir>` (after the lone "--": the probe's own flags); "" when absent.
     std::string pngDir()
     {
-        const int argc = *_NSGetArgc();
-        char** argv = *_NSGetArgv();
+        const int argc = fcmp::probe::argc();
+        char** argv = fcmp::probe::argv();
         bool own = false;
         for (int i = 1; i < argc; ++i)
         {

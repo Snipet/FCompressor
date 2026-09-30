@@ -70,6 +70,9 @@ die() {  # die <exit code> <message...>
 }
 usage() { awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; }
 step_fail() { die 3 "step failed: $*"; }
+
+# Signing, notarisation, lipo and the AU are Apple's; a Linux build (ADR-91) has no release path yet.
+[ "$(uname -s)" = Darwin ] || die 2 "release.sh signs and notarises macOS bundles; it runs on macOS only (ADR-91)"
 is_on() {  # is_on <value>: CMake's true constants
   case $(printf '%s' "$1" | tr '[:lower:]' '[:upper:]') in
     ON | TRUE | YES | Y | 1) return 0 ;;

@@ -16,12 +16,16 @@
 #   JUCE-8.0.4/                         HEAD 51d11a2b...; chmod -R a-w
 #   bgfx.cmake-v1.153.9385-561/         HEAD 99752df3..., submodules bgfx/bx/bimg at the pinned SHAs; chmod -R a-w
 #   tools/shaderc-<bgfx tag>/shaderc    Release, host arch, HR's bgfx tool options; shaderc.stamp = "bgfx.cmake <sha>"
-#   tools/pluginval-<tag>/pluginval     symlink to pluginval.app/Contents/MacOS/pluginval; pluginval.stamp
+#   tools/pluginval-<tag>/pluginval     symlink to pluginval.app/Contents/MacOS/pluginval (Linux: the executable);
+#                                       pluginval.stamp
 #   build/                              scratch builds and the pluginval source clone (deletable)
 #   DEPS.lock                           name<TAB>tag<TAB>sha<TAB>populated-at (UTC)
 #
 # Any pinned-SHA mismatch deletes the offending checkout and exits 1. Nothing in a build may write into the source
 # trees; the shaderc build checks that. This script is the only writer of the cache.
+#
+# macOS and Linux (ADR-91). On Linux the copies are cp -a instead of ditto, and pluginval is a plain executable rather
+# than an .app bundle. The tools build with CMake's default compiler on either (they are not FCompressor's code).
 
 set -euo pipefail
 
@@ -45,7 +49,7 @@ DEPS="${FCOMPRESSOR_DEPS_DIR:-$HOME/audio/.deps}"
 SEED=""
 MODE=populate
 WITH_PLUGINVAL=1
-JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
+JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 8)"
 
 usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
@@ -91,6 +95,14 @@ PV_STAMP_TEXT="pluginval $PLUGINVAL_TAG $PLUGINVAL_SHA juce $PLUGINVAL_JUCE_SHA"
 # Host architecture, even when this shell runs under Rosetta.
 ARCH="$(uname -m)"
 [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ] && ARCH=arm64
+[ "$ARCH" = aarch64 ] && ARCH=arm64                                  # Linux's name for it
+
+# macOS copies with ditto (it keeps what cp may not on APFS); Linux with cp -a.
+if [ "$(uname -s)" = Darwin ]; then
+  copy_tree() { ditto "$1" "$2"; }
+else
+  copy_tree() { cp -a "$1" "$2"; }
+fi
 
 # Delete a path, but only inside the cache (read-only trees need u+w first).
 rm_tree() {
@@ -225,8 +237,8 @@ populate() {
   rm_tree "$tmp"
   if [ -n "$SEED" ]; then
     src="$(seed_dir "$@")" || die "$label: no checkout under $SEED (looked for: $*)"
-    log "$label: copying $src (ditto; .git and submodule git dirs included)"
-    ditto "$src" "$tmp"
+    log "$label: copying $src (.git and submodule git dirs included)"
+    copy_tree "$src" "$tmp"
     # Finder litter is not part of any checkout. Deleting a *tracked* .DS_Store would fail the clean check below.
     find "$tmp" -name .DS_Store -type f -print -delete | sed "s|^$tmp/|[deps]   removed Finder file |"
   else
@@ -318,13 +330,20 @@ build_pluginval() {
     || die "pluginval: configure failed"
   run_logged "$logf" cmake --build "$b" --target pluginval -j "$JOBS" || die "pluginval: build failed"
   t1=$(date +%s)
-  app="$b/pluginval_artefacts/Release/pluginval.app"
-  [ -x "$app/Contents/MacOS/pluginval" ] || app="$(find "$b" -type d -name pluginval.app -print -quit)"
-  [ -n "$app" ] && [ -x "$app/Contents/MacOS/pluginval" ] || die "pluginval: pluginval.app not found under $b"
   tmp="$TOOLS/.incoming-pluginval-$PLUGINVAL_TAG"
   rm_tree "$tmp"; mkdir -p "$tmp"
-  ditto "$app" "$tmp/pluginval.app"
-  ln -s pluginval.app/Contents/MacOS/pluginval "$tmp/pluginval"
+  if [ "$(uname -s)" = Darwin ]; then
+    app="$b/pluginval_artefacts/Release/pluginval.app"
+    [ -x "$app/Contents/MacOS/pluginval" ] || app="$(find "$b" -type d -name pluginval.app -print -quit)"
+    [ -n "$app" ] && [ -x "$app/Contents/MacOS/pluginval" ] || die "pluginval: pluginval.app not found under $b"
+    copy_tree "$app" "$tmp/pluginval.app"
+    ln -s pluginval.app/Contents/MacOS/pluginval "$tmp/pluginval"
+  else
+    app="$b/pluginval_artefacts/Release/pluginval"
+    [ -x "$app" ] || app="$(find "$b" -type f -name pluginval -perm -u+x -print -quit)"
+    [ -n "$app" ] && [ -x "$app" ] || die "pluginval: the pluginval executable was not found under $b"
+    cp "$app" "$tmp/pluginval"
+  fi
   "$tmp/pluginval" --version >/dev/null 2>&1 || die "pluginval: $tmp/pluginval --version failed"
   printf '%s\n' "$PV_STAMP_TEXT" > "$tmp/pluginval.stamp"
   rm_tree "$PV_DIR"; mv "$tmp" "$PV_DIR"

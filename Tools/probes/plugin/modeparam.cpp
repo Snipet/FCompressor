@@ -31,7 +31,6 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include <crt_externs.h>                                         // _NSGetArgc / _NSGetArgv (macOS)
 
 #include <cmath>
 #include <cstdint>
@@ -57,8 +56,8 @@ namespace
     // The value of a harness flag (before "--") or of a probe-own flag (after it).
     std::optional<std::string> argValue(std::string_view flag, bool own)
     {
-        const int argc = *_NSGetArgc();
-        char** argv = *_NSGetArgv();
+        const int argc = fcmp::probe::argc();
+        char** argv = fcmp::probe::argv();
         bool afterDashes = false;
         for (int i = 1; i < argc; ++i)
         {

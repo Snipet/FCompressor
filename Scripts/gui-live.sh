@@ -20,16 +20,21 @@
 #   rendered by funkgui_framerender at 2x supersampling: what the GPU was given, as a picture), <id>.capture.log and
 #   summary.txt. The last line printed is "gui-live: N/5 equal".
 #
-# Isolation. The Standalone runs with CFFIXED_USER_HOME=<scratch>/home, so JUCE's Standalone settings file (audio
-# device, saved plug-in state: ~/Library/Application Support/<product>.settings) is neither read nor written: the
-# Standalone opens at its defaults (Mode slot 0 = clean), whatever the user did with it, and never changes the user's
-# file (C §3.2, §6). Preferences and presets go to scratch paths too (02 §5.1). The scratch directory is removed at the
-# end. The Standalone asks for microphone access the first time a new build of it runs (MICROPHONE_PERMISSION_ENABLED);
-# the capture does not wait for the answer.
+# Isolation. The Standalone runs with CFFIXED_USER_HOME=<scratch>/home (Linux: HOME=<scratch>/home, with XAUTHORITY kept
+# pointing at the real one so the X display still opens), so JUCE's Standalone settings file (audio device, saved
+# plug-in state: ~/Library/Application Support/<product>.settings; Linux: ~/.config/<product>.settings) is neither read
+# nor written: the Standalone opens at its defaults (Mode slot 0 = clean), whatever the user did with it, and never
+# changes the user's file (C §3.2, §6). Preferences and presets go to scratch paths too (02 §5.1). The scratch directory
+# is removed at the end. On Linux that scratch settings file is seeded with ALSA's default device at 48 kHz, the
+# headless FakeFacade's rate: JUCE opens an ALSA device, which reports no current rate, at the lowest rate >= 44.1 kHz,
+# and the Characteristics views plot the processor's filters at its rate (CoreAudio devices report theirs). On macOS the
+# Standalone asks for microphone access the first time a new build of it runs (MICROPHONE_PERMISSION_ENABLED); the
+# capture does not wait for the answer.
 #
-# Serialisation. Every live GUI run on the machine holds /tmp/fcmp-gui.lock (lockf -k -t 900; FunkGui's
-# fg.gallery.live takes the same lock), so two captures never fight over the window server. It needs a logged-in,
-# awake session (a window server and Metal); it is never part of `verify`.
+# Serialisation. Every live GUI run on the machine holds /tmp/fcmp-gui.lock (lockf -k -t 900 on macOS, flock -w 900 on
+# Linux; FunkGui's fg.gallery.live takes the same lock), so two captures never fight over the window server. It needs
+# a logged-in, awake session (macOS: a window server and Metal; Linux, ADR-91: an X display, which is XWayland on a
+# Wayland desktop, and Vulkan); it is never part of `verify`.
 #
 # Executables. It runs <build>'s FCompressor Standalone, fcmp_probe_plugin and funkgui_framerender. An executable that
 # does not exist yet is built first (cmake --build <build> --target <them>); an existing one is used as it is, so build
@@ -44,7 +49,7 @@ DT=0.0166666675
 LOCK=/tmp/fcmp-gui.lock
 
 usage() {
-  sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,42p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -68,9 +73,14 @@ fi
 BUILD=$(cd "$1" && pwd -P) || die "cannot enter $1"
 
 if [ "$LOCKED" = 0 ]; then
-  command -v lockf >/dev/null 2>&1 || die "lockf(1) not found"
   echo "gui-live.sh: waiting for $LOCK (at most 900 s) ..."
-  lockf -k -t 900 "$LOCK" /bin/sh "$0" --locked "$BUILD"
+  if command -v lockf >/dev/null 2>&1; then                # macOS (BSD lockf)
+    lockf -k -t 900 "$LOCK" /bin/sh "$0" --locked "$BUILD"
+  elif command -v flock >/dev/null 2>&1; then              # Linux (util-linux flock): the same timeout and exit code
+    flock -E 75 -w 900 "$LOCK" /bin/sh "$0" --locked "$BUILD"
+  else
+    die "neither lockf(1) nor flock(1) found"
+  fi
   rc=$?
   if [ "$rc" -eq 75 ]; then                             # EX_TEMPFAIL: another GUI run held the lock for 900 s
     die "$LOCK is still held by another live GUI run after 900 s"
@@ -112,7 +122,12 @@ case "$ARCHS" in
   *) ARCH=$(uname -m) ;;                                # universal: the probes run as the host (03 §3.3)
 esac
 
-APP="$BUILD/${NAME}_artefacts/$CFG/Standalone/$NAME.app/Contents/MacOS/$NAME"
+if [ "$(uname -s)" = Darwin ]; then
+  APP="$BUILD/${NAME}_artefacts/$CFG/Standalone/$NAME.app/Contents/MacOS/$NAME"
+else
+  APP="$BUILD/${NAME}_artefacts/$CFG/Standalone/$NAME"      # Linux: a plain executable (ADR-91)
+  [ -n "${DISPLAY:-}" ] || die "no X display (DISPLAY is not set): the Standalone's editor is an X11 window"
+fi
 PROBE="$BUILD/fcmp_probe_plugin_artefacts/$CFG/fcmp_probe_plugin"
 find_framerender() {
   find "$BUILD" -path "*/funkgui_framerender_artefacts/$CFG/funkgui_framerender" -type f -perm -u+x 2>/dev/null | head -1
@@ -137,6 +152,26 @@ SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fcmp-gui-live.XXXXXX") || die "mktemp faile
 trap 'rm -rf "$SCRATCH"' EXIT
 trap 'exit 2' INT TERM
 mkdir -p "$SCRATCH/home" "$SCRATCH/prefs" || die "cannot create $SCRATCH"
+
+if [ "$(uname -s)" != Darwin ]; then
+  # JUCE's name for ALSA's "default" PCM: its description lines joined by "; " when the hints list it, else the name
+  # JUCE gives the device it adds itself (juce_ALSA_linux.cpp, enumerateAlsaPCMDevices).
+  DEV=$(aplay -L 2>/dev/null | awk '
+    /^[^ \t]/ { if (inDefault) exit; inDefault = ($0 == "default"); next }
+    inDefault  { sub(/^    /, ""); out = (n++ ? out "; " : "") $0 }
+    END        { print out }')
+  [ -n "$DEV" ] || DEV="Default ALSA Output"
+  DEV=$(printf '%s' "$DEV" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+  mkdir -p "$SCRATCH/home/.config" || die "cannot create $SCRATCH/home/.config"
+  cat > "$SCRATCH/home/.config/$NAME.settings" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<PROPERTIES>
+  <VALUE name="audioSetup">
+    <DEVICESETUP deviceType="ALSA" audioOutputDeviceName="$DEV" audioInputDeviceName="" audioDeviceRate="48000"/>
+  </VALUE>
+</PROPERTIES>
+EOF
+fi
 
 # The one variable set (02 §5.1), for the headless probe and the Standalone alike. <P> is the product's prefix.
 setenv() {  # setenv <NAME> <value>: export <PREFIX><NAME>=<value>
@@ -188,8 +223,18 @@ for VIEW in $VIEWS; do
     setenv UI_SCALE 2
     setenv CANVAS_DUMP_AFTER "$after"
     setenv GPU_LOG 1
-    CFFIXED_USER_HOME="$SCRATCH/home"
-    export CFFIXED_USER_HOME
+    if [ "$(uname -s)" = Darwin ]; then
+      CFFIXED_USER_HOME="$SCRATCH/home"
+      export CFFIXED_USER_HOME
+    else
+      # Xlib finds the display's cookie through XAUTHORITY, else $HOME/.Xauthority: keep the real one.
+      if [ -z "${XAUTHORITY:-}" ] && [ -f "$HOME/.Xauthority" ]; then
+        XAUTHORITY="$HOME/.Xauthority"
+        export XAUTHORITY
+      fi
+      HOME="$SCRATCH/home"
+      export HOME
+    fi
     exec /bin/sh "$CAPTURE" "$APP" "$L.dump" "$PREFIX"
   ) > "$OUT/$VIEW.capture.log" 2>&1
   rc=$?

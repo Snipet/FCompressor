@@ -80,8 +80,12 @@ namespace
     }
 #if defined(__aarch64__)
     constexpr uint64_t kFtzBits = uint64_t{1} << 24;          // FPCR.FZ
+    constexpr uint64_t kStatusBits = 0;                       // FPCR is all control (the flags are FPSR's)
 #else
     constexpr uint64_t kFtzBits = 0x8040u;                    // MXCSR FTZ | DAZ
+    // MXCSR's sticky exception flags (IE DE ZE OE UE PE): status, not mode. The denormal products this probe computes
+    // set UE and PE between two reads on real x86 hardware (ADR-91: the first x86 run), so only the rest is compared.
+    constexpr uint64_t kStatusBits = 0x3fu;
 #endif
 
     // A product whose exact value is denormal, computed at run time between two memory accesses. Both matter: clang
@@ -538,7 +542,7 @@ namespace
         P.eq("ftz.off_keeps_denormals", offSurvives ? 1 : 0, 1);
         P.eq("ftz.scope_flushes", onFlushes ? 1 : 0, 1);
         P.eq("ftz.nested", nestedFlushes && innerRestored ? 1 : 0, 1);
-        P.eq("ftz.restores_register", after == before ? 1 : 0, 1);
+        P.eq("ftz.restores_register", (after & ~kStatusBits) == (before & ~kStatusBits) ? 1 : 0, 1);
         P.eq("ftz.off_again_after_scope", offAgain ? 1 : 0, 1);
     }
 } // namespace

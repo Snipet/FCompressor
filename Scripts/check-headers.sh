@@ -21,13 +21,18 @@
 # also get <build>/generated (FcmpProduct.h), and FunkGui's include/ and JUCE's modules/ as system directories (their
 # headers are checked by their own projects), located through <build>/fcmp-deps.txt; in a DSP-only build (no JUCE)
 # they are skipped with a note, and the JUCE builds check them. $CXX defaults to clang++ (CTest passes CMake's
-# compiler); SDKROOT defaults to xcrun's.
+# compiler); on macOS SDKROOT defaults to xcrun's and the deployment target is passed. Every header also gets
+# $FCMP_HEADER_CHECK_TARGET_FLAGS (Linux: the build's ISA flags, ADR-91), and the JUCE-including ones
+# $FCMP_HEADER_CHECK_JUCE_FLAGS: cmake/FcmpPlatform.cmake's workaround for JUCE 8.0.4 under upstream Clang (Linux),
+# empty where the compiler needs none.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 BUILD="${1:-}"
 CXX="${CXX:-clang++}"
-if [ -z "${SDKROOT:-}" ]; then
+DARWIN=0
+[ "$(uname -s)" = Darwin ] && DARWIN=1
+if [ "$DARWIN" = 1 ] && [ -z "${SDKROOT:-}" ]; then
   SDKROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
 fi
 
@@ -49,10 +54,14 @@ if [ -n "${FCMP_HEADER_CHECK_FLAGS:-}" ] && [ "$FCMP_HEADER_CHECK_FLAGS" != "${W
 fi
 FCDSP_ONLY=(-Wglobal-constructors -Wexit-time-destructors)
 
-COMMON=(-std=c++20 -fsyntax-only "${WARN[@]}" -Wmissing-variable-declarations -Werror -ffp-contract=off
-        "-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-14.0}")
-if [ -n "$SDKROOT" ]; then
-  COMMON+=(-isysroot "$SDKROOT")
+COMMON=(-std=c++20 -fsyntax-only "${WARN[@]}" -Wmissing-variable-declarations -Werror -ffp-contract=off)
+# shellcheck disable=SC2206
+COMMON+=(${FCMP_HEADER_CHECK_TARGET_FLAGS:-})
+if [ "$DARWIN" = 1 ]; then
+  COMMON+=("-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-14.0}")
+  if [ -n "${SDKROOT:-}" ]; then
+    COMMON+=(-isysroot "$SDKROOT")
+  fi
 fi
 
 FCDSP=()
@@ -93,6 +102,8 @@ if [ "${#OTHER[@]}" -gt 0 ]; then
     EXTRA=(-I "$BUILD/generated" -isystem "$FUNKGUI/include" -isystem "$JUCE/modules" -DNDEBUG=1
            -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=1
            -DJUCE_WEB_BROWSER=0 -DJUCE_USE_CURL=0)
+    # shellcheck disable=SC2206
+    EXTRA+=(${FCMP_HEADER_CHECK_JUCE_FLAGS:-})
   fi
 fi
 

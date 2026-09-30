@@ -49,6 +49,13 @@ namespace fcmp::probe
 
     const Registration* registrations() noexcept;      // the list head (unordered)
 
+    // ---- the command line (ADR-91) -----------------------------------------------------------------------------------
+    // main()'s argc and argv, recorded by ProbeMain before any probe runs, for a probe that reads flags of its own
+    // (the ones after "--" in ui.dump). Probes read macOS's _NSGetArgc() / _NSGetArgv() before Linux; this is the same
+    // pair on every platform.
+    int argc() noexcept;
+    char** argv() noexcept;
+
     // ---- allocation counter (AllocCounter.cpp: replacement global operator new/delete) --------------------------------
     // Counts operator new/delete calls made by the ARMED thread only, so other threads (a JUCE message thread, a
     // worker) never pollute a count. One armed thread at a time. The counters are lock-free and never allocate.

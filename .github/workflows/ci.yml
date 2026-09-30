@@ -1,12 +1,17 @@
-# CI: build and test FCompressor on Apple Silicon (docs/DECISIONS.md ADR-87).
+# CI: build and test FCompressor on Apple Silicon and on Linux (docs/DECISIONS.md ADR-87, ADR-91).
 #
-#   dsp     the JUCE-free DSP library and its probes (the `dsp` preset): the quick signal, about ten minutes.
-#   plugin  the shipping configuration (the `lead` preset: GPU editor, Release, LTO): the AU, VST3 and Standalone, then
-#           every probe through Scripts/verify.sh against the blessed goldens, exactly as the lead's gate runs it.
+#   dsp           the JUCE-free DSP library and its probes (the `dsp` preset): the quick signal, about ten minutes.
+#   plugin        the shipping configuration (the `lead` preset: GPU editor, Release, LTO): the AU, VST3 and Standalone,
+#                 then every probe through Scripts/verify.sh against the blessed goldens, exactly as the lead's gate
+#                 runs it.
+#   linux-dsp     the same as dsp, on x86-64 Linux with Clang.
+#   linux-plugin  the same as plugin, on x86-64 Linux with Clang: the VST3 and Standalone (the Vulkan editor), then
+#                 every probe against the same goldens: Linux has no golden overlay of its own.
 #
 # Dependencies: Scripts/deps.sh fetches JUCE and bgfx.cmake at their pinned SHAs and builds shaderc into ~/audio/.deps,
-# which is cached per pin (the key is deps.sh itself, where the pins live). FunkGui is cloned from GitHub at the tag
-# cmake/FcmpDeps.cmake pins. Nothing is signed, installed or published here.
+# which is cached per pin and runner (the key is deps.sh itself, where the pins live). FunkGui is cloned from GitHub at
+# the tag cmake/FcmpDeps.cmake pins. The Linux jobs install Clang, Ninja and the development packages JUCE, bgfx and
+# FunkGui need. Nothing is signed, installed or published here.
 name: CI
 
 on:
@@ -79,6 +84,72 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: plugin-results
+          path: |
+            build-lead/verify-ctest.log
+            build-lead/probe-results
+            build-lead/golden-candidates
+          if-no-files-found: ignore
+
+  linux-dsp:
+    name: DSP library (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang ninja-build
+          clang --version | head -1 && cmake --version | head -1 && ninja --version
+      - name: Configure
+        run: cmake --preset dsp
+      - name: Build
+        run: cmake --build --preset dsp
+      - name: Verify
+        run: Scripts/verify.sh build-dsp
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dsp-results
+          path: |
+            build-dsp/verify-ctest.log
+            build-dsp/probe-results
+            build-dsp/golden-candidates
+          if-no-files-found: ignore
+
+  linux-plugin:
+    name: Plugin and all probes (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang ninja-build pkg-config \
+            libasound2-dev libfreetype-dev libfontconfig1-dev libglib2.0-dev libsqlite3-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
+            libgl-dev libegl-dev
+          clang --version | head -1 && cmake --version | head -1 && ninja --version
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/audio/.deps
+          key: deps-ubuntu-24.04-x86_64-${{ hashFiles('Scripts/deps.sh') }}
+      - name: Dependencies
+        run: Scripts/deps.sh --no-pluginval
+      - name: Configure
+        run: cmake --preset lead
+      - name: Build
+        run: cmake --build --preset lead
+      - name: Verify
+        run: Scripts/verify.sh --integration build-lead
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-plugin-results
           path: |
             build-lead/verify-ctest.log
             build-lead/probe-results
