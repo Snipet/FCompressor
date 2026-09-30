@@ -73,6 +73,18 @@ namespace fcmp::ui::layout
         inline constexpr Rect  kModeLatch { 600.0f, 14.0f, 320.0f, 42.0f };     // caption + ‹ name › + group line
     }
 
+    // v1.2 (ADR-91): UNDO, REDO and A | B on the preset strip's second line (views/EditControls.h): the arrows under the
+    // name's rule end, the letters under SAVE; the strip's sub-line is fitted to end before them.
+    namespace edits
+    {
+        inline constexpr Rect  kUndo { 504.0f, 43.0f, 20.0f, 16.0f };
+        inline constexpr Rect  kRedo { 526.0f, 43.0f, 20.0f, 16.0f };
+        inline constexpr Rect  kA    { 562.0f, 43.0f, 18.0f, 16.0f };
+        inline constexpr Rect  kB    { 582.0f, 43.0f, 18.0f, 16.0f };
+        inline constexpr float kCentreY = 51.0f;                 // the sub-line's cap centre
+        inline constexpr float kSubRight = 496.0f;
+    }
+
     // ---- display row (02 §6.3, §6.6) ----------------------------------------------------------------------------------
     namespace display
     {

@@ -690,6 +690,16 @@ namespace fcmp::ui
             if (e.key != funkgui::Key::tab || ctx_.textEntry >= 0)
                 return true;
         }
+        // ADR-91: Cmd-Z undoes the editor's last edit, Shift-Cmd-Z redoes it, wherever the focus is.
+        if (e.key == funkgui::Key::character && e.mods.cmd && !e.mods.ctrl && !e.mods.alt
+            && (e.ch == U'z' || e.ch == U'Z'))
+        {
+            if (e.mods.shift)
+                facade_.edits().redo();
+            else
+                facade_.edits().undo();
+            return true;
+        }
         if (e.key == funkgui::Key::tab)
             return moveFocus(e.mods.shift ? -1 : 1);             // false without a Tab stop: the host keeps Tab
         if (e.key == funkgui::Key::escape)

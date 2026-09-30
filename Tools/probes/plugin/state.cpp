@@ -293,6 +293,7 @@ namespace
             proc_.endBatch();
         }
         fcmp::PresetAccess& presets() override { return proc_.presets(); }
+        fcmp::EditAccess& edits() override { return proc_.edits(); }
 
     private:
         fcmp::Processor& proc_;

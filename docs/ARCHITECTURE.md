@@ -39,7 +39,8 @@ Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio is 
 
 ### 1.2 Non-goals (v1)
 
-- Windows, Linux, AAX, iOS; a resizable editor; plugin-side undo; host programs (`getNumPrograms() == 1`).
+- Windows, Linux, AAX, iOS; a resizable editor; host programs (`getNumPrograms() == 1`). (Plugin-side undo arrived in
+  v1.2 without JUCE's UndoManager: ADR-91.)
 - An Intel slice that has never run: v1 ships arm64-only unless an x86 verify has passed (ADR-47, Q6).
 - Per-Mode parameter memory, a link-shape or reference-level parameter (candidate v2 appends; the global output trim
   shipped in v1.2 as `output`, ADR-88).
@@ -412,7 +413,8 @@ only, never of the Mode (01 §5.6; ADR-15):
 - `modeId` (a key string) is authoritative over the `mode` slot; unknown or retired keys load the successor (or
   `clean`) with a footer notice; a newer `stateVersion` loads best effort with a notice; an older `modeRev` gets a
   notice. Loading resets `listen` and `delta`, runs inside one batch, and raises the engine snap after the last write.
-- No `UndoManager`: undo belongs to the host, which records every UI gesture (ADR-23).
+- No `UndoManager` (ADR-23). Since v1.2 the plugin keeps its own history of the editor's edits and an A/B compare
+  (`plugin/EditHistory.h`, ADR-91); host automation is never part of it.
 
 **Presets** (01 §9.2) store **raw** values of the Mode-filtered parameters keyed by ID plus `modeId`/`modeRev`
 attributes; the Mode snaps them on read. The store is HR's preset core, generalised into `FunkGui::presets` (SQLite from

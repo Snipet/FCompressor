@@ -70,6 +70,14 @@ namespace fcmp
 
         std::uint32_t generationOf(std::uint32_t word) noexcept { return word >> kUiGenerationShift; }
 
+        // ADR-91: the A/B compare's inactive slot in the session (State.h writeCompare / readCompare).
+        constexpr const char* kCompareType = "COMPARE";
+        constexpr const char* kCompareParam = "PARAM";
+        constexpr const char* kCompareActive = "active";
+        constexpr const char* kComparePreset = "preset";
+        constexpr const char* kCompareId = "id";
+        constexpr const char* kCompareValue = "value";
+
         bool onMessageThread() noexcept { return juce::MessageManager::existsAndIsCurrentThread(); }
 
         // ADR-85: the DSP load's smoothing and its peak's fall (seconds of audio).
@@ -130,7 +138,7 @@ namespace fcmp
             raw_[i] = apvts_.getRawParameterValue(h.id);
             jassert(params_[i] != nullptr && raw_[i] != nullptr);   // makeParameterLayout builds every kHostParams id
             if (params_[i] != nullptr)
-                ports_[i] = std::make_unique<funkgui::JuceParamPort>(*params_[i]);
+                ports_[i] = std::make_unique<HistoryPort>(*params_[i], history_, static_cast<Pid>(i));
             // A fresh instance holds the table's defaults exactly. The APVTS seeds its raw value through the host map
             // (toPlain(toNorm(def)): makeup 3.6e-7 dB, knee 5.9999995, ...; K2 #14), while the parameter itself
             // already holds def; nothing listens yet, and a later host write goes through the map as usual.
@@ -158,6 +166,50 @@ namespace fcmp
         setLatencySamples(latency);                               // what hosts read before the first prepareToPlay
 
         presets_ = makePresetAccess(PresetContext{ apvts_, *this, stateHooks_ });
+        // ADR-91: the A/B compare's inactive slot, in the session once B has been used.
+        stateHooks_.writeCompare = [this](juce::ValueTree& tree) {
+            const EditHistory::Compare c = history_.compareForSave();
+            if (!c.used)
+                return;
+            juce::ValueTree cmp(kCompareType);
+            cmp.setProperty(kCompareActive, c.active == 1 ? "B" : "A", nullptr);
+            cmp.setProperty(kComparePreset, juce::String::fromUTF8(c.preset.c_str()), nullptr);
+            for (std::size_t i = 0; i < fcdsp::kNumParams; ++i)
+            {
+                if (!EditHistory::tracked(static_cast<Pid>(i)))
+                    continue;
+                juce::ValueTree p(kCompareParam);
+                p.setProperty(kCompareId, fcdsp::kHostParams[i].id, nullptr);
+                p.setProperty(kCompareValue, static_cast<double>(c.values[i]), nullptr);
+                cmp.appendChild(p, nullptr);
+            }
+            tree.appendChild(cmp, nullptr);
+        };
+        stateHooks_.readCompare = [this](const juce::ValueTree& tree) {
+            EditHistory::Compare c;
+            const juce::ValueTree cmp = tree.getChildWithName(kCompareType);
+            if (cmp.isValid())
+            {
+                c.used = true;
+                c.active = cmp.getProperty(kCompareActive).toString() == "B" ? 1 : 0;
+                c.preset = cmp.getProperty(kComparePreset).toString().toStdString();
+                for (std::size_t i = 0; i < fcdsp::kNumParams; ++i)
+                    c.values[i] = fcdsp::kHostParams[i].def;     // absent: the table default
+                for (int k = 0; k < cmp.getNumChildren(); ++k)
+                {
+                    const juce::ValueTree p = cmp.getChild(k);
+                    const juce::String id = p.getProperty(kCompareId).toString();
+                    for (std::size_t i = 0; i < fcdsp::kNumParams; ++i)
+                        if (id == fcdsp::kHostParams[i].id && EditHistory::tracked(static_cast<Pid>(i)))
+                        {
+                            const double v = static_cast<double>(p.getProperty(kCompareValue));
+                            if (std::isfinite(v))
+                                c.values[i] = fcdsp::legal(static_cast<Pid>(i), static_cast<float>(v));
+                        }
+                }
+            }
+            history_.setPendingCompare(c);                       // taken at the next message-thread access
+        };
         setup_.start();
     }
 
@@ -263,6 +315,7 @@ namespace fcmp
         loadState(StateContext{ apvts_, *this, ui, notice, stateHooks_ }, data, sizeInBytes);
         if (notice.serial == 0u)
             return;                                               // ignored (01 §9.1 load step 1): nothing changed
+        loadSerial_.fetch_add(1, std::memory_order_acq_rel);      // ADR-91: the edit history starts over
         publishLoadedUi(ui);
         {
             const std::lock_guard<std::mutex> lock(noticeWrite_); // publishers only: Seqlock has one writer at a time
@@ -352,6 +405,7 @@ namespace fcmp
 
     void Processor::beginBatch()
     {
+        history_.batchBegan();                                   // ADR-91 (the message thread's only)
         batchEpoch_.fetch_add(1, std::memory_order_relaxed);
         batch_.fetch_add(1, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);
@@ -367,6 +421,8 @@ namespace fcmp
         jassert(depth > 0);                                       // endBatch without beginBatch: ignored
         if (depth == 1)
             snapPending_.store(true, std::memory_order_release);
+        if (depth > 0)
+            history_.batchEnded();                               // ADR-91
     }
 
     // ==== facade: ports, telemetry, UI state, presets ================================================================
@@ -396,6 +452,36 @@ namespace fcmp
     }
 
     PresetAccess& Processor::presets() { return *presets_; }
+
+    // ==== ADR-91: the edit history's host ============================================================================
+
+    float Processor::HistoryHost::raw(Pid p) const { return p_.rawValue(p); }
+
+    // As a state load writes (State.cpp writeExact): the host hears the normalised value, then the raw atomic gets the
+    // plain value itself; announced as one gesture, so a host writing automation records it.
+    void Processor::HistoryHost::write(Pid p, float plain)
+    {
+        const std::size_t i = fcdsp::idx(p);
+        juce::RangedAudioParameter* prm = i < fcdsp::kNumParams ? p_.params_[i] : nullptr;
+        if (prm == nullptr || p_.raw_[i] == nullptr)
+            return;
+        prm->beginChangeGesture();
+        if (const float norm = prm->convertTo0to1(plain); prm->getValue() != norm)
+            prm->setValueNotifyingHost(norm);
+        p_.raw_[i]->store(plain, std::memory_order_relaxed);
+        prm->endChangeGesture();
+    }
+
+    void Processor::HistoryHost::beginBatch() { p_.beginBatch(); }
+    void Processor::HistoryHost::endBatch() { p_.endBatch(); }
+    std::string Processor::HistoryHost::presetUuid() const { return p_.presets_ ? p_.presets_->currentUuid() : std::string(); }
+    void Processor::HistoryHost::restorePreset(const std::string& uuid)
+    {
+        if (p_.presets_)
+            p_.presets_->restoreCurrent(uuid);
+    }
+    uint32_t Processor::HistoryHost::loadSerial() const { return p_.loadSerial_.load(std::memory_order_acquire); }
+    bool Processor::HistoryHost::onMessageThread() const { return juce::MessageManager::existsAndIsCurrentThread(); }
 
     Diagnostics Processor::diagnostics() const
     {

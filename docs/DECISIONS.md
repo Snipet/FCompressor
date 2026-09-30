@@ -166,6 +166,7 @@ Conventions:
 
 ### ADR-23 No `UndoManager`
 - **Decision:** `apvts(*this, nullptr, …)`; undo belongs to the host, which records every UI gesture (01 §9.1).
+  (v1.2: the plugin now keeps its own edit history without an UndoManager, ADR-91; this rejection still stands.)
 - **Rejected:** Draft 1 / E §4.3's `UndoManager` (JUCE's APVTS timer pushes host automation into one unbounded
   transaction; undo would revert automation; K2 #7). `ProcessorFacade::beginUndoTransaction` is deleted.
 
@@ -877,6 +878,31 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - **Tests:** `ui.settings` gains `anim.*` (the slider, its keys and a label click, the scale at each step, the
     overlay gone one frame after Esc at OFF and still fading at NORMAL, no parameter written); `fg.ease` (FunkGui)
     12 rows. Goldens move only for the settings view (`ui.geometry`, `ui.a11y`).
+- **ADR-91 Undo/redo and an A/B compare (v1.2).** The last of the lead's pick. ADR-23 rejected JUCE's `UndoManager`
+  because the APVTS pushes host automation into its transactions, so undo would revert automation. This history is
+  the plugin's own and records only what the editor writes.
+  - **`plugin/EditHistory.h`**, plain C++ over a small Host interface, so the processor and `FakeFacade` run the same
+    code. The processor's ports (a `HistoryPort` wrapping `JuceParamPort`) report every gesture's begin and end, and
+    its batches report theirs (a preset, a Mode change, any multi-write). At the outermost begin the history reads the
+    tracked raw values and the preset's uuid; at the outermost end, whatever changed is ONE entry. A gesture-only
+    bracket keeps only the parameters it had a gesture on, so host automation meanwhile is neither recorded nor undone.
+    Tracked: the 22 Mode-filtered parameters, `mode`, `extkey`, `output`; never `quality` or `labudget` (latency),
+    `bypass` or the monitoring latches. Undo and redo are exact raw writes in one batch, each announced to the host as a
+    gesture, then the preset identity comes back (`PresetAccess::currentUuid` / `restoreCurrent`: the preset is current
+    again with its values as the baseline, so MODIFIED is recomputed). At most 100 entries; a new edit drops the redo
+    branch; a state load clears it (a load serial, since hosts load on their own threads).
+  - **A/B:** two slots, each a sound and its preset. B starts as a copy of A; selecting the other slot stores the live
+    sound into the active one and loads the other, and is an undo step. `copySlot` fills the other slot. Once B has been
+    used, the inactive slot is saved in the session (`<COMPARE>` after `<UI>`, State.h's new hooks; older builds ignore
+    it) and a load restores it.
+  - **On screen:** UNDO and REDO arrows and A | B on the preset strip's second line under SAVE
+    (`views/EditControls.h`), with footer lines naming the step ("UNDO THRESHOLD   CMD-Z"), buttons and a radio group for
+    accessibility, Tab stops after SAVE, and a menu on A | B (a right-click) with "Copy A to B". Cmd-Z and Shift-Cmd-Z
+    work anywhere in the panel (hosts that keep those keys for themselves still have the buttons).
+  - **Tests:** `proc.history` (30 rows) on a real processor: gestures, automation left alone, batches, the setup not
+    recorded, presets and their identity, capacity, state loads, A/B with presets and across a session. `ui.edits`
+    (17 rows): the controls, their keys, clicks and footer lines. Goldens move where the strip is drawn (`ui.geometry`,
+    `ui.a11y`, `ui.input`).
 
 ## HardwareReverb migration
 
