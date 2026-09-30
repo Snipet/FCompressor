@@ -131,7 +131,7 @@ namespace fcmp::ui
         fcdsp::UiFrame          ui{};               // the last UiFrame read (kept when a read fails)
         bool     hasFrame = false;                  // a UiFrame has been read
         bool     fresh    = false;                  // publishCount moved within layout::band::kStaleS (never with
-                                                    // PanelOptions::ignoreLive: drawn as if stale)
+                                                    // PanelOptions::ignoreLive: no feed at all, Telemetry.h)
         bool     live     = false;                  // fresh and kUiLive set
         bool     overlaid = false;                  // eng carries the live smoothed fields
         float    staleSeconds = 0.0f;               // since publishCount last moved

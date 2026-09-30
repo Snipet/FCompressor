@@ -85,7 +85,7 @@ namespace fcmp::ui
     {
         bool skipHint    = false;   // probes; FCMP_UI_NO_HINT=1
         bool syncPreview = false;   // step responses computed inside tick() (determinism rule 7, §3.7)
-        bool ignoreLive  = false;   // draw as if telemetry were stale; FCMP_UI_NO_LIVE=1
+        bool ignoreLive  = false;   // draw as if no telemetry ever came (no feed, 48 kHz); FCMP_UI_NO_LIVE=1
     };
 
     class Panel final : public funkgui::Panel
