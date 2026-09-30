@@ -19,8 +19,9 @@
 //   <view>.<variant>.settled    the Panel does not want full rate at the dumped frame (it drew a settled state)
 // Variants: fs48k (every tick at 48 kHz, the default), fs24k (24 kHz: a Bluetooth headset in its hands-free profile,
 // which it enters when the Standalone opens its microphone), fs44k1 (44.1 kHz), fs96k (96 kHz), switch (48 kHz, then
-// 24 kHz from tick 20: the headset changing profile mid-capture) and late (no frame until the last tick before the dump,
-// then 24 kHz: a device that starts late).
+// 24 kHz from half the capture, dumpAfter / 2: the headset changing profile mid-capture, inside every view's window,
+// the panel's 8 ticks too) and late (no frame until the last tick before the dump, then 24 kHz: a device that starts
+// late).
 // SidechainPlot and StepPlot once took UiFrame::sampleRate even under ignoreLive, so gui-live's chars views differed in
 // geometry whenever the Standalone's device did not run at 48 kHz at the dumped frame (telemetry::sampleRate): with a
 // Bluetooth headset as the default device, at 24 kHz (fs24k reproduced the failing live hashes exactly).
@@ -80,7 +81,7 @@ namespace
         { "fs24k",  [](int, int) { return 24000.0f; } },
         { "fs44k1", [](int, int) { return 44100.0f; } },
         { "fs96k",  [](int, int) { return 96000.0f; } },
-        { "switch", [](int i, int) { return i < 20 ? 48000.0f : 24000.0f; } },
+        { "switch", [](int i, int after) { return i < after / 2 ? 48000.0f : 24000.0f; } },
         { "late",   [](int i, int after) { return i < after ? 0.0f : 24000.0f; } },
     }};
 

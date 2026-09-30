@@ -1057,12 +1057,13 @@ writes the settled frame; `funkgui_framerender x.dump x.png 2` renders any dump 
   the Standalone with FunkGui's `capture-frame.sh`, setting `FCMP_CANVAS_DUMP`, `FCMP_UI_VIEW=<id>`,
   `FCMP_UI_FIXED_DT=0.0166667`, `FCMP_UI_NO_HINT=1`, `FCMP_UI_NO_LIVE=1`, a scratch `FCMP_PRESETS_DB` and
   `FCMP_PREFS_DIR` (one variable set, 02 §5.1).
-- `FCMP_UI_NO_LIVE` (`PanelOptions::ignoreLive`) is **no feed at all**: every view draws as before any UiFrame, at the
-  default 48 kHz (`telemetry::sampleRate`), whatever the Standalone's audio device runs at. A Bluetooth headset whose
-  microphone the Standalone opens drops to its 24 kHz hands-free profile; before this rule SidechainPlot and StepPlot
-  drew at that rate and the two chars views differed. `ui.nolive.<key>` (spec rows, every Mode) holds the rule headless:
-  the five views fed busy frames at 48, 24, 44.1 and 96 kHz, a rate switch mid-capture and a frame on the last tick
-  equal the frame with no feed and are settled at gui-live's dump frame.
+- `FCMP_UI_NO_LIVE` (`PanelOptions::ignoreLive`) is **no feed at all**: every view that reads the telemetry feed draws
+  as before any UiFrame, at the default 48 kHz (`telemetry::sampleRate`), whatever the Standalone's audio device runs at
+  (the settings screen's DIAGNOSTICS show the real processor by design; it is not a parity view). A Bluetooth headset
+  whose microphone the Standalone opens drops to its 24 kHz hands-free profile; before this rule SidechainPlot and
+  StepPlot drew at that rate and the two chars views differed. `ui.nolive.<key>` (spec rows, every Mode) holds the rule
+  headless: the five views fed busy frames at 48, 24, 44.1 and 96 kHz, a rate switch mid-capture and a frame on the
+  last tick equal the frame with no feed and are settled at gui-live's dump frame.
 - A live frame still at `rate full` (not settled) is captured again with the dump frame doubled, at most 3 captures;
   only a settled frame is compared, and a comparison is never retried. A DIFFERS prints the settle and dump frames and
   renders `<id>.headless.png` beside `<id>.live.png`.
