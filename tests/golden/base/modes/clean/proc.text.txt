@@ -1,3 +1,3 @@
 # funkgui-golden 2  probe=proc.text  scope=modes/clean
 # key	value	tolerance
-text.defaults.hash	d28cc77a70f62bd4	exact
+text.defaults.hash	7e27ae0d653e8a64	exact

@@ -1,3 +1,3 @@
 # funkgui-golden 2  probe=proc.text  scope=modes/diode-609
 # key	value	tolerance
-text.defaults.hash	2b83be96dd8f3557	exact
+text.defaults.hash	90c5f386da1a7b3d	exact
