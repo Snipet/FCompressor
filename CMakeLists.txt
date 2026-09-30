@@ -40,15 +40,23 @@ endif()
 # ---- options (03 §2.2) --------------------------------------------------------------------------------------------
 option(FCOMPRESSOR_HEADLESS            "No bgfx, no shaders, no FunkGui::gpu; generic editor; every probe builds" OFF)
 option(FCOMPRESSOR_DSP_ONLY            "No JUCE at all: fcdsp, fcmp_probe_dsp, fcmp_bench, dsp.* tests"           OFF)
-option(FCOMPRESSOR_INSTALL_AFTER_BUILD "Copy the plugins into ~/Library/Audio/Plug-Ins after each build"         ON)
+option(FCOMPRESSOR_INSTALL_AFTER_BUILD "Copy the plugins into ~/Library/Audio/Plug-Ins after each build"         OFF)
 option(FCOMPRESSOR_LTO                 "-flto in Release: the plugin, fcdsp's objects, and probe links"          ON)
 option(FCOMPRESSOR_WERROR              "-Werror on our own sources (never on JUCE or dependency TUs)"            ON)
 option(FCOMPRESSOR_RELEASE             "Release build: dsp.registry fails on any provisional Mode"               OFF)
 option(FCOMPRESSOR_RTSAN               "-fsanitize=realtime, or the RtInterposer fallback where unsupported"     OFF)
 set(FCOMPRESSOR_DEPS_DIR "$ENV{HOME}/audio/.deps" CACHE PATH
     "Machine-wide read-only dependency cache written by Scripts/deps.sh (03 §2.4)")
-set(FCOMPRESSOR_FUNKGUI_REPO "/Users/seanfunk/audio/libraries/FunkGui" CACHE STRING
-    "FunkGui GIT_REPOSITORY (a local repository; the pinned tag is cmake/FcmpDeps.cmake's)")
+# FunkGui's repository (ADR-87): this machine's local repository when it has one, so the lead's and the agents' builds
+# never go to the network for it, else the public GitHub repository (CI, anyone else). The pinned tag and its SHA
+# assertion are cmake/FcmpDeps.cmake's either way.
+if(EXISTS "$ENV{HOME}/audio/libraries/FunkGui/.git")
+  set(_fcmp_funkgui_repo "$ENV{HOME}/audio/libraries/FunkGui")
+else()
+  set(_fcmp_funkgui_repo "https://github.com/Snipet/FunkGui.git")
+endif()
+set(FCOMPRESSOR_FUNKGUI_REPO "${_fcmp_funkgui_repo}" CACHE STRING
+    "FunkGui GIT_REPOSITORY (the local repository if present, else GitHub; the pinned tag is cmake/FcmpDeps.cmake's)")
 set(FCMP_TEST_JOBS 4 CACHE STRING "ctest -j for the verify convenience target")
 
 if(FCOMPRESSOR_DSP_ONLY)
