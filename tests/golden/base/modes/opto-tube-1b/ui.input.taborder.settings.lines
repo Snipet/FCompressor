@@ -3,4 +3,5 @@
 3 settings:48 radioGroup Sidechain
 4 settings:64 radioGroup Quality for new instances
 5 settings:80 radioGroup Lookahead for new instances
-6 settings:96 button Copy report
+6 settings:112 slider Animation
+7 settings:96 button Copy report
