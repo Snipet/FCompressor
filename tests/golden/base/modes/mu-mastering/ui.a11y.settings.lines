@@ -32,6 +32,7 @@
  4 Off                      184,396,32,16        checked help=Off: the lookahead budget a new FCompressor starts with on this computer
  4 5 ms                     220,396,40,16        unchecked help=5 ms: the lookahead budget a new FCompressor starts with on this computer
  4 20 ms                    264,396,46,16        unchecked help=20 ms: the lookahead budget a new FCompressor starts with on this computer
+ 0 Animation                34,468,252,66        value=normal help=How fast the panel's fades and eases run, on every FCompressor on this computer
  7 Key input                184,260,276,14       value=THE HOST ROUTES NO KEY INPUT [ro]
  7 Latency                  40,290,420,18        value=4 SAMPLES · 0.08 MS [ro]
  7 Version                  500,93,420,18        value=FCOMPRESSOR 0.0.0 [ro]
