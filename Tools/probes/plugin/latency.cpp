@@ -22,7 +22,7 @@
 // is the message thread and runs JUCE's timers through Timer::callPendingTimersSynchronously every millisecond):
 //   latency.live.<step>_ms             the setup written by a separate thread (quality STD -> HQ; labudget OFF ->
 //                                      20 MS; both back to ECO/OFF) until getLatencySamples() equals latencyFor of
-//                                      the new setup: <= 100 ms
+//                                      the new setup: <= 100 ms (times FCMP_TIMING_SCALE, Tolerances.h)
 //   latency.live.reported_err          the final latency against latencyFor: 0
 //   latency.live.mode_switch_changes   latency changes while the Mode switches (from a separate thread) and the
 //                                      SetupWatcher ticks for 200 ms: 0 (a Mode never changes latency)
@@ -37,6 +37,7 @@
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
+#include "Tolerances.h"
 
 #include "plugin/Processor.h"
 
@@ -362,7 +363,7 @@ FCMP_PROBE(proc, latency)
             double ms = pumpUntil([&] { return proc->getLatencySamples() == want; }, t0, 1000.0);
             if (ms < 0.0)
                 ms = 1e9;
-            P.le(std::string("latency.live.") + s.name + "_ms", ms, 100.0);
+            P.le(std::string("latency.live.") + s.name + "_ms", ms, 100.0 * fcmp::probe::tol::timingScale());   // ADR-87
             std::printf("NOTE     latency.live.%s: %d samples after %.1f ms\n", s.name, want, ms);
             idle(37.0);                                          // the next write lands at another timer phase
         }

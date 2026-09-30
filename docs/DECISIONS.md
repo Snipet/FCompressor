@@ -810,6 +810,11 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     otherwise. The tag, the SHA assertion and the override rules are unchanged.
   - **`FCOMPRESSOR_INSTALL_AFTER_BUILD` defaults to OFF.** Every preset already set it, `owner` to ON; a plain
     `cmake -B` build no longer copies plugins into `~/Library/Audio/Plug-Ins`.
+  - **Timing rows scale on CI.** The first run matched every golden bit for bit on the runner (Xcode 26.6), but the two
+    wall-clock rows failed there: `latency.live.*_ms` read 100 to 146 ms against 100, and
+    `hostile.silence.tail_cost_ratio` 2.05 and 2.20 against 2. `FCMP_TIMING_SCALE` (Tolerances.h; 1 when unset, which
+    is the lead's gate) multiplies exactly those limits, and CI sets 3. That still fails a setup change that never
+    arrives, and a denormal tail, which costs ten times or more.
   - **Not in CI:** `gui-live` (a window and Metal), `validate.sh` (auval and pluginval), the sanitizer and universal
     builds, signing and releases. The lead's gate still runs them before a merge.
   - **The README image** is a real engine render, not a mock-up: `ui.dump` gains `--preset <name>` (a Mode's factory

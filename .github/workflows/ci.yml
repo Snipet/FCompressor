@@ -18,6 +18,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # A shared runner is slower and noisier than the lead's machine: the two wall-clock rows (a setup change reaching the
+  # host within 100 ms, a CPU-cost ratio under 2) get three times the room. Nothing else scales (Tolerances.h).
+  FCMP_TIMING_SCALE: 3
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

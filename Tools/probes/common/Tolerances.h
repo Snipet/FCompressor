@@ -13,6 +13,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
 
@@ -107,4 +108,15 @@ namespace fcmp::probe::tol
     }
     static_assert(monotone(), "Tolerances.h: a looser rigor must never have a tighter bound");
     static_assert(kByRigor[0].curveOutsideKneeDb == 0.05 && kByRigor[2].curveInsideKneeDb == 0.75, "C §5.13");
+
+    // Wall-clock limits (a message-thread timer's latency, a CPU-cost ratio) are multiplied by FCMP_TIMING_SCALE: 1 when
+    // unset, which is the lead's gate; CI sets 3 (ADR-87), since a shared cloud runner is slower and noisier than the
+    // machine the limits were set on, and a timing row judges the design, not the runner. A value outside 1 … 10 is
+    // ignored. Every other row is exact or has a numeric tolerance and never scales.
+    inline double timingScale() noexcept
+    {
+        const char* s = std::getenv("FCMP_TIMING_SCALE");
+        const double v = s != nullptr ? std::strtod(s, nullptr) : 1.0;
+        return v >= 1.0 && v <= 10.0 ? v : 1.0;
+    }
 } // namespace fcmp::probe::tol
