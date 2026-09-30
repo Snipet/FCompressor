@@ -58,6 +58,10 @@
 //   loudclip.transfer.max_err        constants through process() against transfer(): <= 1e-6 relative
 //   loudclip.silence.nonzero, loudclip.bs.mismatches   silence stays 0; one block against odd splits, bit for bit
 //   loudclip.level.lands             T moved by 6 dB: the clip level moves per tick and lands exactly
+//   loudclip.glide.*                 T falling 1 dB within one call (k rises, ADR-86 glides it across the call), a
+//                                    held input in the knee: every sample is the soft curve at its own k, f(k_i x)/k_i
+//                                    (knee_err <= 5e-3 of 1/k_i: ADAA-1's half-sample lag on the residual, 1.3e-3 here;
+//                                    a clip at the call's final 1/k cut 0.1), and none passes its own 1/k_i
 //   loudclip.headroom_err_db         kHeadroomDb = 20 log10(4/3) - 0.25 (the fitted constant, LoudClip.h)
 // Brickwall through EngineHost (48 kHz, THRESHOLD -18, CEILING -1, LOOKAHEAD 5 ms in a 20 ms budget, DETECT TP unless
 // noted; two programs 18 dB over the threshold, both band-limited to 20 kHz by a 511-tap linear-phase low-pass: the
@@ -1075,6 +1079,33 @@ namespace
         std::printf("NOTE     loudclip.level: a 6 dB move lands in %d ticks (%.3g ms)\n", designs,
                     designs * static_cast<double>(kTickSamples) * 1000.0 / static_cast<double>(kFs));
         P.eq("loudclip.level.lands", moved.levelDb == e.thrDb && designs > 1 ? 1 : 0, 1);
+
+        // A falling T within one call: k glides from k0 to k1 = k0 * 10^(1/20) across it (TubeSym.h processDriven).
+        {
+            LC::State gs{};
+            constexpr int kN = 64;
+            const float xin = 1.45f / k;                                // u = 1.45 at k0: in the knee, past it at k1
+            std::vector<float> warm(kN, xin);
+            LC::process(c, gs, warm.data(), nullptr, kN, 0);            // gs.ch.k = k0
+            LC::Coeffs up = c;
+            up.drive.k = k * std::pow(10.0f, 1.0f / 20.0f);
+            up.drive.invK = 1.0f / up.drive.k;
+            std::vector<float> g(kN, xin);
+            LC::process(up, gs, g.data(), nullptr, kN, 0);
+            const float k0 = k, k1 = up.drive.k, dk = (k1 - k0) / static_cast<float>(kN);
+            double kneeErr = 0.0;
+            std::int64_t overOwn = 0;
+            for (int i = 0; i < kN; ++i)
+            {
+                const float kv = i + 1 < kN ? k0 + dk * static_cast<float>(i + 1) : k1;
+                const double want = static_cast<double>(adaa::transfer(adaa::SoftClip{}, kv * xin) / kv);
+                kneeErr = std::max(kneeErr, std::fabs(static_cast<double>(g[static_cast<std::size_t>(i)]) - want)
+                                                * static_cast<double>(kv));
+                overOwn += std::fabs(g[static_cast<std::size_t>(i)]) > (1.0f / kv) * (1.0f + 1e-6f) ? 1 : 0;
+            }
+            P.le("loudclip.glide.knee_err", kneeErr, 5e-3);
+            P.eq("loudclip.glide.over_own_bound", overOwn, 0);
+        }
         P.near("loudclip.headroom_err_db", static_cast<double>(LC::kHeadroomDb), 20.0 * std::log10(4.0 / 3.0) - 0.25,
                1e-6);
     }
