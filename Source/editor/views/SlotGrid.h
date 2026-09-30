@@ -27,10 +27,17 @@
 // - A11y: RuleSlider's items (02 §8.9: stepped in index space), with the continuous / locked / derived value
 //   interface rewritten to the Mode track in display units (lo, hi, v; step = 1 % of the span) and setValue translated
 //   back to the track; each word follows its slot.
+// - Typed values (v1.2, ADR-89; views/ValueEntry.h): Return, a digit, '.', '-' or '+' on a focused slot (Tab's ring, or
+//   the silent focus a press on a slot gives it) opens a field over its value, holding the value text (Return) or the
+//   typed character. Return, Tab or a click elsewhere sets it: the text goes through fcdsp::parseHost with the frame's
+//   raw values, as a host's typed text does (the Mode's own numbers, step labels and units, universal units), and the
+//   result is one tap on the port; a text that is no value keeps the field open and flashes. Esc cancels. Locked,
+//   derived and n/a slots open nothing. A Mode change closes the field without writing.
 #pragma once
 
 #include "editor/Layout.h"
 #include "editor/SubView.h"
+#include "editor/views/ValueEntry.h"
 
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/core/Geometry.h>
@@ -77,6 +84,8 @@ namespace fcmp::ui
         funkgui::Cursor cursor(funkgui::Point) const override;
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
         uint32_t a11yRevision() const override;
+        void endTextEntry(bool commit) override;                 // v1.2 (ADR-89)
+        bool takesTypedKeys(uint32_t id) const override;
 
         static constexpr uint32_t kWordIdBase = 64;              // a word's local a11y id: 64 + its slot's index
         static constexpr int kWordCount = 3;                     // AUTO, EXT, LISTEN
@@ -94,6 +103,9 @@ namespace fcmp::ui
         void offerHands();
         void specLine(int slider, char* out, std::size_t n) const;
         void wordSpecLine(int word, char* out, std::size_t n) const;
+        void openEntry(int slider, const funkgui::KeyEvent& opener);   // ADR-89
+        bool commitEntry();                                      // false: the text is no value (the field stays)
+        void closeEntry() noexcept;
 
         PanelContext& ctx_;
 
@@ -110,5 +122,7 @@ namespace fcmp::ui
         funkgui::Point downAt_{};                                // where the captured slider was pressed
         uint32_t modeSerial_ = 0;                                // FrameState::modeSerial the carets have landed on
         uint32_t revision_ = 0;                                  // bumps when a word appears or disappears
+        ValueEntry entry_;                                       // ADR-89: the typed-value field ...
+        int        entrySlider_ = -1;                            // ... over this slider
     };
 }

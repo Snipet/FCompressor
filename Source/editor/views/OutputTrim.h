@@ -11,7 +11,12 @@
 //   one gesture per burst.
 // - Keys: arrows ±0.5 dB (Shift ±0.1), Page ±3 dB, Home −24, End +24, Delete/Backspace 0 dB; each is one tap.
 // - A11y: a slider in dB (lo −24, hi +24, step 0.5), title "Output", value the spoken text; setValue takes dB.
+// - Typed values (v1.2, ADR-89; ValueEntry.h): Return, a digit, '.', '-' or '+' while it has the focus (Tab's, or the
+//   silent focus a press gives it) opens a field over its value; the text goes through fcdsp::parseOutput and the
+//   result is one tap. The field's line replaces the spec on the footer.
 #pragma once
+
+#include "editor/views/ValueEntry.h"
 
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/core/Geometry.h>
@@ -44,7 +49,7 @@ namespace fcmp::ui
         bool     contains(funkgui::Point) const noexcept;
         bool     dragging() const noexcept { return dragging_; }
         bool     settled() const noexcept;                       // no hover ease running, no drag
-        const char* spec() const noexcept;                       // the footer line
+        const char* spec() const noexcept;                       // the footer line (the field's while it is open)
 
         void tick(float dt, bool underHand);
         void draw(funkgui::Canvas&, const funkgui::Theme&, bool focusRing) const;
@@ -59,10 +64,17 @@ namespace fcmp::ui
         void accessibility(std::vector<funkgui::A11yItem>&) const;
         void a11yAction(funkgui::A11yAction, double value, funkgui::GestureController&);
 
+        // ADR-89: the typed-value field.
+        bool entryOpen() const noexcept { return entry_.open(); }
+        void endEntry(bool commit, funkgui::GestureController&);
+
     private:
         float db() const;                                        // the port's plain value
         void  tapDb(float db, funkgui::GestureController&);      // one discrete write, legal()
         void  anchor(float x, float y, const funkgui::Mods&);    // the drag restarts here from the port's value
+        void  openEntry(const funkgui::KeyEvent& opener);
+        bool  commitEntry(funkgui::GestureController&);          // false: no value (the field stays, flashing)
+        void  closeEntry() noexcept;
 
         PanelContext&       ctx_;
         funkgui::ParamPort& port_;
@@ -71,5 +83,6 @@ namespace fcmp::ui
         bool                dragging_ = false;
         float               anchorX_ = 0.0f, anchorY_ = 0.0f, anchor01_ = 0.0f;
         bool                fine_ = false, ultra_ = false;       // Shift / Cmd at the anchor
+        ValueEntry          entry_;                              // ADR-89
     };
 }

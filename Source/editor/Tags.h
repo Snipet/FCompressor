@@ -134,8 +134,10 @@ namespace fcmp::ui::tag
     // ---- v1.2 (ADR-88) ---------------------------------------------------------------------------------------------------
     inline constexpr Tag outputTrim    = 339;   // OUTPUT_TRIM     the display row's OUTPUT caption, rule, notch and caret
     inline constexpr Tag outputValue   = 340;   // OUTPUT_VALUE    its value text
+    // ---- v1.2 (ADR-89) ---------------------------------------------------------------------------------------------------
+    inline constexpr Tag valueEntry    = 341;   // VALUE_ENTRY     a typed-value field: its box, text, selection, caret
 
-    inline constexpr Tag last          = 340;
+    inline constexpr Tag last          = 341;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -171,7 +173,7 @@ namespace fcmp::ui::tag
         { meterFace, "METER_FACE" },         { meterDetail, "METER_DETAIL" },
         { settingsBg, "SETTINGS_BG" },       { settingsText, "SETTINGS_TEXT" },  { settingsValue, "SETTINGS_VALUE" },
         { settingsGear, "SETTINGS_GEAR" },
-        { outputTrim, "OUTPUT_TRIM" },       { outputValue, "OUTPUT_VALUE" },
+        { outputTrim, "OUTPUT_TRIM" },       { outputValue, "OUTPUT_VALUE" },   { valueEntry, "VALUE_ENTRY" },
     } };
 
     namespace detail

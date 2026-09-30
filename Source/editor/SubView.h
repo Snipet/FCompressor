@@ -77,6 +77,11 @@ namespace fcmp::ui
         virtual funkgui::Cursor cursor(funkgui::Point) const { return funkgui::Cursor::normal; }
         virtual void a11yAction(uint32_t /*id*/, funkgui::A11yAction, double /*value*/) {}   // an id of this sub-view
         virtual uint32_t a11yRevision() const { return 0; }          // bumps when its items appear, disappear or move
+        // v1.2 (ADR-89), typed values: close this view's open field, setting the value (a text that is no value is
+        // dropped) or not; and whether the item `id`, focused with the ring hidden (a click), takes the keys that open a
+        // field (Return, a digit, '.', '-', '+').
+        virtual void endTextEntry(bool /*commit*/) {}
+        virtual bool takesTypedKeys(uint32_t /*id*/) const { return false; }
     };
 
     // ---- a11y ids and the fixed composition -----------------------------------------------------------------------------
@@ -210,6 +215,12 @@ namespace fcmp::ui
         bool     alwaysChrome = false;              // a pointer down with no move ever seen: touch mode (HR :1488)
         uint32_t focus = 0;                         // the a11y id with keyboard focus (0: none)
         bool     focusVisible = false;              // the focus ring is shown (Tab shows it; a click or Esc hides it)
+        // v1.2 (ADR-89): the sub-view (ViewIndex) whose typed-value field is open, -1 none, and the field's box. While
+        // one is open the Panel gives that view every key; a pointer down outside the box sets the value first
+        // (SubView::endTextEntry), one inside it does nothing. A click on a value control also gives it the keyboard
+        // focus with the ring hidden, so a number typed next goes to it (SubView::takesTypedKeys).
+        int           textEntry = -1;
+        funkgui::Rect textEntryBox{};
 
         // ---- cross-view channels ------------------------------------------------------------------------------------
         HandState  hand;                            // the item under the hand as of the last completed tick (read)

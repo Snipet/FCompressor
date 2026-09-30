@@ -436,7 +436,7 @@ namespace fcmp::ui
                 default:       break;
             }
         };
-        if (output_.dragging())
+        if (output_.dragging() || output_.entryOpen())
             offer(wOutput, HandKind::drag);
         else if (pointerOver_)
             offer(widgetAt(ctx_.pointer), HandKind::hover);
@@ -753,6 +753,8 @@ namespace fcmp::ui
         if (ctx_.gestures == nullptr)
             return false;
         funkgui::GestureController& g = *ctx_.gestures;
+        if (output_.entryOpen())                                 // ADR-89: its field takes every key
+            return output_.key(e, g);
         switch (widgetOf(ctx_.focus))
         {
             case wOutput:  return output_.key(e, g);
@@ -834,6 +836,14 @@ namespace fcmp::ui
         if (ctx_.gestures != nullptr && (captured_ == wOutput || (captured_ < 0 && widgetAt({ e.x, e.y }) == wOutput)))
             output_.reset(*ctx_.gestures);
     }
+
+    void DisplayRow::endTextEntry(bool commit)
+    {
+        if (ctx_.gestures != nullptr)
+            output_.endEntry(commit, *ctx_.gestures);
+    }
+
+    bool DisplayRow::takesTypedKeys(uint32_t id) const { return id == output_.a11yId(); }
 
     bool DisplayRow::wheel(const funkgui::WheelEvent& e)
     {

@@ -11,10 +11,12 @@
 #include "fcdsp/params/ParamSpec.h"
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Resolve.h"
+#include "fcdsp/params/Text.h"
 #include "fcdsp/telemetry/UiFrame.h"
 
 #include <funkgui/canvas/Canvas.h>
 #include <funkgui/core/Theme.h>
+#include <funkgui/core/TypeScale.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/params/GestureController.h>
 #include <funkgui/params/ParamPort.h>
@@ -23,7 +25,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace fcmp::ui
 {
@@ -307,7 +311,11 @@ namespace fcmp::ui
     void SlotGrid::tick(float dt)
     {
         if (ctx_.frame.modeSerial != modeSerial_)
+        {
+            closeEntry();                                        // ADR-89: the Mode changed under an open field
             land();
+        }
+        entry_.tick(dt);
         for (std::size_t k = 0; k < words_.size(); ++k)
         {
             if (!words_[k])
@@ -336,6 +344,14 @@ namespace fcmp::ui
     {
         char line[sizeof ctx_.handNext.spec];
         const auto slotPid = [](int i) { return layout::kSlots[static_cast<std::size_t>(i)].pid; };
+        if (entry_.open() && entrySlider_ >= 0)                  // ADR-89: the field's own line, over any other
+        {
+            const funkgui::RuleSlider& s = *sliders_[static_cast<std::size_t>(entrySlider_)];
+            std::snprintf(line, sizeof line, "%s   TYPE A VALUE   RETURN SETS IT   ESC CANCELS",
+                          s.view().label != nullptr ? s.view().label : "");
+            ctx_.offerHand(slotPid(entrySlider_), HandKind::drag, s.a11yId(), line);
+            return;
+        }
         if (captured_ >= 0 && ctx_.pointerPressed)
         {
             specLine(captured_, line, sizeof line);
@@ -377,6 +393,8 @@ namespace fcmp::ui
 
     bool SlotGrid::wantsFullRate() const
     {
+        if (!entry_.settled())
+            return true;
         for (const auto& s : sliders_)
             if (!s->settled())
                 return true;
@@ -501,6 +519,7 @@ namespace fcmp::ui
             words_[k]->draw(c, th, focused(words_[k]->a11yId()));
             wordModels_[k]->present(false);
         }
+        entry_.draw(c, th);                                      // ADR-89: over its slot's value
     }
 
     bool SlotGrid::hit(funkgui::Point p) const { return layout::kSlotGrid.contains(p); }
@@ -555,6 +574,7 @@ namespace fcmp::ui
         {
             captured_ = i;
             downAt_ = p;
+            ctx_.focus = sliders_[static_cast<std::size_t>(i)]->a11yId();   // ADR-89: a number typed next goes here
             sliders_[static_cast<std::size_t>(i)]->pointerDown(e, *ctx_.gestures, *ctx_.host);
         }
     }
@@ -612,6 +632,22 @@ namespace fcmp::ui
     {
         if (ctx_.gestures == nullptr)
             return false;
+        if (entry_.open())                                       // ADR-89: the field takes every key
+        {
+            switch (entry_.key(e))
+            {
+                case ValueEntry::Result::commit: commitEntry(); break;
+                case ValueEntry::Result::cancel: closeEntry(); break;
+                case ValueEntry::Result::typing: break;
+            }
+            return true;
+        }
+        if (const int i = sliderOf(ctx_.focus); i >= 0 && ValueEntry::opens(e))
+        {
+            if (writable(i))
+                openEntry(i, e);
+            return true;                                         // a refused slot opens nothing (the footer says why)
+        }
         if (const int i = sliderOf(ctx_.focus); i >= 0)
         {
             const bool used = sliders_[static_cast<std::size_t>(i)]->key(e, *ctx_.gestures);   // 02 §8.9
@@ -622,6 +658,63 @@ namespace fcmp::ui
         if (const int k = wordOf(ctx_.focus); k >= 0)
             return words_[static_cast<std::size_t>(k)]->key(e, *ctx_.gestures);
         return false;
+    }
+
+    // ---- typed values (ADR-89) ----------------------------------------------------------------------------------------
+
+    bool SlotGrid::takesTypedKeys(uint32_t id) const { return sliderOf(id) >= 0; }
+
+    void SlotGrid::openEntry(int i, const funkgui::KeyEvent& opener)
+    {
+        const funkgui::RuleSlider& s = *sliders_[static_cast<std::size_t>(i)];
+        const funkgui::SlotGeom& g = s.geom();
+        const funkgui::TextStyle& style = g.isPrimary() ? funkgui::type::kValueP : funkgui::type::kValueS;
+        const funkgui::Rect box { g.x - 4.0f, g.valueTop() - 3.0f, g.w + 8.0f, style.px + 6.0f };
+        std::string current = s.view().text.value;
+        if (s.view().text.unit[0] != '\0')
+            current += std::string(" ") + s.view().text.unit;
+        entry_.begin(box, style, opener, current);
+        entrySlider_ = i;
+        ctx_.textEntry = static_cast<int>(ViewIndex::slotGrid);
+        ctx_.textEntryBox = box;
+    }
+
+    bool SlotGrid::commitEntry()
+    {
+        const int i = entrySlider_;
+        const FrameState& f = ctx_.frame;
+        if (i < 0 || ctx_.gestures == nullptr || f.entry == nullptr)
+        {
+            closeEntry();
+            return true;
+        }
+        const fcdsp::Pid pid = layout::kSlots[static_cast<std::size_t>(i)].pid;
+        float plain = 0.0f;
+        if (!fcdsp::parseHost(*f.entry, f.raw, pid, entry_.text(), plain) || !std::isfinite(plain))
+        {
+            entry_.refuse();
+            return false;
+        }
+        ctx_.gestures->tap(ctx_.facade.port(pid), fcdsp::toNorm(pid, plain));
+        ctx_.touch(pid);
+        closeEntry();
+        return true;
+    }
+
+    void SlotGrid::closeEntry() noexcept
+    {
+        if (entry_.open() && ctx_.textEntry == static_cast<int>(ViewIndex::slotGrid))
+            ctx_.textEntry = -1;
+        entry_.end();
+        entrySlider_ = -1;
+    }
+
+    void SlotGrid::endTextEntry(bool commit)
+    {
+        if (commit && !commitEntry())
+            closeEntry();                                        // a click elsewhere never leaves a typo behind
+        else if (!commit)
+            closeEntry();
     }
 
     int SlotGrid::focusOrder(std::span<uint32_t> out) const
