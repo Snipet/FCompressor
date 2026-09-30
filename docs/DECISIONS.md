@@ -822,6 +822,27 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     60 frames per second before the frame is written). `docs/images/fcompressor.png` is
     `fcmp_probe_plugin ui.dump --mode opto-2a --golden-root tests/golden --arch arm64 -- --view panel --out x.dump
     --png docs/images/fcompressor.png --dpi 2 --live 6 --preset "Smooth Vocal"`.
+- **ADR-88 A global OUTPUT trim (v1.2).** The user asked for the lead's pick of missing professional features; an output
+  trim after the mix was one (ARCHITECTURE listed it as a candidate v2 append).
+  - **A new host parameter, `output`:** "Output", −24 … +24 dB, linear, default 0, automatable, not in presets, version
+    hint 2. It is the first append to `kApvtsOrder` (index 29; 30 parameters). Old sessions and presets load with it at
+    0 dB. Presets never carry it, so it stays where you set it while you browse presets and Modes, and changing it never
+    marks a preset MODIFIED. `fcdsp::formatOutput` / `parseOutput` give the host and the UI the same text ("−3.0 DB").
+  - **Where it acts:** `BlockParams::outputDb` reaches `EngineHost`, which applies the linear gain after the
+    downsampler, through the host's two-stage 20 ms smoother (as the mix), before the poison check, SC listen and
+    bypass. So it trims the processed signal, dry and wet alike at any mix, and DELTA; bypass stays the true dry
+    reference and SC LISTEN the key as the detector hears it. The OUT meter reads after it. The TRANSFER curve stays
+    the Mode's curve, which the trim does not change. At 0 dB the stage touches nothing, so every existing output is
+    bit-identical (`dsp.print` and the other goldens held).
+  - **On screen:** a compact slider in the display row, over the IN · OUT readout (x 224–352), so it shows on both
+    screens: OUTPUT and its value on the captions' line, a rule with the 0 dB notch, a caret. It uses the slots' look
+    and input rules (drag, wheel, fine and ultra-fine modifiers, arrow keys in 0.5 dB, Shift 0.1, Page 3, Delete or a
+    double-click for 0 dB, the host menu on a right-click). It is the display row's first Tab stop.
+  - **Tests:** `dsp.null` gains OUTPUT rows at every Quality: −6 dB is the 0 dB output times the gain bit for bit,
+    bypass and listen stay untrimmed bit for bit, a 0 → −12 dB edge at a waveform peak reads under the click limit, and
+    an out-of-range or NaN value clamps. `dsp.hostparams`, `proc.state` and `ui.charscreen` count and order the new
+    parameter. Goldens move where they list parameters or the display row: `proc.layout`, `proc.text`, `ui.geometry`,
+    `ui.a11y`, `ui.input`.
 
 ## HardwareReverb migration
 

@@ -19,7 +19,8 @@ constexpr const char* kQualityChoices[] = { "ECO", "STD", "HQ" };          // Qu
 constexpr const char* kBudgetChoices[]  = { "OFF", "5 MS", "20 MS" };      // LookaheadBudget::{off, ms5, ms20}
 } // namespace
 
-// 01 §3.1, in Pid order. Every parameter is version hint (vh) 1. aut = automatable; pre = stored in presets (the
+// 01 §3.1, in Pid order. Every v1 parameter is version hint (vh) 1; `output` (v1.2, ADR-88) is 2, so hosts that key on
+// the hint (AU) see a later parameter. aut = automatable; pre = stored in presets (the
 // Mode rides in presets as the modeId attribute, never as a parameter). Bypass is the host's bypass parameter
 // (getBypassParameter), automatable like any other. n = numSteps (0 = continuous).
 constexpr std::array<HostParam, kNumParams> kHostParams {{
@@ -53,6 +54,7 @@ constexpr std::array<HostParam, kNumParams> kHostParams {{
     { Pid::bypass,  "bypass",   "Bypass",            "",       Map::boolean, 0,      1,     0,     0,    1, true,  false, 2,   nullptr },
     { Pid::quality, "quality",  "Quality",           "",       Map::index,   0,      2,     0,     1,    1, false, false, 3,   kQualityChoices },
     { Pid::labudget,"labudget", "Lookahead Budget",  "",       Map::index,   0,      2,     0,     0,    1, false, false, 3,   kBudgetChoices },
+    { Pid::output,  "output",   "Output",            "DB",     Map::linear,  -24,    24,    0,     0,    2, true,  false, 0,   nullptr },
 }};
 
 namespace {

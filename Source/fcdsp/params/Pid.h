@@ -18,7 +18,8 @@ enum class Pid : uint8_t {
     s2thr, s2atk, s2rel,
     kModeCount,                       // 22: the Mode-filtered set (ModeDescriptor covers exactly these)
     mode = kModeCount, extkey, listen, delta, bypass, quality, labudget,
-    kCount                            // 29
+    output,                           // v1.2 (ADR-88): the global OUTPUT trim, the first v2 append
+    kCount                            // 30
 };
 inline constexpr std::size_t kNumModeParams = static_cast<std::size_t>(Pid::kModeCount);
 inline constexpr std::size_t kNumParams     = static_cast<std::size_t>(Pid::kCount);
@@ -32,7 +33,8 @@ inline constexpr std::array<Pid, kNumParams> kApvtsOrder {
     Pid::thr, Pid::ratio, Pid::knee, Pid::range, Pid::atk, Pid::rel, Pid::tmode, Pid::hold, Pid::look, Pid::det,
     Pid::schpf, Pid::sce, Pid::link, Pid::stmode, Pid::voice, Pid::drive, Pid::makeup, Pid::automu, Pid::mix,
     Pid::s2thr, Pid::s2atk, Pid::s2rel,
-    Pid::mode, Pid::extkey, Pid::listen, Pid::delta, Pid::bypass, Pid::quality, Pid::labudget /* v2 appends go here */ };
+    Pid::mode, Pid::extkey, Pid::listen, Pid::delta, Pid::bypass, Pid::quality, Pid::labudget,
+    Pid::output /* v1.2, ADR-88; later appends go here */ };
 
 // Resolve order: a ParamEntry's `driver` must appear EARLIER here (registry lint). Derived params are
 // evaluated in a second pass after every non-derived param, so "derived from" may point anywhere non-derived.
@@ -50,7 +52,7 @@ inline constexpr std::array<Pid, kNumModeParams> kResolveOrder {
 // the positional kSnapDomain table; kSnapDomain remains as a table GENERATED from snapDomain() (snap() may index it).
 enum class SnapDomain : uint8_t { linear, log, host };
 constexpr SnapDomain snapDomain(Pid p) noexcept {
-    // Not a switch: -Wswitch-enum (JUCE's warning list, R-B0 #6) rejects a default over 29 enumerators.
+    // Not a switch: -Wswitch-enum (JUCE's warning list, R-B0 #6) rejects a default over 30 enumerators.
     if (p == Pid::atk || p == Pid::rel || p == Pid::s2atk || p == Pid::s2rel) return SnapDomain::log;
     if (p == Pid::schpf)                                                      return SnapDomain::host;
     return SnapDomain::linear;

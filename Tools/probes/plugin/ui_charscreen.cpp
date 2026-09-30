@@ -15,9 +15,10 @@
 //                     funkgui::ease::toward takes at 60 Hz, and input reaches the target screen at once
 //   tab.*             SC|COLOUR on UiState::scTab: a click on each cell, ←/→/Home/End on the focused group, a11y press on
 //                     each radio button; the hidden pane draws nothing and its a11y items are invisible; nothing written
-//   taborder.<tab>.*  02 §7.5: Mode latch, preset strip, QUALITY, LOOKAHEAD, DELTA, BYPASS, CHARACTERISTICS, the span,
-//                     scale and SC|COLOUR groups, meter reset, the handles THRESHOLD KNEE RATIO RANGE ATTACK RELEASE (n/a
-//                     skipped) and SC HPF (SIDECHAIN only), ZOOM (UF1b), THEME; Tab wraps and never visits a stop twice
+//   taborder.<tab>.*  02 §7.5: Mode latch, preset strip, OUTPUT (v1.2, ADR-88), QUALITY, LOOKAHEAD, DELTA, BYPASS,
+//                     CHARACTERISTICS, the span, scale and SC|COLOUR groups, meter reset, the handles THRESHOLD KNEE
+//                     RATIO RANGE ATTACK RELEASE (n/a skipped) and SC HPF (SIDECHAIN only), ZOOM (UF1b), THEME; Tab wraps
+//                     and never visits a stop twice
 //   handle.<pid>.*    the handles proxy their slots (02 §7.4, §7.5): the a11y item equals the slot's on PANEL (role, title,
 //                     description, help, value, state, value interface); → then Home on the focused handle write exactly
 //                     what they write on the focused slot; a drag writes only that parameter's port, inside one gesture
@@ -620,8 +621,9 @@ namespace
         const funkgui::A11yItem* first = byId(items, order.empty() ? 0 : order.front());
         P.eq(k + ".mode_latch_first", b(first != nullptr && first->role == funkgui::A11yRole::comboBox), 1);
 
-        // Display row: QUALITY, LOOKAHEAD, DELTA, BYPASS, CHARACTERISTICS.
-        const std::array<const char*, 5> wantDisplay { "Quality", "Lookahead budget", "DELTA", "BYPASS", "CHARACTERISTICS" };
+        // Display row: OUTPUT (v1.2, ADR-88), QUALITY, LOOKAHEAD, DELTA, BYPASS, CHARACTERISTICS.
+        const std::array<const char*, 6> wantDisplay { "Output", "Quality", "Lookahead budget", "DELTA", "BYPASS",
+                                                       "CHARACTERISTICS" };
         bool dOk = display.size() == wantDisplay.size();
         for (std::size_t i = 0; dOk && i < display.size(); ++i)
         {

@@ -131,7 +131,11 @@ namespace fcmp::ui::tag
     inline constexpr Tag settingsValue = 337;   // SETTINGS_VALUE  a DIAGNOSTICS value (live where it moves)
     inline constexpr Tag settingsGear  = 338;   // SETTINGS_GEAR   the header's gear, and COPY REPORT
 
-    inline constexpr Tag last          = 338;
+    // ---- v1.2 (ADR-88) ---------------------------------------------------------------------------------------------------
+    inline constexpr Tag outputTrim    = 339;   // OUTPUT_TRIM     the display row's OUTPUT caption, rule, notch and caret
+    inline constexpr Tag outputValue   = 340;   // OUTPUT_VALUE    its value text
+
+    inline constexpr Tag last          = 340;
 
     inline constexpr std::array<funkgui::TagName, last - funkgui::tags::firstProduct + 1> kNames { {
         { plotFrame, "PLOT_FRAME" },         { caption, "CAPTION" },             { grid, "GRID" },
@@ -167,6 +171,7 @@ namespace fcmp::ui::tag
         { meterFace, "METER_FACE" },         { meterDetail, "METER_DETAIL" },
         { settingsBg, "SETTINGS_BG" },       { settingsText, "SETTINGS_TEXT" },  { settingsValue, "SETTINGS_VALUE" },
         { settingsGear, "SETTINGS_GEAR" },
+        { outputTrim, "OUTPUT_TRIM" },       { outputValue, "OUTPUT_VALUE" },
     } };
 
     namespace detail

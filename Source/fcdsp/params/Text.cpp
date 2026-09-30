@@ -710,4 +710,36 @@ bool parseHost(const ModeEntry& entry, const RawParams& current, Pid pid, std::s
     return true;
 }
 
+// ---- v1.2: the OUTPUT trim (ADR-88) ----------------------------------------------------------------------------------
+
+void formatOutputParts(float db, FormattedValue& f) noexcept {
+    f = FormattedValue{};
+    Parts p(f.value, sizeof f.value, f.spoken, sizeof f.spoken);
+    p.unit = "DB";
+    putNumber(p, toDecimal(static_cast<double>(db), 1, false));
+    finishSpokenUnit(p);
+    std::memcpy(f.unit, "DB", 3);
+}
+
+int formatOutput(float db, char* out, int cap) noexcept {
+    FormattedValue f;
+    formatOutputParts(db, f);
+    Writer w(out, cap > 0 ? static_cast<std::size_t>(cap) : 0u);
+    w.put(f.value);
+    w.put(' ');
+    w.put(f.unit);
+    return static_cast<int>(w.size());
+}
+
+bool parseOutput(std::string_view text, float& dbOut) noexcept {
+    char buf[kParseBytes];
+    std::string_view s;
+    double x = 0.0;
+    std::string_view rest;
+    if (!normalise(text, buf, s) || !parseNumber(stripDecorations(s), x, rest) || !(rest.empty() || rest == "DB"))
+        return false;
+    dbOut = legal(Pid::output, static_cast<float>(x));
+    return true;
+}
+
 } // namespace fcdsp

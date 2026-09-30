@@ -3,7 +3,7 @@
 // proc.state.<key> (P2, S8; 03 §3.5; 01 §9.1; C §5.7.1-2; K2 #10, #23, #25c; K3 #14; HR StateProbe :357-445): session
 // state through the processor's own get/setStateInformation, in this Mode.
 //
-// Instance A: this Mode, each of the 29 host parameters at a distinct odd value written the way a host or the UI writes
+// Instance A: this Mode, each of the 30 host parameters at a distinct odd value written the way a host or the UI writes
 // one (the normalised value of: a non-default step of a stepped/hybrid active spec, i.e. the UI's snap on write; an
 // irrational fraction of the Mode's range for a live parameter, of the host range for a locked/derived/n/a one; odd
 // switch positions; listen and delta ON; quality HQ; lookahead budget 20 MS) and UiState {expanded, colour}; its blob is
@@ -12,7 +12,7 @@
 //
 // Rows (spec; "bitwise" compares the raw plain value: the APVTS atomic the processor reads, which is the truth, 01 §1.3):
 //   state.xml.*                   A's blob: <PARAMS stateVersion="1" modeId=<key> modeRev=<revision> product build>, the
-//                                 29 PARAMs in kApvtsOrder with A's raw values, <UI charExpanded="1" scTab="colour"/>,
+//                                 30 PARAMs in kApvtsOrder with A's raw values, <UI charExpanded="1" scTab="colour"/>,
 //                                 at most one <PRESET> (P3's hook; proc.presets checks it), no other child
 //   state.restore.raw.mismatches  B vs A after B loads the blob, the 27 parameters other than listen/delta, bitwise: 0
 //   state.restore.monitoring      B's listen and delta are exactly 0 although A saved them ON (K2 #25c): 0 wrong
@@ -46,7 +46,7 @@
 //   state.batch.*                 fcmp::loadState into non-fresh F through a recording facade: exactly one beginBatch
 //                                 (the first event) and one endBatch (the last), every parameter change and the readPreset
 //                                 hook between them (so endBatch's snap follows the last write, K2 #23), depth 0 after
-//   state.hooks.*                 fcmp::saveState with a writePreset hook: the hook sees the 29 PARAMs and no <UI>, and
+//   state.hooks.*                 fcmp::saveState with a writePreset hook: the hook sees the 30 PARAMs and no <UI>, and
 //                                 its <PRESET> is saved between them; readPreset gets the tree with that <PRESET>
 // NOTE: how many of the odd values are not host-map fixed points (toPlain(toNorm(v)) != v, i.e. would not survive a
 // restore through the normalised value alone).
@@ -154,6 +154,7 @@ namespace
     {
         float extkey, listen, delta, bypass, quality, labudget;
         fcmp::UiState ui;
+        float output;                                            // v1.2 (ADR-88), dB
     };
 
     void setOdd(fcmp::Processor& proc, const fcdsp::ModeEntry& en, int salt, const Globals& g)
@@ -175,6 +176,7 @@ namespace
         setPlain(proc, Pid::bypass, g.bypass);
         setPlain(proc, Pid::quality, g.quality);
         setPlain(proc, Pid::labudget, g.labudget);
+        setPlain(proc, Pid::output, g.output);
         proc.endBatch();
         proc.uiState() = g.ui;
     }
@@ -203,7 +205,7 @@ namespace
     std::unique_ptr<fcmp::Processor> nonFresh(const fcdsp::ModeEntry& other, int salt)
     {
         auto proc = std::make_unique<fcmp::Processor>();
-        setOdd(*proc, other, salt, Globals{ 0.13f, 0.0f, 0.0f, 0.64f, 0.0f, 1.0f, fcmp::UiState{} });
+        setOdd(*proc, other, salt, Globals{ 0.13f, 0.0f, 0.0f, 0.64f, 0.0f, 1.0f, fcmp::UiState{}, 5.3f });
         proc->prepareToPlay(kFs, kBlock);
         run(*proc, 8, 0xabcdu + static_cast<std::uint64_t>(salt));
         return proc;
@@ -323,7 +325,7 @@ FCMP_PROBE(proc, state)
     // ---- A and its blob -----------------------------------------------------------------------------------------------
     const fcmp::UiState uiA{ true, fcmp::ScTab::colour };
     auto a = std::make_unique<fcmp::Processor>();
-    setOdd(*a, en, 1, Globals{ 0.61f, 1.0f, 0.77f, 0.29f, 2.0f, 2.0f, uiA });
+    setOdd(*a, en, 1, Globals{ 0.61f, 1.0f, 0.77f, 0.29f, 2.0f, 2.0f, uiA, -3.7f });
     a->setupWatcher().poll();                                    // applies quality/labudget (the `look` text reads the
                                                                  // configured budget), as the 20 Hz timer would
     const Values rawA = rawValues(*a);

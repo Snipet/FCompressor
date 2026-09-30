@@ -4,38 +4,39 @@
 4 presetStrip:2 comboBox Preset
 5 presetStrip:3 button Next preset
 6 presetStrip:4 button Save preset
-7 displayRow:16 radioGroup Quality
-8 displayRow:32 radioGroup Lookahead budget
-9 displayRow:48 toggleButton DELTA
-10 displayRow:49 toggleButton BYPASS
-11 displayRow:50 toggleButton CHARACTERISTICS
-12 band:264 radioGroup GR view
-13 band:258 radioGroup History span
-14 band:514 radioGroup Meter scale
-15 band:776 button Reset meters
-16 slotGrid:1 slider THRESHOLD
-17 slotGrid:2 slider RATIO
-18 slotGrid:3 slider KNEE
-19 slotGrid:4 slider ATTACK
-20 slotGrid:5 slider RELEASE
-21 slotGrid:6 slider MAKEUP
-22 slotGrid:69 toggleButton AUTO
-23 slotGrid:7 slider MIX
-24 slotGrid:8 slider RANGE
-25 slotGrid:9 slider DETECT
-26 slotGrid:72 toggleButton EXT
-27 slotGrid:10 staticText HOLD, not applicable
-28 slotGrid:11 staticText LOOKAHEAD, not applicable
-29 slotGrid:12 slider TIME MODE
-30 slotGrid:13 slider DRIVE
-31 slotGrid:14 slider VOICE
-32 slotGrid:15 slider SC HPF
-33 slotGrid:78 toggleButton LISTEN
-34 slotGrid:16 slider THRUST
-35 slotGrid:17 slider LINK
-36 slotGrid:18 slider STEREO
-37 slotGrid:19 staticText S2 THRESH, not applicable
-38 slotGrid:20 staticText S2 ATTACK, not applicable
-39 slotGrid:21 staticText S2 RELEASE, not applicable
-40 footer:32 radioGroup Zoom
-41 footer:16 radioGroup Theme
+7 displayRow:64 slider Output
+8 displayRow:16 radioGroup Quality
+9 displayRow:32 radioGroup Lookahead budget
+10 displayRow:48 toggleButton DELTA
+11 displayRow:49 toggleButton BYPASS
+12 displayRow:50 toggleButton CHARACTERISTICS
+13 band:264 radioGroup GR view
+14 band:258 radioGroup History span
+15 band:514 radioGroup Meter scale
+16 band:776 button Reset meters
+17 slotGrid:1 slider THRESHOLD
+18 slotGrid:2 slider RATIO
+19 slotGrid:3 slider KNEE
+20 slotGrid:4 slider ATTACK
+21 slotGrid:5 slider RELEASE
+22 slotGrid:6 slider MAKEUP
+23 slotGrid:69 toggleButton AUTO
+24 slotGrid:7 slider MIX
+25 slotGrid:8 slider RANGE
+26 slotGrid:9 slider DETECT
+27 slotGrid:72 toggleButton EXT
+28 slotGrid:10 staticText HOLD, not applicable
+29 slotGrid:11 staticText LOOKAHEAD, not applicable
+30 slotGrid:12 slider TIME MODE
+31 slotGrid:13 slider DRIVE
+32 slotGrid:14 slider VOICE
+33 slotGrid:15 slider SC HPF
+34 slotGrid:78 toggleButton LISTEN
+35 slotGrid:16 slider THRUST
+36 slotGrid:17 slider LINK
+37 slotGrid:18 slider STEREO
+38 slotGrid:19 staticText S2 THRESH, not applicable
+39 slotGrid:20 staticText S2 ATTACK, not applicable
+40 slotGrid:21 staticText S2 RELEASE, not applicable
+41 footer:32 radioGroup Zoom
+42 footer:16 radioGroup Theme

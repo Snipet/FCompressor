@@ -7,8 +7,8 @@
 //
 // Pid precondition (FZ0 errata, R-F0 #5): every Pid this header takes (the indexers, snap, stepIndexOf) and every Pid
 // Text.h takes is a MODE-FILTERED Pid, idx(pid) < kNumModeParams (22). RawParams and ParamView hold only those 22
-// values; the indexers assert it. The 7 globals (mode, extkey, listen, delta, bypass, quality, labudget) are never
-// resolved: their host text is formatted by the plugin (Text.h names who formats them).
+// values; the indexers assert it. The 8 globals (mode, extkey, listen, delta, bypass, quality, labudget, output) are
+// never resolved: their host text is formatted by the plugin, or by Text.h's formatOutput (Text.h names who).
 
 #include "fcdsp/params/EngineParams.h"
 #include "fcdsp/params/ParamSpec.h"

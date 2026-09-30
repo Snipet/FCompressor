@@ -1,7 +1,7 @@
 // FCMP_PROBE layer=dsp name=hostparams scope=global timeout=60
 //
 // dsp.hostparams (S1 F2; SPRINTS S1.2; 01 §3.1-3.3; K2 #9, #14): the universal host-parameter superset and its maps.
-//   - toPlain/toNorm round trip at 4,097 points (v = k/4096) for all 29 parameters: toPlain(toNorm(toPlain(v))) is
+//   - toPlain/toNorm round trip at 4,097 points (v = k/4096) for all 30 parameters: toPlain(toNorm(toPlain(v))) is
 //     within 1e-6 of toPlain(v), relative to max(|plain|, |lo|, |hi|) (the linear maps cross zero); for the continuous
 //     maps toNorm(toPlain(v)) is within 1e-6 of v. Index and boolean maps round trip exactly.
 //   - the maps are monotone, hit their end points exactly, pass the power-map centres at v = 0.5 and the ratio3
@@ -9,7 +9,7 @@
 //   - legal() clamps to [lo, hi], rounds index and boolean values, maps NaN to the default, is idempotent and leaves
 //     every toPlain() output unchanged;
 //   - every default lies in its range, is legal and survives toPlain(toNorm(def));
-//   - kApvtsOrder is a permutation of the 29 Pids, the 29 IDs are distinct [a-z0-9]+, kHostParams is in Pid order,
+//   - kApvtsOrder is a permutation of the 30 Pids, the 30 IDs are distinct [a-z0-9]+, kHostParams is in Pid order,
 //     exactly the 22 Mode-filtered parameters are automatable preset parameters (01 §3.1 rules), and kSnapDomain is
 //     generated from snapDomain().
 // Spec rows only. The maps use libm (01 §3.3), so any golden row fed by them would need absrel (K2 #14); there is none.
@@ -156,8 +156,8 @@ FCMP_PROBE(dsp, hostparams)
         int once = 0;
         for (const int s : seen)
             once += s == 1 ? 1 : 0;
-        P.eq("table.apvts_order.size", static_cast<int64_t>(kApvtsOrder.size()), 29);
-        P.eq("table.apvts_order.each_pid_once", once, 29);
+        P.eq("table.apvts_order.size", static_cast<int64_t>(kApvtsOrder.size()), 30);
+        P.eq("table.apvts_order.each_pid_once", once, 30);
 
         std::set<std::string_view> ids;
         int badIds = 0, pidOrder = 0, presetRule = 0, steps = 0, choices = 0;
@@ -173,7 +173,7 @@ FCMP_PROBE(dsp, hostparams)
             steps += discrete == (h.numSteps > 0) ? 0 : 1;
             choices += (h.choices != nullptr) == (h.pid == Pid::quality || h.pid == Pid::labudget) ? 0 : 1;
         }
-        P.eq("table.ids.distinct", static_cast<int64_t>(ids.size()), 29);
+        P.eq("table.ids.distinct", static_cast<int64_t>(ids.size()), 30);
         P.eq("table.ids.valid", badIds, 0);
         P.eq("table.pid_order", pidOrder, 0);
         P.eq("table.preset_and_automation_rules", presetRule, 0);

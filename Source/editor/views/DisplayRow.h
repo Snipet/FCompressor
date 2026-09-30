@@ -2,7 +2,8 @@
 // it: the big readout (GAIN REDUCTION, else the dragged, hovered or touched item with a 0.9 s
 // dwell, or the HISTORY freeze column), its sub-readout, the QUALITY and LOOKAHEAD cells over the global
 // ports, and the DELTA, BYPASS and CHARACTERISTICS latches (the last toggles the screen through
-// Panel::setView, keeping the tab).
+// Panel::setView, keeping the tab). v1.2 (ADR-88) adds the OUTPUT trim over the sub-readout (views/OutputTrim.h), the
+// row's first Tab stop; it never takes the big readout (a global, as QUALITY).
 //
 // U1b (S6) behaviour, where 02 is silent (U1b handoff):
 // - Readout precedence: the HISTORY freeze column; the dragged slot or handle; the hovered one; else the most recent
@@ -37,6 +38,7 @@
 #pragma once
 
 #include "editor/SubView.h"
+#include "editor/views/OutputTrim.h"
 
 #include "fcdsp/params/Pid.h"
 
@@ -79,6 +81,8 @@ namespace fcmp::ui
         void pointerExit() override;
         funkgui::Cursor cursor(funkgui::Point) const override;
         void a11yAction(uint32_t id, funkgui::A11yAction, double value) override;
+        void doubleClick(const funkgui::PointerEvent&) override;   // v1.2: OUTPUT to 0 dB
+        bool wheel(const funkgui::WheelEvent&) override;           // v1.2: OUTPUT
 
     private:
         // The CHARACTERISTICS latch: on = the target screen is CHARACTERISTICS; set() goes through Panel::setView.
@@ -93,7 +97,7 @@ namespace fcmp::ui
             PanelContext& ctx_;
         };
 
-        enum Widget : int { wQuality, wBudget, wDelta, wBypass, wChars, kWidgets };
+        enum Widget : int { wQuality, wBudget, wDelta, wBypass, wChars, wOutput, kWidgets };
 
         struct Readout                                           // what the big readout shows this frame
         {
@@ -146,6 +150,7 @@ namespace fcmp::ui
         funkgui::LatchToggle delta_;
         funkgui::LatchToggle bypass_;
         funkgui::LatchToggle chars_;
+        OutputTrim           output_;                            // v1.2 (ADR-88)
         int        captured_ = -1;                               // the widget a pointer down landed on
         bool       pointerOver_ = false;
         fcdsp::Pid recentPid_ = fcdsp::kNoPid;                   // the last dragged or hovered Mode parameter …

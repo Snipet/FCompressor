@@ -306,6 +306,7 @@ namespace fcmp
         g.delta = isOn(rawValue(Pid::delta));
         g.listen = isOn(rawValue(Pid::listen));
         g.extKey = isOn(rawValue(Pid::extkey));
+        g.outputDb = rawValue(Pid::output);
         return g;
     }
 
@@ -325,6 +326,7 @@ namespace fcmp
         out.delta = g.delta;
         out.listen = g.listen;
         out.extKey = g.extKey;
+        out.outputDb = g.outputDb;
     }
 
     fcdsp::RawParams Processor::currentRaw() const

@@ -781,4 +781,24 @@ namespace fcmp::ui::layout
         inline constexpr float kCopyY = 566.0f;
         inline constexpr double kCopiedS = 2.0;                  // "COPIED" stays this long
     }
+
+    // ---- v1.2 (ADR-88): the OUTPUT trim ---------------------------------------------------------------------------------
+    // A compact slider in the display row over the IN · OUT sub-readout (x 224–352), so it is on both screens: the caption
+    // OUTPUT and its value on the captions' line (y 66, kCaption; the longest display caption, "GAIN REDUCTION · AT 12.34
+    // S", ends before x 224), a 1 px rule at y 86 over −24 … +24 dB with the 0 dB notch hanging below it and the caret
+    // standing on it, as a slot's (RuleSlider's rates and inks). It ends 28 px before QUALITY's caption (x 380), so the
+    // value and QUALITY never read as one line.
+    namespace output
+    {
+        inline constexpr Rect  kHit { 218.0f, 62.0f, 140.0f, 30.0f };      // x 218–358, y 62–92
+        inline constexpr Point kCaption { 224.0f, 66.0f };                 // "OUTPUT", kCaption
+        inline constexpr float kValueRight = 352.0f;                       // the value, kCaption, right-aligned
+        inline constexpr float kTrackX = 224.0f;
+        inline constexpr float kTrackW = 128.0f;                           // 48 dB: 2.67 px/dB
+        inline constexpr float kTrackY = 86.0f;
+        inline constexpr float kSpanPx = 240.0f;                           // drag px per full track; Shift 1200, Cmd 6000
+        inline constexpr float kKeyDb = 0.5f;                              // arrows; Shift 0.1 dB; Page 3 dB
+        inline constexpr float kKeyFineDb = 0.1f;
+        inline constexpr float kPageDb = 3.0f;
+    }
 }
