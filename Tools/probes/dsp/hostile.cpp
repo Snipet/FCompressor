@@ -34,7 +34,7 @@
 //                                  stage: !hasColour, or drive n/a)
 //   hostile.silence.tail_cost_ratio  per-sample cost of the post-burst silent tail against the burst, with the probe's
 //                                  own flush-to-zero turned OFF (the host must set it itself): < 2 (same-machine ratio,
-//                                  min of 7 repetitions)
+//                                  min of 7 repetitions; times FCMP_TIMING_SCALE, Tolerances.h)
 //   hostile.unprepared.mismatches  process() before configure(): input copied to output bit for bit (HR B §1.7)
 //   hostile.zero_length.mismatches 0-length process() calls between blocks change nothing
 //   hostile.oversize.mismatches    configured for 64-sample blocks, fed 1024: identical to 64-sample blocks
@@ -502,7 +502,7 @@ FCMP_PROBE(dsp, hostile)
 #ifdef FCMP_HOSTILE_SANITIZED   // S4 lead fix: a CPU-cost ratio is meaningless under a sanitizer (03 §3.1: no timing gates)
         std::printf("NOTE     hostile.silence.tail_cost_ratio not judged in a sanitizer build\n");
 #else
-        P.le("hostile.silence.tail_cost_ratio", ratio, 2.0);
+        P.le("hostile.silence.tail_cost_ratio", ratio, 2.0 * fcmp::probe::tol::timingScale());   // ADR-87
 #endif
     }
 

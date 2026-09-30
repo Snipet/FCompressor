@@ -3,7 +3,7 @@
 // subcommand:
 //
 //   fcmp_probe_plugin ui.dump --mode <key> --golden-root <dir> --arch <arch> -- --view <id> --out <x.dump> [--png <x.png>]
-//                                  [--dpi 1|2] [--theme 0|1] [--wheel <points>]
+//                                  [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] [--live <seconds>]
 //                                  (flags after "--" are ui.dump's own; S5 lead revision)
 //
 // It renders one view of fcmp::ui::views() for one Mode exactly as ui.geometry does (a FakeFacade, Panel{skipHint,
@@ -12,6 +12,10 @@
 // --theme 0. `funkgui_framerender x.dump x.png 2` renders any dump the same way. Missing parent directories of the
 // outputs are created. --wheel (ADR-84) sends one trackpad scroll of that many points (> 0: the content moves up) at the
 // overlay's centre after the view is set, to look at a list scrolled by the pixel.
+// --preset (v1.2) loads the Mode's factory preset of that name (its values, and the strip shows it current). --live
+// (v1.2, the README's screenshot) puts the Panel over EngineFacade, a real EngineHost, and plays a deterministic groove
+// through it for that many seconds at 60 frames per second before the frame is written, so the meters, the GR readout,
+// the history and the operating point show real signal. A live frame is written as it stands, without settling.
 //
 // Exit: 0 written; 1 a usage error, an unknown view or Mode, an unsettled panel or a write error. ui.dump reads its
 // own flags from the process arguments, which ProbeMain (frozen at FZ0) also hands to the harness: the harness prints
@@ -20,13 +24,16 @@
 // interface-change request for ProbeMain to strip a subcommand's own flags, as FunkGui's GalleryProbe does).
 #include "ProbeRegistry.h"
 
+#include "EngineFacade.h"
 #include "FakeFacade.h"
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
+#include "plugin/factory/FactoryBank.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
+#include "fcdsp/params/HostParams.h"
 
 #include <funkgui/canvas/PrimList.h>
 #include <funkgui/panel/HeadlessHost.h>
@@ -40,9 +47,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace
 {
@@ -60,6 +69,8 @@ namespace
         float       dpi = 2.0f;
         int         theme = 0;
         float       wheelPoints = 0.0f;                          // --wheel: one smooth wheel event, points
+        std::string preset;                                      // --preset: a factory preset of the Mode
+        float       liveSeconds = 0.0f;                          // --live: seconds of the groove through the engine
         std::string error;                                       // non-empty: a usage error
     };
 
@@ -76,7 +87,7 @@ namespace
             const bool hasValue = i + 1 < argc && argv[i + 1] != nullptr;
             const std::string value = hasValue ? argv[i + 1] : "";
             if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme"
-                || flag == "--wheel")
+                || flag == "--wheel" || flag == "--preset" || flag == "--live")
             {
                 if (!hasValue || value.empty() || value.starts_with("--"))
                 {
@@ -94,6 +105,10 @@ namespace
                     a.dpi = value == "1" ? 1.0f : value == "2" ? 2.0f : 0.0f;
                 else if (flag == "--wheel")
                     a.wheelPoints = std::strtof(value.c_str(), nullptr);
+                else if (flag == "--preset")
+                    a.preset = value;
+                else if (flag == "--live")
+                    a.liveSeconds = std::strtof(value.c_str(), nullptr);
                 else
                     a.theme = value == "0" ? 0 : value == "1" ? 1 : -1;
             }
@@ -104,6 +119,8 @@ namespace
             a.error = "--dpi must be 1 or 2";
         else if (a.theme < 0)
             a.error = "--theme must be 0 or 1";
+        else if (!(a.liveSeconds >= 0.0f && a.liveSeconds <= 60.0f))
+            a.error = "--live must be 0 to 60 seconds";
         return a;
     }
 
@@ -117,12 +134,45 @@ namespace
         return !ec;
     }
 
+    // The factory preset `name` of Mode `mode`: its values written to the ports as a host would, and the strip's row
+    // made current (FakePresets lists the whole bank in bank order). False when the bank has no such preset.
+    bool applyPreset(fcmp::probe::FakeFacade& ports, const std::string& mode, const std::string& name)
+    {
+        const std::vector<funkgui::presets::Preset>& bank = fcmp::factory::factoryBank();
+        for (std::size_t i = 0; i < bank.size(); ++i)
+        {
+            const funkgui::presets::Attribute* key = bank[i].attr(fcmp::factory::kModeIdAttr);
+            if (bank[i].name.toStdString() != name || key == nullptr || key->value.toStdString() != mode)
+                continue;
+            for (const funkgui::presets::ParamValue& v : bank[i].params)
+                for (const fcdsp::HostParam& h : fcdsp::kHostParams)
+                    if (v.id == h.id)
+                        ports.setPlain(h.pid, v.value);
+            ports.fakePresets().setCurrent(static_cast<int>(i));
+            return true;
+        }
+        return false;
+    }
+
+    // A deterministic groove for --live: per half-second beat a low hit and a quieter high one, both decaying.
+    fcmp::probe::Program groove(float seconds)
+    {
+        std::vector<fcmp::probe::Program::Tone> tones;
+        for (float t = 0.0f; t < seconds; t += 0.5f)
+        {
+            tones.push_back({ 0.25, -4.0f, 70.0f, 36.0f });
+            tones.push_back({ 0.25, -12.0f, 330.0f, 24.0f });
+        }
+        return fcmp::probe::Program(std::move(tones), fcmp::probe::EngineFacade::kFs);
+    }
+
     int run(const Args& a)
     {
         if (!a.error.empty())
         {
             std::fprintf(stderr, "ui.dump: %s\nusage: fcmp_probe_plugin ui.dump --view <id> --mode <key> --out <x.dump> "
-                                 "[--png <x.png>] [--dpi 1|2] [--theme 0|1] [--wheel <points>]\n", a.error.c_str());
+                                 "[--png <x.png>] [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] "
+                                 "[--live <seconds>]\n", a.error.c_str());
             return 1;
         }
         const ui::ViewSpec* view = ui::findView(a.view);
@@ -142,7 +192,19 @@ namespace
         }
 
         const juce::ScopedJuceInitialiser_GUI juceInit;          // FontService bakes the atlas through JUCE's fonts
-        fcmp::probe::FakeFacade facade(a.mode);
+        std::unique_ptr<fcmp::probe::FakeFacade> fake;
+        std::unique_ptr<fcmp::probe::EngineFacade> engine;
+        if (a.liveSeconds > 0.0f)
+            engine = std::make_unique<fcmp::probe::EngineFacade>(a.mode, 1);
+        else
+            fake = std::make_unique<fcmp::probe::FakeFacade>(a.mode);
+        fcmp::ProcessorFacade& facade = engine ? static_cast<fcmp::ProcessorFacade&>(*engine) : *fake;
+        fcmp::probe::FakeFacade& ports = engine ? engine->params() : *fake;
+        if (!a.preset.empty() && !applyPreset(ports, a.mode, a.preset))
+        {
+            std::fprintf(stderr, "ui.dump: Mode '%s' has no factory preset '%s'\n", a.mode.c_str(), a.preset.c_str());
+            return 1;
+        }
         ui::Panel panel(facade, { true, true, false });
         funkgui::HeadlessHost host(panel, a.theme, a.dpi);
         panel.setView(*view, true);
@@ -156,8 +218,24 @@ namespace
             w.smooth = true;
             panel.wheel(w);
         }
-        const int frames = host.settle(kMaxSettle, kDt);
-        if (frames > kMaxSettle)
+        int frames = 0;
+        if (engine)
+        {
+            host.settle(kMaxSettle, kDt);                        // the view in place before the audio starts
+            engine->setUiAttached(true);                         // the editor's lifetime gate (01 §6.3), as ui.truth
+            const fcmp::probe::Program program = groove(a.liveSeconds);
+            constexpr uint64_t kPerFrame = static_cast<uint64_t>(fcmp::probe::EngineFacade::kFs / 60.0);
+            constexpr uint64_t kBlock = static_cast<uint64_t>(fcmp::probe::EngineFacade::kBlock);
+            for (uint64_t target = kPerFrame; target <= program.length(); target += kPerFrame, ++frames)
+            {
+                if (target > engine->processed() + kBlock)
+                    engine->render(program, static_cast<int>((target - engine->processed()) / kBlock));
+                host.tick(1, kDt);
+            }
+        }
+        else
+            frames = host.settle(kMaxSettle, kDt);
+        if (frames > kMaxSettle && !engine)
         {
             std::fprintf(stderr, "ui.dump: the panel did not settle within %d frames\n", kMaxSettle);
             return 1;
@@ -168,9 +246,9 @@ namespace
             std::fprintf(stderr, "ui.dump: cannot write %s\n", a.out.c_str());
             return 1;
         }
-        std::printf("ui.dump: %s  view %s  mode %s  dpi %g  theme %d  settled in %d frames  %zu prims  %u missing "
-                    "glyphs\n", a.out.c_str(), view->id, a.mode.c_str(), static_cast<double>(a.dpi), a.theme, frames,
-                    pl.prims.size(), pl.missingGlyphs);
+        std::printf("ui.dump: %s  view %s  mode %s  dpi %g  theme %d  %s %d frames  %zu prims  %u missing glyphs\n",
+                    a.out.c_str(), view->id, a.mode.c_str(), static_cast<double>(a.dpi), a.theme,
+                    engine ? "live for" : "settled in", frames, pl.prims.size(), pl.missingGlyphs);
         if (!a.png.empty())
         {
             if (!makeParent(a.png) || !host.writePng(a.png.c_str(), 2))
