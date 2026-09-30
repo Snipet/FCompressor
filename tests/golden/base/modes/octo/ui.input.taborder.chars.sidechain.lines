@@ -4,22 +4,25 @@
 4 presetStrip:2 comboBox Preset
 5 presetStrip:3 button Next preset
 6 presetStrip:4 button Save preset
-7 displayRow:64 slider Output
-8 displayRow:16 radioGroup Quality
-9 displayRow:32 radioGroup Lookahead budget
-10 displayRow:48 toggleButton DELTA
-11 displayRow:49 toggleButton BYPASS
-12 displayRow:50 toggleButton CHARACTERISTICS
-13 charScreen:258 radioGroup History span
-14 charScreen:514 radioGroup Meter scale
-15 charScreen:1 radioGroup Side chain or colour
-16 charScreen:776 button Reset meters
-17 charScreen:640 slider INPUT
-18 charScreen:641 slider KNEE
-19 charScreen:642 slider RATIO
-20 charScreen:643 slider RANGE
-21 charScreen:1664 slider ATTACK
-22 charScreen:1920 slider RELEASE
-23 charScreen:2176 slider SC HPF
-24 footer:32 radioGroup Zoom
-25 footer:16 radioGroup Theme
+7 presetStrip:5 button Undo
+8 presetStrip:6 button Redo
+9 presetStrip:7 radioGroup Compare
+10 displayRow:64 slider Output
+11 displayRow:16 radioGroup Quality
+12 displayRow:32 radioGroup Lookahead budget
+13 displayRow:48 toggleButton DELTA
+14 displayRow:49 toggleButton BYPASS
+15 displayRow:50 toggleButton CHARACTERISTICS
+16 charScreen:258 radioGroup History span
+17 charScreen:514 radioGroup Meter scale
+18 charScreen:1 radioGroup Side chain or colour
+19 charScreen:776 button Reset meters
+20 charScreen:640 slider INPUT
+21 charScreen:641 slider KNEE
+22 charScreen:642 slider RATIO
+23 charScreen:643 slider RANGE
+24 charScreen:1664 slider ATTACK
+25 charScreen:1920 slider RELEASE
+26 charScreen:2176 slider SC HPF
+27 footer:32 radioGroup Zoom
+28 footer:16 radioGroup Theme
