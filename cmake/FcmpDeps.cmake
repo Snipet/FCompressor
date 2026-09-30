@@ -4,7 +4,8 @@
 # - JUCE and bgfx.cmake default to the read-only machine cache written by Scripts/deps.sh, as NORMAL variables (never
 #   cached), and only when the user gave no FETCHCONTENT_SOURCE_DIR_<NAME> of their own. FETCHCONTENT_SOURCE_DIR_*
 #   bypasses GIT_TAG completely (B §7.2), hence the version and SHA assertions below.
-# - FunkGui is never defaulted: without an override it clones the pinned tag from the local repository. An override
+# - FunkGui is never defaulted to a source dir: without an override it clones the pinned tag from FCOMPRESSOR_FUNKGUI_REPO
+#   (the local repository when this machine has one, else GitHub: CMakeLists.txt, ADR-87). An override
 #   (-DFETCHCONTENT_SOURCE_DIR_FUNKGUI=<dir>) must be a git checkout whose HEAD descends from the pinned SHA; it is printed
 #   loudly, it is sticky in the cache, and `Scripts/verify.sh --integration` refuses it (03 §4.5).
 # - Never FETCHCONTENT_FULLY_DISCONNECTED (B §7.6): it would also stop FunkGui's local clone.
