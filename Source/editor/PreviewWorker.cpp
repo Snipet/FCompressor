@@ -5,7 +5,8 @@
 // The worker is a std::thread (a juce::Thread until web Sprint B; nothing here needs JUCE any more): it sleeps on a
 // condition variable until tick() hands a job over or stop() raises `quit`, computes into the back buffer and marks it
 // completed; tick() publishes it on the message thread. computePreview() reads `quit` between runs, so stop() joins
-// within one run (<= ~0.1 s at 192 kHz). The synchronous path never creates the thread.
+// within one run (<= ~0.1 s at 192 kHz). The synchronous path never creates the thread. An exception ends the worker
+// without a result, as it ended the juce::Thread; where no thread can exist every job is computed inline (startThread).
 #include "editor/PreviewWorker.h"
 
 #include "editor/Layout.h"
@@ -56,31 +57,50 @@ namespace fcmp::ui
             running = false;
         }
 
-        void run()                                               // the worker thread
+        // The worker thread. No exception may leave it: out of a std::thread's function it is std::terminate, which
+        // takes the host down, and the computation allocates (std::bad_alloc, std::length_error). The catch restores
+        // juce::Thread's behaviour, whose entry point swallowed whatever run() threw: the thread ends and nothing is
+        // published (result() stays the latest COMPLETE result), so `running` and pending() stay true and no later job
+        // starts; the thread stays joinable, so stop() and the destructor still join it.
+        void run()
         {
             nameThisThread();
-            for (;;)
+            try
             {
-                std::optional<PreviewJob> job;
+                for (;;)
                 {
-                    std::unique_lock<std::mutex> lock(mutex);
-                    wake.wait(lock, [this] { return quit.load(std::memory_order_acquire) || handoff.has_value(); });
-                    if (quit.load(std::memory_order_acquire))
-                        return;
-                    job = std::exchange(handoff, std::nullopt);
+                    std::optional<PreviewJob> job;
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        wake.wait(lock,
+                                  [this] { return quit.load(std::memory_order_acquire) || handoff.has_value(); });
+                        if (quit.load(std::memory_order_acquire))
+                            return;
+                        job = std::exchange(handoff, std::nullopt);
+                    }
+                    // The message thread never touches `back` or `scratch` while a job runs.
+                    if (!computePreview(*job, *back, scratch, &quit))
+                        return;                                  // stop(): the half-built buffer is never published
+                    const std::lock_guard<std::mutex> lock(mutex);
+                    completed = true;
                 }
-                // The message thread never touches `back` or `scratch` while a job runs.
-                if (!computePreview(*job, *back, scratch, &quit))
-                    return;                                      // stop(): the half-built buffer is never published
-                const std::lock_guard<std::mutex> lock(mutex);
-                completed = true;
+            }
+            catch (...)
+            {
+                return;                                          // `completed` stays false: nothing is published
             }
         }
 
-        // Message thread: the worker thread, created by the first asynchronous job. False: the system had no thread to
-        // give, and the job is computed inline, as the synchronous path does, instead of pending for ever.
+        // Message thread: the worker thread, created by the first asynchronous job. False: there is no thread, and the
+        // job is computed inline, as the synchronous path does, instead of pending for ever. Where threads cannot exist
+        // (Emscripten without -pthread) that is decided here, at compile time, and no thread is ever asked for: the
+        // constructor's std::system_error cannot be relied on there, since such a build catches nothing unless it is
+        // given an exception model (the throw is an abort). Elsewhere false is the system refusing a thread.
         bool startThread()
         {
+           #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+            return false;
+           #else
             if (thread.joinable())
                 return true;
             try
@@ -92,6 +112,7 @@ namespace fcmp::ui
                 return false;
             }
             return true;
+           #endif
         }
 
         const bool synchronous;
