@@ -1030,6 +1030,79 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       `llvm-ar` and `llvm-ranlib` (`cmake/FcmpPlatform.cmake`), which need no plugin; install the `llvm` package.
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
+- **ADR-93 A browser demo: FCompressor as WebAssembly (v1.2 or later; in progress).** The user asked for web builds
+  through WASM, to demo the plugin in a browser. The demo runs the real DSP and shows the real editor; it is not a port
+  and not a second code base. Design pass: five scouts, three independent designs and a judge
+  (`docs/sprints/web/plan.md` and the reports beside it). Sprints A to D; this entry grows with them.
+  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset),
+    with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules joined by a MessagePort:
+    `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and, from Sprint D, the editor module (the unchanged
+    Panel over a web facade, FunkGui's core without JUCE, a WebGL2 sink) on the main thread. No SharedArrayBuffer, so no
+    cross-origin isolation headers: any static host serves it.
+  - **Arithmetic: the plugin's, bit for bit.** fcdsp gains a third backend, WASM SIMD128
+    (`Source/fcdsp/core/{Simd.h,FlushTiny.h,ScopedFtz.h,FastMath.h}`; never `-mrelaxed-simd`, whose fused multiply-add
+    is implementation-defined). Emscripten's SSE and NEON emulation was rejected: both give an unfused fma, against
+    Simd.h's one-rounding contract. wasm has no fused multiply-add, so `fma`/`fms` are exact in software: a multiply-add
+    in f64 (the product of two floats is exact there), and a round-to-odd correction only for lanes that land on a float
+    rounding boundary (24 SIMD operations and a branch; 33 more on the slow path, taken on 0.1 to 3.5 % of engine calls
+    on program material). `-DFCOMPRESSOR_WEB_FMA=unfused` builds the two-rounding form for measurement only.
+  - **Denormals.** wasm has no flush-to-zero and no denormals-are-zero. The backend makes a tiny result of add, sub,
+    mul, div, fma or fms a signed zero, by a speculative test that costs four operations when no lane is near FLT_MIN.
+    "Tiny" is x86's rule exactly (MXCSR.FTZ): the exact result, rounded to 24 bits as if the exponent had no lower
+    bound, is below FLT_MIN, which is every exact result below FLT_MIN (1 − 2^-25). The float alone does not say:
+    gradual underflow rounds everything from FLT_MIN (1 − 2^-24) up to FLT_MIN, so mul, div and fma decide on the exact
+    result in double, on the slow path only. (The first version tested the float and kept FLT_MIN in that band, where
+    both native backends give zero; the x86 CI run of `web.simd` showed it, and the check's own reference had the same
+    mistake.) arm64 decides on the exact result itself, so the three backends differ only in
+    [FLT_MIN (1 − 2^-25), FLT_MIN): zero on arm64, FLT_MIN on x86 and wasm, as Simd.h always allowed. Operands are read
+    as they are. The engine wrapper zeroes denormal input samples and runs a silence gate: after exactly-zero input for
+    longer than the engine's tail (at least 100 ms) it resets the engine and outputs zeros until a sample or a Params
+    record arrives. A record counts as activity, so the engine runs new values on the silence for that long again, as
+    the plugin's engine does all the time: a Mode change made while idle has finished its crossfade before signal
+    returns, and an edit that shortens the tail cannot close the gate before the engine has run it (review findings;
+    `web.engine.selfcheck`'s `abi.gate.*` rows compare the audio with a fresh engine's, bit for bit).
+    `web.engine.tail` measures the cost of silence with the gate off.
+  - **The engine module** (`Source/web/engine`, portable C++ over fcdsp alone: lint `web.engine`, so the same sources
+    build natively for the checks). `fcmp_web_*`: create, configure, process (any frame count; the worklet gives 128),
+    post and reply (the byte protocol of `WebProtocol.h`: Params with the 30 plain values and a snap flag, Attach,
+    Reset, Pull; the reply carries the UiFrame, the new HistoryRing columns, flags and the latency), latency, the gate
+    switch and a self-check. Raw values become BlockParams exactly as `Processor::buildBlockParams` makes them.
+    **A deviation from the real-time rules, recorded here:** a quality or lookahead-budget change reconfigures (and
+    allocates) inside `fcmp_web_post`, between two render quanta, because the worklet has no other thread;
+    `fcmp_web_process` itself never allocates, locks or calls libm. The module is standalone: no JavaScript glue, no
+    imports, exports by the compiler's `export_name` attribute only (545 KB; the slow paths of fma and of the flush
+    are out of line, which took 130 KB off and made STD about a quarter faster).
+  - **Measured (Sprint A, 48 kHz, 128-frame quanta, the `dsp.print` material, real-time factor under node):**
+
+    | | rows equal to the native goldens | worst Mode at HQ (mu-67) | clean ECO / STD / HQ |
+    |---|---|---|---|
+    | exact fma (shipped), the lead's Mac (arm64) | **112 of 112** (`web.engine.print`, all 14 Modes × 8) | 20.4× | 168× / 102× / 55× |
+    | exact fma, the CI runner (x86-64) | 112 of 112 | 12.6× | 102× / 62× / 32× |
+    | unfused (measurement only), the lead's Mac | 0 of 112 | 40.8× | 295× / 187× / 92× |
+
+    Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate on both machines, so the demo
+    runs the plugin's exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log`
+    move nothing. On the x86 runner no 2/3 s of a Mode's silent tail costs more than 0.92× its active signal with the
+    gate off (`web.engine.tail`): the flush leaves no denormal for V8 to trip over. Natively on x86-64, `web.simd`
+    passes on the Linux CI runner, which is where the flush rule above was learned.
+  - **Tests** (`cmake/FcmpWeb.cmake`): `fcmp_web_check` is built from `Tools/web/*.cpp` in every configuration, and its
+    subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels `verify;web`, judged by
+    exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms bit-equal to a one-rounding
+    reference on 12.6 million triples; the flush rule of each backend on both sides of its boundary and on the tie;
+    the FastMath functions hashed against native arm64 constants, and lane by lane against their scalar forms);
+    `web.engine.print` renders `dsp.print`'s material through the C ABI in 128-frame quanta and compares with the same
+    golden rows (in the wasm build a Mode without golden rows fails: no `dsp.print` runs beside it);
+    `web.engine.selfcheck` (the module's own hash, the ABI's contract, the silence gate against records), `.tail`,
+    `.speed` and `.abi` (node instantiates the shipped module with an empty import object). The two that measure time
+    run alone; `.tail` judges the worst pair of adjacent 1/3 s windows over three runs after a warm-up, at ×2 in the
+    wasm build and with ADR-87's scale natively. Natively four of them run in every gate, so the wrapper cannot drift
+    from the engine.
+  - **FunkGui** (card G-A, for v0.12.0): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core),
+    the committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a
+    storage backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
+  - **Not done yet:** the editor in the browser (Sprints B to D: host-neutral menus, file chooser and clipboard, the
+    WebGL2 sink, the web facade, the page); a browser run of anything (node stands in for V8 so far); hosting. Nothing
+    is published until the user decides where.
 
 ## HardwareReverb migration
 

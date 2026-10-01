@@ -1,9 +1,10 @@
-# cmake/FcmpPlatform.cmake: the platforms FCompressor builds on (ADR-92): macOS with AppleClang, and Linux with Clang.
+# cmake/FcmpPlatform.cmake: the platforms FCompressor builds on (ADR-92): macOS with AppleClang, and Linux with Clang;
+# and the web (ADR-93): wasm32 through Emscripten's Clang, the FCOMPRESSOR_WEB configuration only.
 # Included by CMakeLists.txt after project() and before the dependencies, so the compile options it adds reach every
 # target made after it: ours, JUCE's module sources compiled inside them, and FunkGui's own tools.
 #
 # Defines
-#   FCMP_PLATFORM         macos | linux
+#   FCMP_PLATFORM         macos | linux | web
 #   FCMP_PLUGIN_FORMATS   the juce_add_plugin FORMATS: AU VST3 Standalone on macOS; VST3 Standalone on Linux (no AU
 #                         outside Apple)
 #
@@ -32,8 +33,20 @@ if(APPLE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(FCMP_PLATFORM linux)
   set(FCMP_PLUGIN_FORMATS VST3 Standalone)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+  set(FCMP_PLATFORM web)
+  set(FCMP_PLUGIN_FORMATS "")              # no plugin: the engine and the editor are wasm modules (cmake/FcmpWeb.cmake)
 else()
-  message(FATAL_ERROR "FCompressor builds on macOS and Linux (ADR-92), not on ${CMAKE_SYSTEM_NAME}")
+  message(FATAL_ERROR "FCompressor builds on macOS and Linux (ADR-92) and for the web (ADR-93), not on "
+                      "${CMAKE_SYSTEM_NAME}")
+endif()
+# The web configuration and the Emscripten toolchain go together (the `web` preset sets both).
+if(FCOMPRESSOR_WEB AND NOT FCMP_PLATFORM STREQUAL "web")
+  message(FATAL_ERROR "FCompressor: FCOMPRESSOR_WEB needs Emscripten's toolchain, but this build directory targets "
+                      "${CMAKE_SYSTEM_NAME}: use a fresh build directory (the `web` preset)")
+elseif(FCMP_PLATFORM STREQUAL "web" AND NOT FCOMPRESSOR_WEB)
+  message(FATAL_ERROR "FCompressor: an Emscripten build is the web configuration: configure with -DFCOMPRESSOR_WEB=ON "
+                      "(the `web` preset)")
 endif()
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")

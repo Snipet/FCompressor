@@ -1,0 +1,58 @@
+// Scratch check (not project code): float fma(a + b*c) with ONE rounding, built only from operations WASM SIMD128 has
+// (f64 mul/add/sub, compares, i64 add on the bits, select, f64->f32 demote). Compared against the hardware fmaf.
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <random>
+static inline uint64_t bitsD(double d) { uint64_t u; std::memcpy(&u, &d, 8); return u; }
+static inline double fromD(uint64_t u) { double d; std::memcpy(&d, &u, 8); return d; }
+static inline uint32_t bitsF(float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; }
+static inline float fromF(uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; }
+#pragma clang fp contract(off)
+static float fmaRO(float a, float b, float c)        // a + b*c
+{
+    const double p = (double) b * (double) c;        // exact: 24 x 24 bits
+    const double z = (double) a;
+    const double s = p + z;                          // RN
+    const double bb = s - p;                         // TwoSum (Knuth), exact error e = (p + z) - s
+    const double e = (p - (s - bb)) + (z - bb);
+    // round to odd: if inexact and s's mantissa is even, step one ulp toward the exact value
+    const uint64_t sb = bitsD(s);
+    const bool inexact = (e < 0.0) || (e > 0.0);     // false for NaN (inf - inf in the TwoSum)
+    const bool even = (sb & 1u) == 0;
+    const bool away = (e > 0.0) == (s > 0.0);        // same sign: magnitude grows
+    const uint64_t adj = sb + (away ? 1u : ~uint64_t{0});
+    const double ro = (inexact && even) ? fromD(adj) : s;
+    return (float) ro;                               // RN to float: correct because 53 >= 24 + 2
+}
+int main()
+{
+    std::mt19937_64 rng(12345);
+    long long n = 0, bad = 0;
+    auto check = [&](float a, float b, float c) {
+        const float want = std::fmaf(b, c, a), got = fmaRO(a, b, c);
+        const bool nanBoth = want != want && got != got;
+        ++n;
+        if (!nanBoth && bitsF(want) != bitsF(got)) { if (bad < 10) std::printf("MISMATCH a=%a b=%a c=%a want=%a got=%a\n", a, b, c, want, got); ++bad; }
+    };
+    // random bit patterns (all classes: NaN, inf, denormals, zeros)
+    for (int i = 0; i < 20000000; ++i) { const uint64_t r = rng(), q = rng(); check(fromF((uint32_t) r), fromF((uint32_t)(r >> 32)), fromF((uint32_t) q)); }
+    // random normals of nearby magnitude (heavy cancellation, halfway cases)
+    std::uniform_real_distribution<float> u(-2.0f, 2.0f);
+    for (int i = 0; i < 20000000; ++i) { const float b = u(rng), c = u(rng); const float a = -(b * c) * (1.0f + (float)(int)(rng() % 7 - 3) * 0x1p-23f); check(a, b, c); check(u(rng), b, c); }
+    // adversarial: a = +-2^k, product just beyond a float midpoint
+    for (int i = 0; i < 20000000; ++i) {
+        const int k = (int)(rng() % 60) - 30;
+        const float a = std::ldexp(1.0f + (float)(rng() % 8388608) * 0x1p-23f, k);
+        const float b = std::ldexp(1.0f + (float)(rng() % 8388608) * 0x1p-23f, k - 24 - (int)(rng() % 30));
+        const float c = (rng() & 1) ? 1.0f + (float)(rng() % 8388608) * 0x1p-23f : -(1.0f + (float)(rng() % 8388608) * 0x1p-23f);
+        check(a, b, c); check(-a, b, c);
+    }
+    // edge set cubed
+    const float E[] = { 0.0f, -0.0f, 1.0f, -1.0f, 0x1p-126f, -0x1p-126f, 0x1p-149f, 0x1.fffffep-127f, 0x1.fffffep127f, -0x1.fffffep127f,
+                        INFINITY, -INFINITY, NAN, 0.5f, 1.5f, 0x1.000002p0f, 0x1.fffffep-1f, 3.0f, 0x1p-75f, 0x1p-63f, 0x1p64f, 16777216.0f, 16777217.0f };
+    for (float a : E) for (float b : E) for (float c : E) check(a, b, c);
+    std::printf("checked %lld triples, %lld mismatches (no FTZ; NaN == NaN)\n", n, bad);
+    return bad != 0;
+}

@@ -3,7 +3,8 @@
 // Flush-to-zero for the lifetime of a scope (01 §5.1, §5.7; K2 #24): HardwareReverb's ScopedFtz (Tools/Harness.h),
 // made JUCE-free. arm64: FPCR |= 1 << 24 (FZ). x86-64: MXCSR |= 0x8040 (FTZ + DAZ). The destructor restores the
 // saved register. EngineHost::process opens one, and so does every analysis:: entry point, so probes, the plugin and
-// the PreviewWorker run in the same FP mode whoever calls them.
+// the PreviewWorker run in the same FP mode whoever calls them. wasm32 (ADR-93) has no FP control register: the scope
+// is empty there, and fcdsp::simd's wasm backend flushes tiny results itself (core/FlushTiny.h).
 //
 // Frozen at FZ0. F0 declares; F1 (S1) implements (inline asm / _mm_getcsr, allocation- and syscall-free). The
 // constructor and destructor are FCDSP_NONBLOCKING (core/Rt.h; FZ0 errata), because EngineHost::process opens one;
@@ -14,8 +15,8 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
   #include <xmmintrin.h>
-#elif !defined(__aarch64__)
-  #error "ScopedFtz: no flush-to-zero control for this architecture (arm64 FPCR, x86-64 MXCSR)."
+#elif !defined(__aarch64__) && !defined(__wasm__)
+  #error "ScopedFtz: no flush-to-zero control for this architecture (arm64 FPCR, x86-64 MXCSR; wasm32 has none)."
 #endif
 
 namespace fcdsp {
@@ -52,6 +53,12 @@ inline ScopedFtz::~ScopedFtz() noexcept FCDSP_NONBLOCKING
 {
     __asm__ volatile("msr fpcr, %0" : : "r"(saved_) : "memory");
 }
+
+#elif defined(__wasm__)
+
+// Nothing to save and nothing to set. The destructor names the member so that it is not an unused private field.
+inline ScopedFtz::ScopedFtz() noexcept FCDSP_NONBLOCKING {}
+inline ScopedFtz::~ScopedFtz() noexcept FCDSP_NONBLOCKING { static_cast<void>(saved_); }
 
 #else
 

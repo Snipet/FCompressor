@@ -79,6 +79,13 @@ inline Log2Split log2Split(simd::f32x4 x) noexcept FCDSP_NONBLOCKING
     const float32x4_t m = vreinterpretq_f32_u32(vaddq_u32(vandq_u32(ix, vdupq_n_u32(0x007fffffu)),
                                                           vdupq_n_u32(0x3f3504f3u)));
     return { vcvtq_f32_s32(k), simd::sub(m, simd::set1(1.0f)) };
+#elif defined(FCDSP_SIMD_WASM)
+    const v128_t ix = wasm_i32x4_sub(wasm_v128_and(simd::detail::asBits(x), wasm_i32x4_const_splat(0x7fffffff)),
+                                     wasm_i32x4_const_splat(0x3f3504f3));
+    const v128_t k = wasm_i32x4_shr(ix, 23);
+    const v128_t m = wasm_i32x4_add(wasm_v128_and(ix, wasm_i32x4_const_splat(0x007fffff)),
+                                    wasm_i32x4_const_splat(0x3f3504f3));
+    return { simd::detail::asF32(wasm_f32x4_convert_i32x4(k)), simd::sub(simd::detail::asF32(m), simd::set1(1.0f)) };
 #else
     const __m128i ix = _mm_sub_epi32(_mm_and_si128(_mm_castps_si128(x), _mm_set1_epi32(0x7fffffff)),
                                      _mm_set1_epi32(0x3f3504f3));
@@ -94,6 +101,10 @@ inline simd::f32x4 scaleByPow2(simd::f32x4 p, simd::f32x4 n) noexcept FCDSP_NONB
 {
 #if defined(FCDSP_SIMD_NEON)
     return vreinterpretq_f32_s32(vaddq_s32(vreinterpretq_s32_f32(p), vshlq_n_s32(vcvtq_s32_f32(n), 23)));
+#elif defined(FCDSP_SIMD_WASM)
+    // trunc_sat gives 0 for a NaN, as NEON's convert does (x86's 0x80000000 shifts out to 0): a NaN p keeps its bits.
+    return simd::detail::asF32(wasm_i32x4_add(simd::detail::asBits(p),
+                                              wasm_i32x4_shl(wasm_i32x4_trunc_sat_f32x4(simd::detail::asBits(n)), 23)));
 #else
     return _mm_castsi128_ps(_mm_add_epi32(_mm_castps_si128(p), _mm_slli_epi32(_mm_cvttps_epi32(n), 23)));
 #endif
@@ -105,6 +116,9 @@ inline simd::f32x4 xorSign(simd::f32x4 r, simd::f32x4 x) noexcept FCDSP_NONBLOCK
 #if defined(FCDSP_SIMD_NEON)
     return vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(r),
                                            vandq_u32(vreinterpretq_u32_f32(x), vdupq_n_u32(0x80000000u))));
+#elif defined(FCDSP_SIMD_WASM)
+    return simd::detail::asF32(wasm_v128_xor(simd::detail::asBits(r),
+                                             wasm_v128_and(simd::detail::asBits(x), wasm_f32x4_const_splat(-0.0f))));
 #else
     return _mm_xor_ps(r, _mm_and_ps(x, _mm_set1_ps(-0.0f)));
 #endif
