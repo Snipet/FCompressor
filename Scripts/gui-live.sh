@@ -12,20 +12,27 @@
 #                FCMP_UI_NO_HINT=1, FCMP_UI_NO_LIVE=1, FCMP_UI_THEME=0, FCMP_UI_SCALE=2, a scratch FCMP_PREFS_DIR and
 #                FCMP_PRESETS_DB, FCMP_GPU_LOG=1, and FCMP_CANVAS_DUMP_AFTER = max(8, headless settle frames + 2), so the
 #                editor has ticked at least as long as the probe settled. The EditorHost records the frame it submits
-#                to Metal and writes it as dump v2.
+#                to Metal and writes it as dump v2. The live frame must be settled, as the headless one is: its dump's
+#                view line says "rate idle" (the frame pump had gone idle after the frame before it). A frame still at
+#                "rate full" is captured again with FCMP_CANVAS_DUMP_AFTER doubled, 3 captures at most (NOTE lines);
+#                only a settled frame is compared, and a comparison is never retried.
 #   3. compare   funkgui_framerender --fingerprint of both dumps: every line must be equal except `live` (the count of
 #                live-flagged primitives, which the hashes, counts, extents and tag counts already leave out, 02 §3.9).
 #                The live dump must also say "clock fixed" and "dpi 2" (the capture hooks reached the editor).
 #   Results go to <build>/gui-live/: <id>.{headless,live}.dump, <id>.{headless,live}.fp, <id>.live.png (the live frame
-#   rendered by funkgui_framerender at 2x supersampling: what the GPU was given, as a picture), <id>.capture.log and
-#   summary.txt. The last line printed is "gui-live: N/5 equal".
+#   rendered by funkgui_framerender at 2x supersampling: what the GPU was given, as a picture), <id>.headless.png (the
+#   headless frame the same way, for a view that differs), <id>.capture.log and summary.txt. The last line printed is
+#   "gui-live: N/5 equal".
 #
 # Isolation. The Standalone runs with CFFIXED_USER_HOME=<scratch>/home, so JUCE's Standalone settings file (audio
 # device, saved plug-in state: ~/Library/Application Support/<product>.settings) is neither read nor written: the
 # Standalone opens at its defaults (Mode slot 0 = clean), whatever the user did with it, and never changes the user's
 # file (C §3.2, §6). Preferences and presets go to scratch paths too (02 §5.1). The scratch directory is removed at the
 # end. The Standalone asks for microphone access the first time a new build of it runs (MICROPHONE_PERMISSION_ENABLED);
-# the capture does not wait for the answer.
+# the capture does not wait for the answer. It opens the machine's default input and output, whatever they are and at
+# whatever rate they run (a Bluetooth headset whose microphone is opened runs at 16 or 24 kHz), so the real processor
+# publishes telemetry at that rate: FCMP_UI_NO_LIVE makes the frame ignore all of it, the sample rate included (probe
+# ui.nolive checks that headless, for every Mode).
 #
 # Serialisation. Every live GUI run on the machine holds /tmp/fcmp-gui.lock (lockf -k -t 900; FunkGui's
 # fg.gallery.live takes the same lock), so two captures never fight over the window server. It needs a logged-in,
@@ -42,9 +49,10 @@ VIEWS="panel chars.sidechain chars.colour modebrowser presetbrowser"
 MODE=clean
 DT=0.0166666675
 LOCK=/tmp/fcmp-gui.lock
+CAPTURES=3                                              # live captures per view while its frame is not settled
 
 usage() {
-  sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,/^# Exit:/p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -179,20 +187,35 @@ for VIEW in $VIEWS; do
   [ "$after" -lt 8 ] && after=8
 
   # ---- 2. live -----------------------------------------------------------------------------------------------------
-  (
-    setenv UI_VIEW "$VIEW"
-    setenv UI_FIXED_DT "$DT"
-    setenv UI_NO_HINT 1
-    setenv UI_NO_LIVE 1
-    setenv UI_THEME 0
-    setenv UI_SCALE 2
-    setenv CANVAS_DUMP_AFTER "$after"
-    setenv GPU_LOG 1
-    CFFIXED_USER_HOME="$SCRATCH/home"
-    export CFFIXED_USER_HOME
-    exec /bin/sh "$CAPTURE" "$APP" "$L.dump" "$PREFIX"
-  ) > "$OUT/$VIEW.capture.log" 2>&1
-  rc=$?
+  : > "$OUT/$VIEW.capture.log"
+  capture=1
+  while :; do
+    echo "---- capture $capture: ${PREFIX}CANVAS_DUMP_AFTER=$after" >> "$OUT/$VIEW.capture.log"
+    (
+      setenv UI_VIEW "$VIEW"
+      setenv UI_FIXED_DT "$DT"
+      setenv UI_NO_HINT 1
+      setenv UI_NO_LIVE 1
+      setenv UI_THEME 0
+      setenv UI_SCALE 2
+      setenv CANVAS_DUMP_AFTER "$after"
+      setenv GPU_LOG 1
+      CFFIXED_USER_HOME="$SCRATCH/home"
+      export CFFIXED_USER_HOME
+      exec /bin/sh "$CAPTURE" "$APP" "$L.dump" "$PREFIX"
+    ) >> "$OUT/$VIEW.capture.log" 2>&1
+    rc=$?
+    rate=""
+    [ "$rc" -eq 0 ] && [ -f "$L.dump" ] || break
+    rate=$(sed -n 's/^view .* rate \([a-z]*\) .*/\1/p' "$L.dump" | head -1)
+    if [ "$rate" = idle ] || [ "$capture" -ge "$CAPTURES" ]; then
+      break
+    fi
+    echo "NOTE     $VIEW: the live frame after $after frames is not settled (rate '$rate'); capturing again after" \
+         "$((after * 2))" | tee -a "$OUT/summary.txt"
+    after=$((after * 2))
+    capture=$((capture + 1))
+  done
   if [ "$rc" -ne 0 ] || [ ! -f "$L.dump" ]; then
     echo "FAIL     $VIEW: no live frame (capture-frame.sh exit $rc: no window server, a locked screen, or the GPU" \
          "path never came up); see $OUT/$VIEW.capture.log" | tee -a "$OUT/summary.txt"
@@ -213,14 +236,19 @@ for VIEW in $VIEWS; do
   if [ "$hooks" != "dpi 2 clock fixed" ]; then
     echo "FAIL     $VIEW: the live dump says '$hooks', not 'dpi 2 clock fixed' (the capture hooks did not reach" \
          "the editor); see $OUT/$VIEW.capture.log" | tee -a "$OUT/summary.txt"
+  elif [ "$rate" != idle ]; then
+    echo "FAIL     $VIEW: the live panel never settled (rate '$rate' after $after frames, $capture captures); see" \
+         "$L.png" | tee -a "$OUT/summary.txt"
   elif grep -v '^live ' "$H.fp" > "$H.fp.cmp" && grep -v '^live ' "$L.fp" > "$L.fp.cmp" && cmp -s "$H.fp.cmp" "$L.fp.cmp"
   then
     equal=$((equal + 1))
     echo "EQUAL    $VIEW: geometry $hgeo text $htext (settle $settle, dump after $after)" | tee -a "$OUT/summary.txt"
   else
-    echo "DIFFERS  $VIEW: headless geometry $hgeo text $htext, live geometry $lgeo text $ltext" \
-      | tee -a "$OUT/summary.txt"
+    echo "DIFFERS  $VIEW: headless geometry $hgeo text $htext, live geometry $lgeo text $ltext (settle $settle," \
+         "dump after $after); compare $H.png with $L.png" | tee -a "$OUT/summary.txt"
     diff "$H.fp.cmp" "$L.fp.cmp" | sed 's/^/         /' | head -20 | tee -a "$OUT/summary.txt"
+    "$FR" "$H.dump" "$H.png" 2 > /dev/null 2>&1 || echo "NOTE     $VIEW: could not render $H.png" \
+      | tee -a "$OUT/summary.txt"
   fi
   rm -f "$H.fp.cmp" "$L.fp.cmp"
 done
