@@ -125,6 +125,14 @@ void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) n
     try { return allocateAligned(n, a); } catch (...) { return nullptr; }
 }
 
+// The sized forms are declared first: before Clang 19 sized deallocation is off by default, so with libstdc++ neither
+// the compiler nor <new> declares them, and their definitions alone fail -Wmissing-prototypes (Ubuntu 24.04's Clang 18,
+// ADR-92). Where they are declared already these are plain redeclarations.
+void operator delete(void* p, std::size_t) noexcept;
+void operator delete[](void* p, std::size_t) noexcept;
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept;
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept;
+
 void operator delete(void* p) noexcept { deallocate(p); }
 void operator delete[](void* p) noexcept { deallocate(p); }
 void operator delete(void* p, std::size_t) noexcept { deallocate(p); }
