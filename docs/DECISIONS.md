@@ -971,8 +971,8 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     and `FCOMPRESSOR_UNIVERSAL` mean something on Apple only; the rtsan preset on Linux uses the sanitizer (no
     interposer). The Standalone plays through ALSA (PipeWire's ALSA plug-in on current desktops); JACK stays off because
     JUCE 8.0.4's JACK source warns under its own recommended flags.
-  - **Storage on Linux:** preferences and presets in `~/.config/FCompressor/` (`XDG_CONFIG_HOME` honoured), not JUCE's
-    defaults (`~/FCompressor/` and `~/.config/Application Support/`); the preset keys' Unicode fold through GLib.
+  - **Storage on Linux:** preferences and presets in `~/.config/FCompressor/` (`XDG_CONFIG_HOME` is not read), not
+    JUCE's defaults (`~/FCompressor/` and `~/.config/Application Support/`); the preset keys' Unicode fold through GLib.
   - **The first x86 run of the SSE backend** (Q6: Rosetta was never installed, so the x86 slice had only been compiled):
     every DSP golden matched the arm64 values bit for bit, save two x86 findings, neither Linux's. (1) Clang lowers
     `sel(gt(a, b), a, b)` to `maxps`, which under DAZ returns a denormal operand flushed where NEON's `bsl` returns its
@@ -1008,6 +1008,21 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     footer lines say CTRL-Z there. `gui-live.sh` keeps its ALSA seed, though `FCMP_UI_NO_LIVE` now ignores the device's
     rate (03 §3.6, `ui.nolive`). The key path is covered headless (`ui.edits` `keys.ctrl_cmd_z`); a real Ctrl-Z on a
     Linux desktop has not been pressed yet.
+  - **Review before the merge (four areas, two skeptics per finding; eight confirmed, all Linux-side or tests):**
+    - *Vulkan or nothing was not enforced* (FunkGui): bgfx's renderer fallback was left on, so a Vulkan that did not
+      come up went on to OpenGL through EGL, the very path that aborts, and then to Noop, so init never failed and the
+      fallback screen was never shown. FunkGui v0.11.0 initialises without the fallback and counts an init on another
+      renderer than its shaders' as failed. Its Linux smoke row for Vulkan could not fail and now reads the compiled-in
+      renderers.
+    - *`XDG_CONFIG_HOME` is not read:* JUCE 8.0.4 resolves `~/.config` from `user-dirs.dirs`, never from the
+      environment, and the branch said the variable was honoured. The texts now say what the code does. Following the
+      variable needs FunkGui code and Linux-only tests, left for a session on a Linux machine.
+    - *CI and scripts:* the CI jobs run `verify.sh --strict`, which fails on DRIFT or MISSING (on Linux CI is the only
+      gate the lead has, and nobody reads a CI log's candidates; the default gate is unchanged). `validate.sh` keeps its
+      bundle pairs in an array again (a path with a space was word-split). The README says where CMake 3.30 comes from on
+      Ubuntu 24.04.
+    - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
+      review as defence in depth; it needs a Linux build to check.
 
 ## HardwareReverb migration
 

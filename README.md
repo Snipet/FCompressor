@@ -74,8 +74,10 @@ embed them do. The editor draws with Vulkan; without a Vulkan driver it shows a 
 the audio keeps working.
 
 ```sh
-# Debian / Ubuntu (24.04 or later); other distributions have the same packages under their own names
-sudo apt install clang cmake ninja-build pkg-config git python3 \
+# Debian / Ubuntu (24.04 or later); other distributions have the same packages under their own names.
+# CMake 3.30 or later is needed: Ubuntu 24.04's own is 3.28, so there take it from Kitware's apt repository,
+# `pipx install cmake` or `snap install cmake --classic` (Ubuntu 24.10 and Debian 13 can `apt install cmake`).
+sudo apt install clang ninja-build pkg-config git python3 \
   libasound2-dev libfreetype-dev libfontconfig1-dev libglib2.0-dev libsqlite3-dev \
   libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
   libgl-dev libegl-dev

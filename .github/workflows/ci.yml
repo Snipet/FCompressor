@@ -2,8 +2,8 @@
 #
 #   dsp           the JUCE-free DSP library and its probes (the `dsp` preset): the quick signal, about ten minutes.
 #   plugin        the shipping configuration (the `lead` preset: GPU editor, Release, LTO): the AU, VST3 and Standalone,
-#                 then every probe through Scripts/verify.sh against the blessed goldens, exactly as the lead's gate
-#                 runs it.
+#                 then every probe through Scripts/verify.sh against the blessed goldens, as the lead's gate runs it,
+#                 with --strict: a golden that drifts or is missing fails the job (nobody reads a CI log's candidates).
 #   linux-dsp     the same as dsp, on x86-64 Linux with Clang.
 #   linux-plugin  the same as plugin, on x86-64 Linux with Clang: the VST3 and Standalone (the Vulkan editor), then
 #                 every probe against the same goldens: Linux has no golden overlay of its own.
@@ -46,7 +46,7 @@ jobs:
       - name: Build
         run: cmake --build --preset dsp
       - name: Verify
-        run: Scripts/verify.sh build-dsp
+        run: Scripts/verify.sh --strict build-dsp
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4
@@ -78,7 +78,7 @@ jobs:
       - name: Build
         run: cmake --build --preset lead
       - name: Verify
-        run: Scripts/verify.sh --integration build-lead
+        run: Scripts/verify.sh --integration --strict build-lead
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4
@@ -106,7 +106,7 @@ jobs:
       - name: Build
         run: cmake --build --preset dsp
       - name: Verify
-        run: Scripts/verify.sh build-dsp
+        run: Scripts/verify.sh --strict build-dsp
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4
@@ -144,7 +144,7 @@ jobs:
       - name: Build
         run: cmake --build --preset lead
       - name: Verify
-        run: Scripts/verify.sh --integration build-lead
+        run: Scripts/verify.sh --integration --strict build-lead
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4

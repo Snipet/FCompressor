@@ -92,13 +92,13 @@ if [ "$(uname -s)" = Darwin ]; then
   BIN="Contents/MacOS/$NAME"
   VST3="$HOME/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
   AU="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
-  BUNDLES="$BUILT_VST3|$VST3 $BUILT_AU|$AU"
+  BUNDLES=("$BUILT_VST3|$VST3" "$BUILT_AU|$AU")
   copy_tree() { ditto "$1" "$2"; }
 else
   MACOS=0
   BIN="Contents/$(uname -m)-linux/$NAME.so"
   VST3="$HOME/.vst3/$NAME.vst3"
-  BUNDLES="$BUILT_VST3|$VST3"
+  BUNDLES=("$BUILT_VST3|$VST3")
   copy_tree() { cp -a "$1" "$2"; }
 fi
 
@@ -139,7 +139,7 @@ if [ "$VST3_ONLY" = 1 ]; then
   step "pluginval (strictness 10) $BUILT_VST3" "$PV" "${PV_ARGS[@]}" --validate "$BUILT_VST3"
   STAMP_LINE="validate --vst3-only"
 else
-  for pair in $BUNDLES; do
+  for pair in "${BUNDLES[@]}"; do
     b="${pair%%|*}"
     if [ ! -f "$b/$BIN" ]; then
       echo "validate.sh: no $b/$BIN (build the plugin in $BUILD first)" >&2
@@ -147,7 +147,7 @@ else
     fi
   done
   if [ "$INSTALL" = 1 ]; then
-    for pair in $BUNDLES; do
+    for pair in "${BUNDLES[@]}"; do
       from="${pair%%|*}"
       to="${pair#*|}"
       echo "== install $from -> $to"
@@ -157,7 +157,7 @@ else
       }
     done
   fi
-  for pair in $BUNDLES; do
+  for pair in "${BUNDLES[@]}"; do
     from="${pair%%|*}"
     to="${pair#*|}"
     if [ ! -d "$to" ]; then
