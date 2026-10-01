@@ -11,8 +11,9 @@
 //   print <golden>  every registered Mode's dsp.print material (Tools/probes/common/PrintProgram.h) through the C ABI
 //                   at the plugin's default setup (STD, no lookahead, 48 kHz), each channel hashed as the Harness's
 //                   hashFloats does, against tests/golden/base/modes/<key>/dsp.print.txt: 8 rows per Mode. A Mode
-//                   with no print row at all is not blessed yet (dsp.print reports it, and --strict fails it there):
-//                   a MISSING note here. A Mode with some of its rows, or an engine that could not be set up, fails.
+//                   with no print row at all is not blessed yet: natively a MISSING note (dsp.print reports it, and
+//                   --strict fails it there); a failure in the wasm build, which has no dsp.print beside it. A Mode
+//                   with some of its rows, or an engine that could not be set up, fails everywhere.
 //                   A NOTE per set gives the hash of its 22 raw values: lo, hi and mid pass through the host maps
 //                   (libm), so a raw hash that differs from the native run's says the C library moved the set, not
 //                   the DSP.
@@ -69,6 +70,11 @@ namespace
     constexpr std::uint64_t kSelfCheckHash = 0x5a96ce217d29ca6full;
 
     constexpr double kFs = 48000.0;
+#if defined(__wasm__)
+    constexpr bool kWasm = true;
+#else
+    constexpr bool kWasm = false;
+#endif
     constexpr int kQuantum = 128;                       // the AudioWorklet's render quantum
 
     // ---- the ABI, as the worklet uses it -----------------------------------------------------------------------------
@@ -275,9 +281,12 @@ FCMP_WEB_COMMAND(print)
                 const auto it = golden.find(name);
                 if (it == golden.end())
                 {
-                    if (blessed || !ok)                 // a hole in a blessed Mode, or no engine: never silent
+                    // A hole in a blessed Mode, or no engine: never silent. Nor is an unblessed Mode in the wasm
+                    // build, which has no dsp.print beside it for `verify.sh --strict` to fail on.
+                    if (blessed || !ok || kWasm)
                     {
-                        rows.row(false, key + " " + name, got + (blessed ? ": the Mode's golden has no such row" : ""));
+                        rows.row(false, key + " " + name,
+                                 got + (blessed ? ": the Mode's golden has no such row" : ": the Mode has no golden rows"));
                         continue;
                     }
                     // A Mode whose rows are not blessed yet: dsp.print reports them as candidates; not a failure here.
@@ -422,6 +431,9 @@ namespace
             const std::int32_t latency = fcmp_web_configure(e, kFs, kQuantum);
             render(e, a, b, l, r);
             const long long closed = silenceUntilGated(e, gateFrames(*longest, latency) + 100 * kQuantum);
+            const bool repeated = postParams(e, x, false) == 0;      // the values it already has: not activity
+            silence(e, 1);
+            rows.row(closed >= 0 && repeated && gatedNow(e), "abi.gate.repeated_record_stays_closed");
             const bool posted = postParams(e, y, false) == 0;
             silence(e, 1);
             rows.row(closed >= 0 && posted && !gatedNow(e), "abi.gate.record_opens",

@@ -191,17 +191,21 @@ namespace
         }
         else if (e.gated || m.snap != 0u)
             e.host.requestSnap();                       // consumed at the next block start, with the new values; an
-                                                        // idle engine wakes at them (it was reset: nothing to ramp from)
+                                                        // idle engine wakes at them (it was reset: nothing ramps)
         if (!e.configured)
             e.latency = fcdsp::EngineHost::latencyFor(e.cfg);   // what configure will give (at its sample rate)
         updateTail(e);
-        // A record is activity for the gate, as a sample is. The plugin's engine runs through silence, so a Mode
-        // change made there has crossfaded, and every ramp has ended, before signal returns; here the engine runs
-        // the new values on silence for the whole threshold (the new one) before the gate may close again. Without
-        // this a Mode change made while idle would crossfade into the returning signal, and a record that shortens
-        // the tail could close the gate before the engine had run a block of it.
-        e.silentFrames = 0;
-        e.gated = false;
+        // A record that changes a value is activity for the gate, as a sample is. The plugin's engine runs through
+        // silence, so a Mode change made there has crossfaded, and every ramp has ended, before signal returns; here
+        // the engine runs the new values on silence for the whole threshold (the new one) before the gate may close
+        // again. Without this a Mode change made while idle would crossfade into the returning signal, and a record
+        // that shortens the tail could close the gate before the engine had run a block of it. A record that repeats
+        // the values is not activity: a page that posts every frame must not hold the gate open for good.
+        if (std::memcmp(e.plain.data(), before.data(), sizeof(float) * e.plain.size()) != 0)
+        {
+            e.silentFrames = 0;
+            e.gated = false;
+        }
         return 0;
     }
 

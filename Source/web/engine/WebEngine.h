@@ -72,9 +72,9 @@ FCMP_WEB_EXPORT(fcmp_web_reply) const std::uint8_t* fcmp_web_reply(const FcmpWeb
 FCMP_WEB_EXPORT(fcmp_web_latency) std::int32_t fcmp_web_latency(const FcmpWebEngine* engine) noexcept;
 
 // The silence gate (on by default): once the input has been exactly zero for longer than the engine's tail (and at
-// least 100 ms), the engine is reset and the output is zeros, with no processing, until a non-zero sample or a Params
-// record arrives. A record counts as activity: the engine then runs the new values on the silence for that long
-// again, as the plugin's engine does all the time, so a Mode change made while idle has finished its crossfade before
+// least 100 ms), the engine is reset and the output is zeros, with no processing, until a non-zero sample arrives or
+// a Params record changes a value. Such a record counts as activity: the engine then runs the new values on the
+// silence for that long again, as the plugin's engine does all the time, so a Mode change made while idle has finished its crossfade before
 // signal returns. The gate keeps decaying state from sitting in the denormal range (wasm cannot flush it) and costs
 // nothing audible. on == 0 turns it off.
 FCMP_WEB_EXPORT(fcmp_web_set_gate) void fcmp_web_set_gate(FcmpWebEngine* engine, std::int32_t on) noexcept;
