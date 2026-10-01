@@ -22,7 +22,7 @@
 # headers are checked by their own projects), located through <build>/fcmp-deps.txt; in a DSP-only build (no JUCE)
 # they are skipped with a note, and the JUCE builds check them. $CXX defaults to clang++ (CTest passes CMake's
 # compiler); on macOS SDKROOT defaults to xcrun's and the deployment target is passed. Every header also gets
-# $FCMP_HEADER_CHECK_TARGET_FLAGS (Linux: the build's ISA flags, ADR-91), and the JUCE-including ones
+# $FCMP_HEADER_CHECK_TARGET_FLAGS (Linux: the build's ISA flags, ADR-92), and the JUCE-including ones
 # $FCMP_HEADER_CHECK_JUCE_FLAGS: cmake/FcmpPlatform.cmake's workaround for JUCE 8.0.4 under upstream Clang (Linux),
 # empty where the compiler needs none.
 set -u

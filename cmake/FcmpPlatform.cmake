@@ -1,4 +1,4 @@
-# cmake/FcmpPlatform.cmake: the platforms FCompressor builds on (ADR-91): macOS with AppleClang, and Linux with Clang.
+# cmake/FcmpPlatform.cmake: the platforms FCompressor builds on (ADR-92): macOS with AppleClang, and Linux with Clang.
 # Included by CMakeLists.txt after project() and before the dependencies, so the compile options it adds reach every
 # target made after it: ours, JUCE's module sources compiled inside them, and FunkGui's own tools.
 #
@@ -33,7 +33,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(FCMP_PLATFORM linux)
   set(FCMP_PLUGIN_FORMATS VST3 Standalone)
 else()
-  message(FATAL_ERROR "FCompressor builds on macOS and Linux (ADR-91), not on ${CMAKE_SYSTEM_NAME}")
+  message(FATAL_ERROR "FCompressor builds on macOS and Linux (ADR-92), not on ${CMAKE_SYSTEM_NAME}")
 endif()
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")

@@ -49,7 +49,7 @@ namespace fcmp::probe
 
     const Registration* registrations() noexcept;      // the list head (unordered)
 
-    // ---- the command line (ADR-91) -----------------------------------------------------------------------------------
+    // ---- the command line (ADR-92) -----------------------------------------------------------------------------------
     // main()'s argc and argv, recorded by ProbeMain before any probe runs, for a probe that reads flags of its own
     // (the ones after "--" in ui.dump). Probes read macOS's _NSGetArgc() / _NSGetArgv() before Linux; this is the same
     // pair on every platform.

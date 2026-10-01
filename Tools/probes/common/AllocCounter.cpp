@@ -17,7 +17,7 @@
 namespace
 {
     // No armed thread: a value-initialised pthread_t, null on macOS (a pointer) and 0 on Linux (an unsigned long),
-    // which no running thread ever has (ADR-91).
+    // which no running thread ever has (ADR-92).
     constexpr pthread_t kNoThread{};
 
     constinit std::atomic<pthread_t> gArmed{kNoThread};

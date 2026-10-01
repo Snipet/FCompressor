@@ -45,7 +45,6 @@ namespace fcmp::ui
         using fcdsp::Pid;
 
         constexpr int   kMaxPoints = 256;                          // >= SidechainGeom::points (161)
-        constexpr float kDefaultFs = 48000.0f;                     // no UiFrame read yet
         constexpr float kGridDb = 6.0f;                            // dB grid every 6 dB
         constexpr float kHandleR = 2.5f;                           // the 5×5 ring
         constexpr float kHandleHitPad = 3.0f;
@@ -280,7 +279,7 @@ namespace fcmp::ui
         const FrameState& f = ctx_.frame;
         const uint32_t handleId = s.slider.a11yId();
         s.slider.tick(dt, false, ctx_.focusVisible && ctx_.focus == handleId, false);
-        const float fs = f.hasFrame && f.ui.sampleRate > 0.0f ? f.ui.sampleRate : kDefaultFs;
+        const float fs = telemetry::sampleRate(ctx_);
         const bool rebuilt = f.engSerial != s.builtEng || f.resolveSerial != s.builtResolve || f.entry != s.builtEntry
                           || !funkgui::ease::sameBits(fs, s.builtFs);
         if (rebuilt)

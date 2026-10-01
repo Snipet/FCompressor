@@ -131,7 +131,7 @@ namespace fcmp::ui
         fcdsp::UiFrame          ui{};               // the last UiFrame read (kept when a read fails)
         bool     hasFrame = false;                  // a UiFrame has been read
         bool     fresh    = false;                  // publishCount moved within layout::band::kStaleS (never with
-                                                    // PanelOptions::ignoreLive: drawn as if stale)
+                                                    // PanelOptions::ignoreLive: no feed at all, Telemetry.h)
         bool     live     = false;                  // fresh and kUiLive set
         bool     overlaid = false;                  // eng carries the live smoothed fields
         float    staleSeconds = 0.0f;               // since publishCount last moved
@@ -218,9 +218,12 @@ namespace fcmp::ui
         // v1.2 (ADR-89): the sub-view (ViewIndex) whose typed-value field is open, -1 none, and the field's box. While
         // one is open the Panel gives that view every key; a pointer down outside the box sets the value first
         // (SubView::endTextEntry), one inside it does nothing. A click on a value control also gives it the keyboard
-        // focus with the ring hidden, so a number typed next goes to it (SubView::takesTypedKeys).
+        // focus with the ring hidden, so a number typed next goes to it (SubView::takesTypedKeys); typedTarget is that
+        // control while the last press was on it (every press clears it first, so a press on anything else sends the
+        // typed keys back to the host).
         int           textEntry = -1;
         funkgui::Rect textEntryBox{};
+        uint32_t      typedTarget = 0;
 
         // ---- cross-view channels ------------------------------------------------------------------------------------
         HandState  hand;                            // the item under the hand as of the last completed tick (read)

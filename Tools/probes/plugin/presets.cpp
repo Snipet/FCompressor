@@ -34,13 +34,13 @@
 //   presets.apply.value.max_err        |raw - preset| / host span over the 22 (the host map round trip): <= 1e-6
 //   presets.apply.view.mismatches      the resolved view (state and step of all 22) equals the preset's own
 //   presets.apply.identity.bad         current() is the applied row, modified() false
-//   presets.apply.globals_touched      mode aside, the 7 globals (bypass, quality, ...) keep their values
+//   presets.apply.globals_touched      mode aside, the 8 globals (bypass, quality, ..., output) keep their values
 //   presets.concurrent.*               every factory preset applied 3 times through the processor's own PresetAccess
 //                                      while a second thread runs processBlock: no non-finite output, no batch left
 //                                      open, the last preset's values in place
 //   presets.modified.*                 a one-step nudge of a preset parameter reads modified and restoring it does not;
 //                                      a Mode switch reads modified, switching back does not; bypass/quality/listen
-//                                      never do; revision() bumps on each flip
+//                                      never do, nor does output; revision() bumps on each flip
 //   presets.step.*                     step(+1/-1) moves one row and wraps at both ends; from untitled (-1): +1 -> 0,
 //                                      -1 -> the last row
 //   presets.absent.*                   a preset without modeId loads clean; an unknown modeId loads clean; a missing
@@ -377,6 +377,7 @@ namespace
             proc_.endBatch();
         }
         fcmp::PresetAccess& presets() override { return proc_.presets(); }
+        fcmp::EditAccess& edits() override { return proc_.edits(); }
 
     private:
         fcmp::Processor& proc_;
@@ -458,7 +459,7 @@ FCMP_PROBE(proc, presets)
     }
     const juce::File dbFile = juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(dbEnv));
     const juce::File workDir = dbFile.getParentDirectory();
-    // The real database, which this probe must never open: FunkPresets' default location (ADR-91: ~/.config on Linux).
+    // The real database, which this probe must never open: FunkPresets' default location (ADR-92: ~/.config on Linux).
    #if JUCE_LINUX || JUCE_BSD
     const juce::File realDb = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
                                   .getChildFile("FCompressor/Presets.db");
@@ -646,12 +647,13 @@ FCMP_PROBE(proc, presets)
     // ---- every factory preset through a recording facade -------------------------------------------------------------------
     {
         auto b = running();
-        const std::array<std::pair<Pid, float>, 6> globals{ { { Pid::extkey, 0.7f }, { Pid::listen, 1.0f },
+        const std::array<std::pair<Pid, float>, 7> globals{ { { Pid::extkey, 0.7f }, { Pid::listen, 1.0f },
                                                               { Pid::delta, 1.0f }, { Pid::bypass, 0.6f },
-                                                              { Pid::quality, 2.0f }, { Pid::labudget, 1.0f } } };
+                                                              { Pid::quality, 2.0f }, { Pid::labudget, 1.0f },
+                                                              { Pid::output, -5.5f } } };
         for (const auto& [pid, v] : globals)
             setPlain(*b, pid, v);
-        std::array<float, 6> before{};
+        std::array<float, 7> before{};
         for (std::size_t g = 0; g < globals.size(); ++g)
             before[g] = b->rawValue(globals[g].first);
 
@@ -776,10 +778,12 @@ FCMP_PROBE(proc, presets)
         setPlain(*a, Pid::bypass, 1.0f);
         setPlain(*a, Pid::quality, 2.0f);
         setPlain(*a, Pid::listen, 1.0f);
+        setPlain(*a, Pid::output, -9.0f);                         // ADR-88: never MODIFIED
         bad += pa.modified() ? 1 : 0;
         setPlain(*a, Pid::bypass, 0.0f);
         setPlain(*a, Pid::quality, 1.0f);
         setPlain(*a, Pid::listen, 0.0f);
+        setPlain(*a, Pid::output, 0.0f);
         bad += pa.modified() ? 1 : 0;
         P.eq("presets.modified.globals", bad, 0);
         P.eq("presets.revision.follows_modified", revBad, 0);

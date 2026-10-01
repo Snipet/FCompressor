@@ -24,7 +24,7 @@
 # Any pinned-SHA mismatch deletes the offending checkout and exits 1. Nothing in a build may write into the source
 # trees; the shaderc build checks that. This script is the only writer of the cache.
 #
-# macOS and Linux (ADR-91). On Linux the copies are cp -a instead of ditto, and pluginval is a plain executable rather
+# macOS and Linux (ADR-92). On Linux the copies are cp -a instead of ditto, and pluginval is a plain executable rather
 # than an .app bundle. The tools build with CMake's default compiler on either (they are not FCompressor's code).
 
 set -euo pipefail

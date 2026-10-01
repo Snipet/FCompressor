@@ -28,7 +28,7 @@ set(FCMP_BGFX_SUB_SHAS bgfx=c7684e20da1e385edc439ef39cdb42b8c661016f
 # Harness v2 and placeholder core/gpu/presets targets and placeholder funkgui_* functions (SPRINTS §7 D1, D19).
 # FCMP_FUNKGUI_SHA is the tagged COMMIT (`git rev-parse v0.1.0^{commit}`); the annotated tag object's SHA (what a bare
 # `git rev-parse v0.1.0` prints) is accepted too and peeled to its commit by every check below (R-B0 #10).
-set(FCMP_FUNKGUI_TAG     a8fedca3a5a9b295f5d436dddd5fe5ee7f1fb609)    # feat/linux until v0.11.0 is tagged (ADR-91)
+set(FCMP_FUNKGUI_TAG     a8fedca3a5a9b295f5d436dddd5fe5ee7f1fb609)    # feat/linux until v0.11.0 is tagged (ADR-92)
 set(FCMP_FUNKGUI_SHA     a8fedca3a5a9b295f5d436dddd5fe5ee7f1fb609)
 set(FCMP_FUNKGUI_VERSION 0.11.0)
 
@@ -152,7 +152,7 @@ if(NOT FCOMPRESSOR_DSP_ONLY)
   endif()
   fcmp_assert_git("${juce_SOURCE_DIR}" ${FCMP_JUCE_SHA} JUCE)
   fcmp_source_dir_used(JUCE "${juce_SOURCE_DIR}")
-  # ADR-91: Clang 20 and later put -Wnontrivial-memcall in -Wall, and it fires inside JUCE 8.0.4's bundled HarfBuzz and
+  # ADR-92: Clang 20 and later put -Wnontrivial-memcall in -Wall, and it fires inside JUCE 8.0.4's bundled HarfBuzz and
   # VST3 SDK, which our targets compile with JUCE's recommended warnings (03 §2.2). Third-party code: silenced on JUCE's
   # module translation units only, as a source property (it follows JUCE's own -Wall, which a target option would not),
   # and only where the compiler has the warning (not AppleClang 17). Our sources keep it.
@@ -196,7 +196,7 @@ if(NOT FCOMPRESSOR_HEADLESS)
   fcmp_select_shaderc()
   set(BGFX_BUILD_EXAMPLES OFF)
   set(BGFX_INSTALL OFF)
-  # Linux (ADR-91): the editor draws into an X11 child window (JUCE's peers are X11; a Wayland desktop runs them through
+  # Linux (ADR-92): the editor draws into an X11 child window (JUCE's peers are X11; a Wayland desktop runs them through
   # XWayland), so bgfx never sees a wl_surface, and with its Wayland backend bgfx would link libwayland-egl into the
   # plugin. As FunkGui's cmake/FunkGuiDeps.cmake sets it for its own fetch.
   set(BGFX_WITH_WAYLAND OFF)
@@ -205,7 +205,7 @@ if(NOT FCOMPRESSOR_HEADLESS)
   foreach(_t bgfx bx bimg bimg_decode bimg_encode)
     if(TARGET ${_t})
       set_target_properties(${_t} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
-      # Linux (ADR-91): the pinned bgfx warns under Clang 22 in its own sources (renderer_gl.cpp's
+      # Linux (ADR-92): the pinned bgfx warns under Clang 22 in its own sources (renderer_gl.cpp's
       # -Wtautological-constant-compare, bimg's miniz #pragma message). Third-party code, never edited (03 §2.2).
       if(NOT APPLE)
         target_compile_options(${_t} PRIVATE -w)

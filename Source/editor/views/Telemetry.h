@@ -1,6 +1,6 @@
 // Source/editor/views/Telemetry.h — how every view reads the telemetry, including when the audio stops (UF1a, S11;
 // ADR-69, ADR-70). Shared by DisplayRow, HistoryPlot, ControlPathPlot, TransferPlot, MeterColumn, Readouts, SlotGrid,
-// SidechainPlot, CharScreen and SlotModel, so they agree on one rule each.
+// SidechainPlot, StepPlot, CharScreen and SlotModel, so they agree on one rule each.
 //
 // ADR-69 (the user's Ableton test): when the host stops calling processBlock the stream goes stale (FrameState::fresh is
 // false 0.5 s after publishCount stops moving), and the panel must never look disabled or frozen. A view reads the feed
@@ -24,6 +24,9 @@
 //   10 ms of history columns' detMaxDb — none of them jitters.
 // - grHoldDb: the GAIN REDUCTION readout (ADR-70), the max GR over the last layout::display::kGrHoldS of wall-clock
 //   time: the store's newest columns (1 ms of audio each) and the newest frame, the stale time counting as silence.
+// - sampleRate: the rate SidechainPlot's filter response and StepPlot's step responses are computed at. It follows
+//   feed() like everything else: with no feed (no frame yet, or ignoreLive) it is kDefaultFs, so a parity capture
+//   (FCMP_UI_NO_LIVE) draws what the headless probe draws whatever the live device runs at (gui-live, 03 §3.6).
 #pragma once
 
 #include "editor/SubView.h"
@@ -42,10 +45,14 @@ namespace fcmp::ui
 namespace fcmp::ui::telemetry
 {
     inline constexpr float kFloorDb = -200.0f;                   // the telemetry floor (01 §6.2)
+    inline constexpr float kDefaultFs = 48000.0f;                // sampleRate() with no feed
 
     enum class Feed : uint8_t { none, fresh, stale };
 
     Feed feed(const PanelContext&) noexcept;
+
+    // The processor's sample rate from the frames (fresh or stale); kDefaultFs when feed() is none.
+    float sampleRate(const PanelContext&) noexcept;
 
     // The frame at rest (stale): every level at the floor (meters, SC, colour input, curveXDb), every GR 0 (target,
     // applied, block max, stage 2), crest 0, the phase bits idle and the per-block flags (kUiLive, kUiOutOver,

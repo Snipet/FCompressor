@@ -84,7 +84,7 @@ namespace
 #else
     constexpr uint64_t kFtzBits = 0x8040u;                    // MXCSR FTZ | DAZ
     // MXCSR's sticky exception flags (IE DE ZE OE UE PE): status, not mode. The denormal products this probe computes
-    // set UE and PE between two reads on real x86 hardware (ADR-91: the first x86 run), so only the rest is compared.
+    // set UE and PE between two reads on real x86 hardware (ADR-92: the first x86 run), so only the rest is compared.
     constexpr uint64_t kStatusBits = 0x3fu;
 #endif
 

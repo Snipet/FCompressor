@@ -51,6 +51,11 @@ namespace fcmp
     {
         std::function<void(juce::ValueTree& params)> writePreset;   // save: add the <PRESET> child to <PARAMS>
         std::function<void(juce::ValueTree& params)> readPreset;    // load: read it (inside the load's batch)
+        // v1.2 (ADR-91): the A/B compare's inactive slot. writeCompare adds a <COMPARE> child after <UI> when B has been
+        // used; readCompare is called on every accepted load with the saved tree (absent child: no compare), inside the
+        // load's batch. Installed by the processor (EditHistory).
+        std::function<void(juce::ValueTree& params)> writeCompare;
+        std::function<void(const juce::ValueTree& params)> readCompare;
     };
 
     // Everything session state reads and writes. The processor owns every referent and builds one per call, so a

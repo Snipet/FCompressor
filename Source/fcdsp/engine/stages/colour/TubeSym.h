@@ -18,7 +18,9 @@
 // ModeEngine convention for snapParams and the analysis entry points). The engine runs colour once per chunk after the
 // chunk's ticks, so k then glides linearly across each process() call from where the last one ended (DrivenChannel::k;
 // TubeTransformer's rule, ADR-86): a moving DRIVE never steps the residual's level between samples, and a static one
-// takes exactly k and 1/k (the steady output is bit-identical to a constant scale). The process runs at the OS rate
+// takes exactly k and 1/k (the steady output is bit-identical to a constant scale). A snap (snapParams) lands the drive
+// but keeps DrivenChannel::k, so the first call after it still glides from the last k, over one chunk (64 samples at
+// most); reset() clears it, so the analysis entry points and a new engine start at k. The process runs at the OS rate
 // (StageCtx::fsOs) in place, in sub-blocks of 64 samples through a stack buffer.
 //
 // TUBE: f = tanh (adaa::Tanh), kIn = 1/2 [H]: at 0 dB drive a 0 dBFS sine drives the shaper to 0.5 (about 2 % H3), a

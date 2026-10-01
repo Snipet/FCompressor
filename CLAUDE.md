@@ -1,6 +1,6 @@
 # FCompressor — rules for every Claude session
 
-All-in-one compressor plugin (AU/VST3/Standalone, macOS arm64; VST3/Standalone on Linux x86-64 with Clang, ADR-91)
+All-in-one compressor plugin (AU/VST3/Standalone, macOS arm64; VST3/Standalone on Linux x86-64 with Clang, ADR-92)
 built on JUCE 8.0.4 and the FunkGui library. The design is final: `docs/ARCHITECTURE.md` (overview),
 `docs/DECISIONS.md` (ADR-nn, Qn), `docs/SPRINTS.md` (the plan: cards, ownership, commands), and the binding appendices
 in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (UI), `03-build-verify-process.md`

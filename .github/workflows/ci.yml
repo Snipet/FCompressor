@@ -1,4 +1,4 @@
-# CI: build and test FCompressor on Apple Silicon and on Linux (docs/DECISIONS.md ADR-87, ADR-91).
+# CI: build and test FCompressor on Apple Silicon and on Linux (docs/DECISIONS.md ADR-87, ADR-92).
 #
 #   dsp           the JUCE-free DSP library and its probes (the `dsp` preset): the quick signal, about ten minutes.
 #   plugin        the shipping configuration (the `lead` preset: GPU editor, Release, LTO): the AU, VST3 and Standalone,

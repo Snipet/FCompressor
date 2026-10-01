@@ -7,7 +7,7 @@
 #   // FCMP_PROBE layer=dsp name=static scope=mode timeout=60 [platform=apple|linux]
 #
 # scope=mode registers <layer>.<name>.<key> for every registered Mode in Modes.def (none until F3 activates slot 0);
-# scope=global registers <layer>.<name>. platform= (ADR-91) registers the test on that platform only; the file compiles
+# scope=global registers <layer>.<name>. platform= (ADR-92) registers the test on that platform only; the file compiles
 # everywhere. It is for the rare probe whose golden differs by platform (ui.font's atlas hash: ui.font on macOS,
 # ui.font_linux on Linux). Files without the line (helpers such as FakeFacade.cpp) register no test; a malformed line
 # is a configure error, and so is a duplicate test name. Changing the line needs a reconfigure, which every workflow
@@ -179,7 +179,7 @@ function(fcmp_register_probes exe dir layers)
       set(only macos)
     endif()
     if(only AND NOT only STREQUAL FCMP_PLATFORM)
-      continue()                               # another platform's probe (ADR-91)
+      continue()                               # another platform's probe (ADR-92)
     endif()
     if(NOT layer IN_LIST layers)
       message(FATAL_ERROR "${f}: layer=${layer} does not belong in Tools/probes/${dir}/ (allowed: ${layers})")
@@ -204,7 +204,7 @@ endif()
 add_test(NAME lint.deps COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}
                                 -P ${PROJECT_SOURCE_DIR}/cmake/LintDeps.cmake)
 # lint.headers hands check-headers.sh FcmpArch.cmake's warning list; the script fails if its own copy differs (R-B0 #6).
-# FCMP_HEADER_CHECK_JUCE_FLAGS: FcmpPlatform.cmake's JUCE 8.0.4 workaround, for the headers that include JUCE (ADR-91).
+# FCMP_HEADER_CHECK_JUCE_FLAGS: FcmpPlatform.cmake's JUCE 8.0.4 workaround, for the headers that include JUCE (ADR-92).
 # FCMP_HEADER_CHECK_TARGET_FLAGS: on Linux, whose builds always target the host, the ISA flags (an x86-64 fcdsp header
 # needs -mfma: Simd.h refuses to compile without it); macOS keeps checking for the host, which lead-x86 does not target.
 string(JOIN " " _fcmp_hdr_flags ${FCMP_HEADER_CHECK_FLAGS})

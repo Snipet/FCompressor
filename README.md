@@ -44,8 +44,11 @@ with its source, and its measurements.
 - **Mix to 200 %**, delta (hear what the compressor removes), auto makeup, lookahead up to 20 ms, and oversampling at
   three qualities (ECO, STD, HQ).
 - **Presets:** a factory bank per Mode, user presets with categories, import and export.
-- **Settings and diagnostics:** audio settings with their costs in latency, defaults for new instances, and a DSP load
-  and host report you can copy.
+- **Undo, redo and A/B:** the editor's own history (host automation is never touched) and two sounds to compare,
+  each with its preset, kept in the session.
+- **An output trim** after the mix, and **typed values**: click or Tab to any control and type a number.
+- **Settings and diagnostics:** audio settings with their costs in latency, defaults for new instances, an animation
+  speed (down to none), and a DSP load and host report you can copy.
 - **Zoom** from 100 to 175 %, graphite and paper themes, full keyboard control and screen-reader support.
 - **Real-time safe:** no allocation, lock or system call on the audio thread, and the same output at any block size.
 

@@ -25,7 +25,7 @@
 include_guard(GLOBAL)
 
 # ---- architectures -------------------------------------------------------------------------------------------------
-# CMAKE_OSX_ARCHITECTURES means something on Apple only; Linux builds the host's architecture (ADR-91), so a preset that
+# CMAKE_OSX_ARCHITECTURES means something on Apple only; Linux builds the host's architecture (ADR-92), so a preset that
 # pins one (lead-x86, release) cannot cross-compile there by accident.
 if(NOT APPLE AND FCOMPRESSOR_UNIVERSAL)
   message(FATAL_ERROR "FCompressor: FCOMPRESSOR_UNIVERSAL (arm64 + x86_64 in one binary) exists on macOS only")
@@ -58,7 +58,7 @@ endif()
 # ---- flags (one set for the plugin and the probes, so a fingerprint certifies the shipped arithmetic) --------------
 # ISA flags per slice. A universal build keeps each pair intact with SHELL: (CMake de-duplicates repeated options, which
 # turned HR's "-Xarch_x86_64 -mavx2 -Xarch_x86_64 -mfma" into an unscoped -mfma, a hard error on arm64; 03 §2.6).
-# Linux arm64 (ADR-91) cannot assume an Apple core: the AArch64 baseline, which has every NEON operation fcdsp's Simd.h
+# Linux arm64 (ADR-92) cannot assume an Apple core: the AArch64 baseline, which has every NEON operation fcdsp's Simd.h
 # uses. x86_64 is the same everywhere (Haswell and later).
 if(APPLE)
   set(FCMP_ARCH_FLAGS_arm64 -mcpu=apple-m1)
@@ -117,7 +117,7 @@ list(APPEND FCMP_WARNING_FLAGS
 if(FCOMPRESSOR_WERROR)
   list(APPEND FCMP_WARNING_FLAGS -Werror)
 endif()
-# Linux (ADR-91): libstdc++ 15+ puts `#pragma GCC unroll 4` in std::find_if (bits/stl_algobase.h), and Clang reports
+# Linux (ADR-92): libstdc++ 15+ puts `#pragma GCC unroll 4` in std::find_if (bits/stl_algobase.h), and Clang reports
 # every loop it then cannot unroll as -Wpass-failed, at the library's line, in our translation units. None of our code
 # asks for a loop transformation, so the warning can only be the library's. Not in FCMP_HEADER_CHECK_FLAGS: an optimiser
 # warning never fires under lint.headers' -fsyntax-only.

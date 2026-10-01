@@ -7,6 +7,7 @@
 #include "editor/PreviewWorker.h"
 #include "editor/SlotModel.h"
 #include "editor/Tags.h"
+#include "editor/views/Telemetry.h"
 
 #include "fcdsp/analysis/Analysis.h"
 #include "fcdsp/core/Units.h"
@@ -51,7 +52,6 @@ namespace fcmp::ui
         constexpr int   kGhostPoints = kCols / kGhostStride + 1;
         constexpr float kMinSpanDb = 0.05f;                        // a run whose GR moves less draws nothing
         constexpr float kBarPx = 0.5f;                             // a column's min/max bar when it leaves the chord
-        constexpr float kDefaultFs = 48000.0f;                     // no UiFrame read yet
         constexpr float kTitleS = 0.25f;                           // a11y title <= 4 Hz (02 §7.5)
         constexpr float kCrossHalf = 2.5f;
         constexpr float kInset = 4.0f;                             // captions inside the plot
@@ -424,7 +424,7 @@ namespace fcmp::ui
         // The step responses of this frame's EngineParams (the worker drops a repeat and runs <= 20 Hz).
         if (f.entry != nullptr)
         {
-            const float fs = f.hasFrame && f.ui.sampleRate > 0.0f ? f.ui.sampleRate : kDefaultFs;
+            const float fs = telemetry::sampleRate(ctx_);
             ctx_.preview.request(*f.entry, f.eng, fs, previewKey(f.engHash, *f.entry, fs));
         }
         if (ctx_.preview.result().serial != s.builtResult || f.resolveSerial != s.builtResolve

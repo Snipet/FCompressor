@@ -28,7 +28,7 @@
 //                                   presetbrowser), set instantly; unset or unknown: the view the instance's UiState
 //                                   restores (an unknown id is logged once)
 //     FCMP_UI_NO_HINT=1             PanelOptions::skipHint (no first-run hint)
-//     FCMP_UI_NO_LIVE=1             PanelOptions::ignoreLive (draw as if telemetry were stale; parity captures)
+//     FCMP_UI_NO_LIVE=1             PanelOptions::ignoreLive (no feed: as if no telemetry ever came; parity captures)
 //     FCMP_UI_FIXED_DT=<sec>        also PanelOptions::syncPreview: worker-computed panes are finished inside tick(), so
 //                                   no drawn state depends on another thread's completion time (02 §3.7 rule 7)
 //   A flag is on for any value but "" and "0" (CaptureConfig's rule for FCMP_GPU_LOG). The capture and diagnostics

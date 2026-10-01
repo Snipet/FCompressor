@@ -7,7 +7,7 @@
 #   compile FunkGui's sources (.mm included) into every format wrapper, so configure fails if one appears (K2 #26e).
 # - Product identity comes from cmake/FcmpSources.cmake (the same values as the generated FcmpProduct.h).
 # - Formats are cmake/FcmpPlatform.cmake's FCMP_PLUGIN_FORMATS: AU, VST3 and the Standalone on macOS; VST3 and the
-#   Standalone on Linux (ADR-91), where the Apple-only arguments below (AU_MAIN_TYPE, the microphone text, the hardened
+#   Standalone on Linux (ADR-92), where the Apple-only arguments below (AU_MAIN_TYPE, the microphone text, the hardened
 #   runtime, PLIST_TO_MERGE) are ignored by JUCE. The Linux Standalone plays through ALSA (PipeWire's ALSA plug-in on
 #   current desktops); JUCE_JACK stays off, because JUCE 8.0.4's JACK source warns under its own recommended flags.
 include_guard(GLOBAL)
@@ -73,7 +73,7 @@ if(NOT FCOMPRESSOR_HEADLESS)
   funkgui_add_font(FCompressor)      # font licence + bgfx/bx/bimg/bgfx.cmake licences as bundle resources (02 §1.6)
 endif()
 
-# Linux (ADR-91). bgfx.cmake links X11 and OpenGL (GLU, GLX, SM and ICE with them) into every consumer, though no symbol
+# Linux (ADR-92). bgfx.cmake links X11 and OpenGL (GLU, GLX, SM and ICE with them) into every consumer, though no symbol
 # of theirs is used here: JUCE loads Xlib itself and bgfx loads Vulkan at run time. --as-needed drops them, so a system
 # without libGLU still loads the plugin. And the VST3 exports only its entry points (the version script), as release.sh
 # requires of the macOS bundles (K2 #26f): libstdc++ gives namespace std default visibility, so without it every std

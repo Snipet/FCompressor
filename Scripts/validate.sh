@@ -20,7 +20,7 @@
 #                VST3/FCompressor.vst3 (no auval: the AU is only reachable installed); the stamp line is
 #                "validate --vst3-only: pass", which release.sh does not accept.
 #
-# Linux (ADR-91): the VST3 only (there is no AU and no auval), installed as ~/.vst3/FCompressor.vst3, whose binary is
+# Linux (ADR-92): the VST3 only (there is no AU and no auval), installed as ~/.vst3/FCompressor.vst3, whose binary is
 # Contents/<arch>-linux/FCompressor.so; copies are cp -a. pluginval opens the editor, so it wants an X display (DISPLAY;
 # XWayland on a Wayland desktop).
 #

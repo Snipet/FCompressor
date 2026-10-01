@@ -1,4 +1,4 @@
-# FCompressor: all-in-one compressor (AU / VST3 / Standalone on macOS, VST3 / Standalone on Linux: ADR-91) on JUCE 8.0.4
+# FCompressor: all-in-one compressor (AU / VST3 / Standalone on macOS, VST3 / Standalone on Linux: ADR-92) on JUCE 8.0.4
 # and FunkGui.
 #
 # The build is docs/design/03-build-verify-process.md §2. Written once in Sprint 0 (card B0) and lead-owned from FZ0:
@@ -22,7 +22,7 @@ if(FCOMPRESSOR_UNIVERSAL)
   set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 endif()
 
-# Linux (ADR-91): Clang, as on macOS, unless the caller chose a compiler (CC/CXX or -DCMAKE_CXX_COMPILER); a first
+# Linux (ADR-92): Clang, as on macOS, unless the caller chose a compiler (CC/CXX or -DCMAKE_CXX_COMPILER); a first
 # configure only, since the choice is cached. cmake/FcmpPlatform.cmake refuses any other compiler.
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT DEFINED CMAKE_CXX_COMPILER
    AND NOT DEFINED ENV{CXX} AND NOT DEFINED ENV{CC})
@@ -78,7 +78,7 @@ else()
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-include(FcmpPlatform)   # FCMP_PLATFORM, FCMP_PLUGIN_FORMATS; Clang only; JUCE 8.0.4's Clang workaround (ADR-91)
+include(FcmpPlatform)   # FCMP_PLATFORM, FCMP_PLUGIN_FORMATS; Clang only; JUCE 8.0.4's Clang workaround (ADR-92)
 include(FcmpArch)       # FCMP_ARCHS, FCMP_RUN_ARCH, FCMP_CAN_RUN_PROBES, fcmp_flags / fcmp_lto / fcmp_warnings
 include(FcmpDeps)       # JUCE -> bgfx (GPU) -> FunkGui, with version and SHA assertions; fcmp-deps.txt
 include(FcmpSources)    # the glob -> target map (FCMP_*_SOURCES), BuildInfo.cpp, FcmpProduct.h, FactoryIncludes.h
@@ -86,7 +86,7 @@ include(FcmpSources)    # the glob -> target map (FCMP_*_SOURCES), BuildInfo.cpp
 # fcdsp: the JUCE-free engine (01 §2.1). The generated BuildInfo.cpp keeps it non-empty before any fcdsp .cpp exists.
 add_library(fcdsp STATIC ${FCMP_DSP_SOURCES})
 # Hidden, so a plugin binary exports only its entry points (K2 #26f; release.sh checks nm -gU; found by R1's dry run).
-# Position-independent, because it links into the plugin's shared objects (ADR-91): Linux compilers build a static
+# Position-independent, because it links into the plugin's shared objects (ADR-92): Linux compilers build a static
 # library as PIE code by default, and under LTO its PIE bitcode made the merged plugin module PIE, whose local-exec TLS
 # accesses (JUCE's thread_locals) a shared object cannot link. macOS code is always position-independent.
 set_target_properties(fcdsp PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON

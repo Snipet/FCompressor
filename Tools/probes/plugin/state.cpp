@@ -26,9 +26,10 @@
 //   state.odd.raw.mismatches      A's blob with every continuous value moved to the next float (values the host map need
 //                                 not produce), loaded into non-fresh D: D holds exactly those floats: 0
 //   state.odd.resave.mismatches   D's own save holds the same floats: 0
-//   state.absent.mismatches       A's blob without the PARAMs at even host positions (`mode` among them; modeId kept),
-//                                 loaded into non-fresh E: removed -> the table default, bitwise (a fresh instance's
-//                                 exact defaults), `mode` -> this Mode's slot, kept -> A, bitwise: 0
+//   state.absent.mismatches       A's blob without the PARAMs at even host positions (`mode` among them; modeId kept)
+//                                 and without `output` (absent from every v1.0/v1.1 session, ADR-88), loaded into
+//                                 non-fresh E (its OUTPUT away from 0 dB): removed -> the table default, bitwise (a
+//                                 fresh instance's exact defaults), `mode` -> this Mode's slot, kept -> A, bitwise: 0
 //   state.absent.norm.max_err     removed parameters: max |getValue() - getDefaultValue()| <= 1e-6
 //   state.idempotent              save(load(save(B))) through non-fresh C is byte-identical to save(B): 1
 //   state.concurrent.*            41 loads alternating A's blob and G's own into running G while a second thread calls
@@ -293,6 +294,7 @@ namespace
             proc_.endBatch();
         }
         fcmp::PresetAccess& presets() override { return proc_.presets(); }
+        fcmp::EditAccess& edits() override { return proc_.edits(); }
 
     private:
         fcmp::Processor& proc_;
@@ -473,6 +475,9 @@ FCMP_PROBE(proc, state)
                 xml->removeChildElement(e, true);
             removed[fcdsp::idx(h.pid)] = true;
         }
+        if (juce::XmlElement* o = paramChild(*xml, fcdsp::kHostParams[fcdsp::idx(Pid::output)].id))
+            xml->removeChildElement(o, true);                    // ADR-88: a v1.0/v1.1 session has no `output`
+        removed[fcdsp::idx(Pid::output)] = true;
         auto e = nonFresh(*other, 60);
         load(*e, blobOf(*xml));
         std::int64_t bad = 0;

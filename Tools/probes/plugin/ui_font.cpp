@@ -15,7 +15,7 @@
 // glyph. Golden row: font.atlas.hash (exact) — FunkGui's FNV-1a of the atlas pixels; a CoreGraphics update can move it,
 // which is a known drift reason (03 §3.6).
 //
-// macOS only (ADR-91): FunkGui rasterises the glyphs with juce::Graphics into a native Image, CoreGraphics here and
+// macOS only (ADR-92): FunkGui rasterises the glyphs with juce::Graphics into a native Image, CoreGraphics here and
 // JUCE's software renderer on Linux, so the atlas hash is a property of the platform. Linux runs this same body as
 // ui.font_linux (ui_font_linux.cpp), whose golden holds Linux's atlas; every spec row is the same on both.
 #include "ProbeRegistry.h"
