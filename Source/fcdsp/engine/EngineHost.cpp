@@ -312,7 +312,7 @@ void writeTap(TestTap& t, uint64_t first, int n, const simd::f32x4* gr, const si
             const uint64_t e = k - t.firstSample;
             if (e >= dst.size())
                 break;
-            dst[e] = src[k - first];
+            dst[static_cast<std::size_t>(e)] = src[k - first];             // e < dst.size(); size_t is 32-bit on wasm32
         }
     };
     put(t.grDb, gr);
@@ -323,7 +323,7 @@ void writeTap(TestTap& t, uint64_t first, int n, const simd::f32x4* gr, const si
     {
         cap = t.bits.size() < cap ? t.bits.size() : cap;
         for (uint64_t k = begin; k < end && k - t.firstSample < t.bits.size(); ++k)
-            t.bits[k - t.firstSample] = bits[k - first];
+            t.bits[static_cast<std::size_t>(k - t.firstSample)] = bits[k - first];
     }
     if (cap == ~uint64_t{ 0 })
         return;                                         // nothing tapped
