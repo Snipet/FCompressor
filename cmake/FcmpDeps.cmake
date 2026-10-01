@@ -240,6 +240,14 @@ endif()
 #     harness; the editor module links FunkGui's JUCE-free core once that is tagged. Emscripten is that build's pinned
 #     tool instead: its version is a provenance row.
 if(FCOMPRESSOR_WEB)
+  # The compiler is part of the arithmetic's provenance (it is Clang, and the runtime library is its own): one pinned
+  # version for the lead, the agents and CI (emsdk installs exactly it), moved deliberately like any other pin.
+  set(FCMP_EMSCRIPTEN_VERSION 6.0.3)
+  if(NOT "${EMSCRIPTEN_VERSION}" VERSION_EQUAL "${FCMP_EMSCRIPTEN_VERSION}")
+    message(FATAL_ERROR "FCompressor: the web configuration is pinned to Emscripten ${FCMP_EMSCRIPTEN_VERSION}, but "
+                        "the toolchain is ${EMSCRIPTEN_VERSION} (${EMSCRIPTEN_ROOT_PATH}). Install that version "
+                        "(emsdk install ${FCMP_EMSCRIPTEN_VERSION}) or move the pin in cmake/FcmpDeps.cmake.")
+  endif()
   fcmp_deps_row(Emscripten "${EMSCRIPTEN_VERSION}" - "${EMSCRIPTEN_ROOT_PATH}" no "wasm32, node ${CMAKE_CROSSCOMPILING_EMULATOR}")
 else()
   # 3c. FunkGui: its options as normal variables (02 §1.9), then the override check BEFORE its CMake runs.
