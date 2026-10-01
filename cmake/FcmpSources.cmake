@@ -6,7 +6,9 @@
 #
 #   Source/fcdsp/**/*.cpp (+ generated BuildInfo.cpp)          FCMP_DSP_SOURCES         -> fcdsp
 #   Source/plugin/*.cpp, Source/plugin/factory/*.cpp,
-#     minus CreateEditor*.cpp                                   FCMP_PLUGIN_SOURCES      -> plugin, fcmp_probe_plugin
+#     Source/plugin/portable/*.cpp, minus CreateEditor*.cpp     FCMP_PLUGIN_SOURCES      -> plugin, fcmp_probe_plugin
+#     (portable/: the plugin's model code with no JUCE in it, lint rule plugin.portable; the browser demo's facade
+#     builds from the same files, ADR-93)
 #   Source/plugin/CreateEditorGpu.cpp if present (GPU only),
 #     else CreateEditorGeneric.cpp                              FCMP_CREATE_EDITOR       -> plugin
 #   Source/plugin/CreateEditorGeneric.cpp                       FCMP_CREATE_EDITOR_GENERIC -> fcmp_probe_plugin
@@ -85,7 +87,8 @@ list(LENGTH FCMP_MODE_KEYS FCMP_MODE_COUNT)
 file(GLOB_RECURSE FCMP_DSP_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/fcdsp/*.cpp)
 list(APPEND FCMP_DSP_SOURCES ${FCMP_GENERATED_DIR}/fcmp/BuildInfo.cpp)
 
-file(GLOB FCMP_PLUGIN_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/plugin/*.cpp ${FCMP_SOURCE_ROOT}/plugin/factory/*.cpp)
+file(GLOB FCMP_PLUGIN_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/plugin/*.cpp ${FCMP_SOURCE_ROOT}/plugin/factory/*.cpp
+                                                ${FCMP_SOURCE_ROOT}/plugin/portable/*.cpp)
 list(FILTER FCMP_PLUGIN_SOURCES EXCLUDE REGEX "/CreateEditor[^/]*\\.cpp$")
 
 file(GLOB_RECURSE FCMP_EDITOR_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/editor/*.cpp)
