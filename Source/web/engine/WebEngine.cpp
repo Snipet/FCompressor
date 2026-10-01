@@ -48,9 +48,8 @@ struct FcmpWebEngine
     bool attached = false;
     bool gateOn = true;
     bool gated = false;                                 // the gate is closed: the engine is reset and not running
-    bool snapOnResume = false;                          // values changed while gated: they are settled when it opens
-    std::uint64_t silentFrames = 0;                     // consecutive exactly-zero input frames
-    std::uint64_t tailFrames = 0;                       // the engine's tail at the current values, in frames
+    std::uint64_t silentFrames = 0;                     // exactly-zero input frames since the last sample or record
+    std::uint64_t tailFrames = 0;                       // the gate's threshold at the current values, in frames
     std::uint64_t historyNext = 0;                      // the first HistoryRing column the next reply delivers
     fcmp::web::Reply reply {};
 };
@@ -63,6 +62,10 @@ namespace
 
     constexpr int kMaxCap = 8192;                       // frames per engine call; longer calls are split
     constexpr double kMaxTailSeconds = 600.0;
+    // The gate never closes sooner than this after the last sample or record: longer than a Mode crossfade the host
+    // had to hold back (host/Crossfade.h: starts are 50 ms apart, a fade takes 20 ms) and than any 20 ms ramp, so the
+    // shortest tails (five times a 1 ms release) cannot close it on a change that is still in flight.
+    constexpr double kGateHoldSeconds = 0.1;
 
     // ---- raw values -> setup and BlockParams (Processor.cpp's indexOf, qualityOf, budgetOf, modeSlotOf, isOn) ------
     int indexOf(float plain, int hi) noexcept
@@ -107,13 +110,13 @@ namespace
         e.block.outputDb = e.plain[idx(Pid::output)];
     }
 
-    // The gate's threshold: the engine's own tail at the current values (the descriptor's tail plus the latency).
-    // Message handler and configure only: tailSeconds is not real-time code.
+    // The gate's threshold: the engine's own tail at the current values (the descriptor's tail plus the latency), and
+    // never less than kGateHoldSeconds. Message handler and configure only: tailSeconds is not real-time code.
     void updateTail(Engine& e) noexcept
     {
         double t = e.host.tailSeconds(e.block);
-        if (!(t >= 0.0))
-            t = 0.0;
+        if (!(t >= kGateHoldSeconds))                   // also NaN
+            t = kGateHoldSeconds;
         if (t > kMaxTailSeconds)
             t = kMaxTailSeconds;
         e.tailFrames = static_cast<std::uint64_t>(t * e.cfg.fs) + 1u;
@@ -130,7 +133,6 @@ namespace
             return false;                               // the previous engine, if any, is untouched
         }
         e.latency = e.host.latencySamples();
-        e.snapOnResume = false;
         return true;
     }
 
@@ -187,13 +189,19 @@ namespace
                 return fcmp::web::kPostFailed;
             }
         }
-        else if (e.gated)
-            e.snapOnResume = true;                      // nothing ramps while the engine is idle
-        else if (m.snap != 0u)
-            e.host.requestSnap();                       // consumed at the next block start, with the new values
+        else if (e.gated || m.snap != 0u)
+            e.host.requestSnap();                       // consumed at the next block start, with the new values; an
+                                                        // idle engine wakes at them (it was reset: nothing to ramp from)
         if (!e.configured)
             e.latency = fcdsp::EngineHost::latencyFor(e.cfg);   // what configure will give (at its sample rate)
         updateTail(e);
+        // A record is activity for the gate, as a sample is. The plugin's engine runs through silence, so a Mode
+        // change made there has crossfaded, and every ramp has ended, before signal returns; here the engine runs
+        // the new values on silence for the whole threshold (the new one) before the gate may close again. Without
+        // this a Mode change made while idle would crossfade into the returning signal, and a record that shortens
+        // the tail could close the gate before the engine had run a block of it.
+        e.silentFrames = 0;
+        e.gated = false;
         return 0;
     }
 
@@ -207,12 +215,13 @@ namespace
             e.historyNext = e.host.history().written(); // columns from now on; the first one carries the gap bit
     }
 
+    // EngineHost::reset keeps a snap a record asked for (it is consumed at the next block start), so values posted
+    // while the gate was closed still start settled after a Reset.
     void applyReset(Engine& e) noexcept
     {
         e.host.reset();
         e.silentFrames = 0;
         e.gated = false;
-        e.snapOnResume = false;
     }
 
     std::int32_t fillReply(Engine& e, std::uint32_t tag) noexcept
@@ -522,13 +531,7 @@ void fcmp_web_process(FcmpWebEngine* engine, const float* inL, const float* inR,
         }
         else
         {
-            if (e.gated)
-            {
-                e.gated = false;
-                if (e.snapOnResume)
-                    e.host.requestSnap();
-                e.snapOnResume = false;
-            }
+            e.gated = false;                            // signal: the reset engine starts on it, at the last values
             const float* const ins[2] = { l, r };
             float* const outs[2] = { oL, oR };
             fcdsp::ProcessIo io;

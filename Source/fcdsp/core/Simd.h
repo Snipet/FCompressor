@@ -97,14 +97,16 @@ template <int I> inline f32x4 withLane(f32x4 v, float s) noexcept FCDSP_NONBLOCK
 //   - min/max of +0 and -0: NEON orders -0 < +0 (min -> -0, max -> +0); x86 returns the second operand.
 //   - NaN payloads and signs are not specified anywhere (compilers commute operands; x86 FMA picks its NaN by
 //     encoding), so dsp.simd hashes every NaN as one canonical NaN.
-//   - Flush-to-zero decides tininess before rounding on arm64 (FZ, Arm ARM FPRound) and after rounding on x86 (FTZ):
-//     a mul/div/fma/sqrt whose exact result lies just below FLT_MIN and rounds up to it is 0 on arm64, FLT_MIN on x86.
+//   - Flush-to-zero decides tininess before rounding on arm64 (FZ, Arm ARM FPRound) and after rounding on x86 (FTZ),
+//     where "rounding" is to 24 bits with no lower bound on the exponent: a mul or fma whose exact result lies in
+//     [FLT_MIN (1 - 2^-25), FLT_MIN) is 0 on arm64 and FLT_MIN on x86. Below that range both give 0, including the
+//     results gradual underflow would round up to FLT_MIN (web.simd holds the rule on each backend).
 // Denormals follow the FP mode, which fcdsp always runs under (ScopedFtz: FPCR.FZ on arm64, MXCSR FTZ|DAZ on x86):
 // arithmetic flushes denormal inputs and outputs on both; load/store/set1/abs/neg/sel/lane move bits untouched. The
 // compiler folds constant expressions in the default mode (no flush), so never rely on FTZ for constant operands.
 // The wasm backend (ADR-93; its own comment below) has no FP mode at all: its fma and fms round once like the others,
-// its min/max follow x86, its ops flush tiny results themselves, after rounding as x86 does, and it reads a denormal
-// operand as the value it is.
+// its min/max follow x86, its ops flush tiny results themselves by x86's rule, and it reads a denormal operand as the
+// value it is.
 //
 // rsqrte/rsqrts are AArch64 FRSQRTE/FRSQRTS on both backends. x86 computes FRSQRTE's table function per lane
 // (detail::frsqrteBits, from the Arm ARM's FPRSqrtEstimate/RecipSqrtEstimate; HR measured why rsqrtps, a different
@@ -175,11 +177,11 @@ template <int I> inline f32x4 withLane(f32x4 v, float s) noexcept FCDSP_NONBLOCK
 //     FCDSP_WASM_FMA_UNFUSED (cmake -DFCOMPRESSOR_WEB_FMA=unfused) replaces it with the multiply and the add: two
 //     roundings, a different arithmetic, kept only to measure what the exact form costs.
 //   - Flush-to-zero. wasm has no FP control register, so ScopedFtz is empty there and the ops do the output half
-//     themselves: a result of add, sub, mul, div, fma or fms whose magnitude is below FLT_MIN is a signed zero
-//     (detail::flushTiny, FlushTiny.h), decided after rounding, the x86 rule above. There is no denormals-are-zero
-//     half: a denormal OPERAND is read as the value it is (it can only come from outside the ops: the web engine
-//     zeroes denormal input samples). sqrt and floor of a normal number are never tiny; rsqrte reads its operand as
-//     it is.
+//     themselves: a tiny result of add, sub, mul, div, fma or fms is a signed zero, and tiny is the x86 rule above,
+//     decided on the exact result where the float does not say (detail::flushTinyExact, FlushTiny.h; a few more
+//     operations, on the slow path only). There is no denormals-are-zero half: a denormal OPERAND is read as the
+//     value it is (it can only come from outside the ops: the web engine zeroes denormal input samples). sqrt and
+//     floor of a normal number are never tiny; rsqrte reads its operand as it is.
 //   - min/max are pmin/pmax with the operands swapped, which is x86's rule exactly: min(a, b) = a < b ? a : b and
 //     max(a, b) = a > b ? a : b, so the second operand is returned for a NaN and for +0 against -0.
 // sel is v128.bitselect and needs no fence: nothing here depends on an FP mode. NaN payloads are unspecified, as
@@ -189,9 +191,6 @@ namespace detail {
 
 inline v128_t asBits(f32x4 v) noexcept FCDSP_NONBLOCKING { return (v128_t) v; }     // the same 128 bits
 inline f32x4  asF32 (v128_t v) noexcept FCDSP_NONBLOCKING { return (f32x4) v; }
-
-// Float lanes 2-3 in lanes 0-1, where promote_low reads them.
-inline v128_t highPair(v128_t v) noexcept FCDSP_NONBLOCKING { return wasm_i32x4_shuffle(v, v, 2, 3, 2, 3); }
 
 // Two f64x2 (lanes 0-1 and 2-3) rounded to one f32x4.
 inline v128_t toFloats(v128_t lo, v128_t hi) noexcept FCDSP_NONBLOCKING
@@ -213,6 +212,16 @@ inline v128_t roundToOdd(v128_t a, v128_t p, v128_t s) noexcept FCDSP_NONBLOCKIN
     return wasm_v128_or(truncated, wasm_u64x2_shr(wasm_v128_or(up, down), 63));  // inexact: the last bit is set
 }
 
+// fmaExact's slow path for all four lanes: the sums re-rounded to odd, rounded to float and flushed (odd lies on the
+// exact sum's side of the tiny limit). Out of line: 40 operations that a few per cent of the calls need, at every one
+// of the engine's multiply-adds, are most of what the exact form would add to the module's size.
+[[gnu::noinline]] inline v128_t fmaExactSlow(v128_t aLo, v128_t aHi, v128_t pLo, v128_t pHi, v128_t sLo,
+                                             v128_t sHi) noexcept FCDSP_NONBLOCKING
+{
+    const v128_t oLo = roundToOdd(aLo, pLo, sLo), oHi = roundToOdd(aHi, pHi, sHi);
+    return flushTinyExact(toFloats(oLo, oHi), oLo, oHi);
+}
+
 inline f32x4 fmaExact(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING
 {
     const v128_t av = asBits(a), bv = asBits(b), cv = asBits(c);
@@ -227,14 +236,14 @@ inline f32x4 fmaExact(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING
     const v128_t midpoint = wasm_i32x4_eq(wasm_v128_and(low, wasm_i32x4_const_splat(0x1fffffff)),
                                           wasm_i32x4_const_splat(0x10000000));
     if (wasm_v128_any_true(wasm_v128_or(midpoint, tinyOrMin(r)))) [[unlikely]]
-        return asF32(flushTinyNow(toFloats(roundToOdd(aLo, pLo, sLo), roundToOdd(aHi, pHi, sHi))));
+        return asF32(fmaExactSlow(aLo, aHi, pLo, pHi, sLo, sHi));
     return asF32(r);                                    // no lane is tiny: nothing to flush
 }
 
 // The measured fallback: the product rounds, then the sum rounds (each flushed, as mul and add are).
 inline f32x4 fmaUnfused(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING
 {
-    const v128_t p = flushTiny(wasm_f32x4_mul(asBits(b), asBits(c)));
+    const v128_t p = flushTinyProduct(wasm_f32x4_mul(asBits(b), asBits(c)), asBits(b), asBits(c));
     return asF32(flushTiny(wasm_f32x4_add(asBits(a), p)));
 }
 
@@ -265,11 +274,13 @@ inline f32x4 sub(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING
 }
 inline f32x4 mul(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING
 {
-    return detail::asF32(detail::flushTiny(wasm_f32x4_mul(detail::asBits(a), detail::asBits(b))));
+    const v128_t x = detail::asBits(a), y = detail::asBits(b);
+    return detail::asF32(detail::flushTinyProduct(wasm_f32x4_mul(x, y), x, y));
 }
 inline f32x4 div(f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING
 {
-    return detail::asF32(detail::flushTiny(wasm_f32x4_div(detail::asBits(a), detail::asBits(b))));
+    const v128_t x = detail::asBits(a), y = detail::asBits(b);
+    return detail::asF32(detail::flushTinyQuotient(wasm_f32x4_div(x, y), x, y));
 }
 #if defined(FCDSP_WASM_FMA_UNFUSED)
 inline f32x4 fma(f32x4 a, f32x4 b, f32x4 c) noexcept FCDSP_NONBLOCKING { return detail::fmaUnfused(a, b, c); }

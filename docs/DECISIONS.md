@@ -1046,11 +1046,22 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     in f64 (the product of two floats is exact there), and a round-to-odd correction only for lanes that land on a float
     rounding boundary (24 SIMD operations and a branch; 33 more on the slow path, taken on 0.1 to 3.5 % of engine calls
     on program material). `-DFCOMPRESSOR_WEB_FMA=unfused` builds the two-rounding form for measurement only.
-  - **Denormals.** wasm has no flush-to-zero and no denormals-are-zero. The backend makes a result of add, sub, mul,
-    div, fma or fms whose magnitude is below FLT_MIN a signed zero, after rounding (the x86 rule Simd.h allows), by a
-    speculative test that costs four operations when no lane is tiny. Operands are read as they are. The engine wrapper
-    zeroes denormal input samples and, after exactly-zero input for longer than the engine's tail, resets the engine and
-    outputs zeros until signal returns (a silence gate; `web.engine.tail` measures the cost with it off).
+  - **Denormals.** wasm has no flush-to-zero and no denormals-are-zero. The backend makes a tiny result of add, sub,
+    mul, div, fma or fms a signed zero, by a speculative test that costs four operations when no lane is near FLT_MIN.
+    "Tiny" is x86's rule exactly (MXCSR.FTZ): the exact result, rounded to 24 bits as if the exponent had no lower
+    bound, is below FLT_MIN, which is every exact result below FLT_MIN (1 − 2^-25). The float alone does not say:
+    gradual underflow rounds everything from FLT_MIN (1 − 2^-24) up to FLT_MIN, so mul, div and fma decide on the exact
+    result in double, on the slow path only. (The first version tested the float and kept FLT_MIN in that band, where
+    both native backends give zero; the x86 CI run of `web.simd` showed it, and the check's own reference had the same
+    mistake.) arm64 decides on the exact result itself, so the three backends differ only in
+    [FLT_MIN (1 − 2^-25), FLT_MIN): zero on arm64, FLT_MIN on x86 and wasm, as Simd.h always allowed. Operands are read
+    as they are. The engine wrapper zeroes denormal input samples and runs a silence gate: after exactly-zero input for
+    longer than the engine's tail (at least 100 ms) it resets the engine and outputs zeros until a sample or a Params
+    record arrives. A record counts as activity, so the engine runs new values on the silence for that long again, as
+    the plugin's engine does all the time: a Mode change made while idle has finished its crossfade before signal
+    returns, and an edit that shortens the tail cannot close the gate before the engine has run it (review findings;
+    `web.engine.selfcheck`'s `abi.gate.*` rows compare the audio with a fresh engine's, bit for bit).
+    `web.engine.tail` measures the cost of silence with the gate off.
   - **The engine module** (`Source/web/engine`, portable C++ over fcdsp alone: lint `web.engine`, so the same sources
     build natively for the checks). `fcmp_web_*`: create, configure, process (any frame count; the worklet gives 128),
     post and reply (the byte protocol of `WebProtocol.h`: Params with the 30 plain values and a snap flag, Attach,
@@ -1059,7 +1070,8 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     **A deviation from the real-time rules, recorded here:** a quality or lookahead-budget change reconfigures (and
     allocates) inside `fcmp_web_post`, between two render quanta, because the worklet has no other thread;
     `fcmp_web_process` itself never allocates, locks or calls libm. The module is standalone: no JavaScript glue, no
-    imports, exports by the compiler's `export_name` attribute only (678 KB).
+    imports, exports by the compiler's `export_name` attribute only (545 KB; the slow paths of fma and of the flush
+    are out of line, which took 130 KB off and made STD about a quarter faster).
   - **Measured (Sprint A, this Mac, node 24, 48 kHz, 128-frame quanta, the `dsp.print` material):**
 
     | | rows equal to the native goldens | worst Mode at HQ (mu-67) | clean ECO / STD / HQ |

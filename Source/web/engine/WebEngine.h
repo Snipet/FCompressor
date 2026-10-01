@@ -71,15 +71,19 @@ FCMP_WEB_EXPORT(fcmp_web_reply) const std::uint8_t* fcmp_web_reply(const FcmpWeb
 // at 48 kHz).
 FCMP_WEB_EXPORT(fcmp_web_latency) std::int32_t fcmp_web_latency(const FcmpWebEngine* engine) noexcept;
 
-// The silence gate (on by default): once the input has been exactly zero for longer than the engine's tail, the
-// engine is reset and the output is zeros, with no processing, until a non-zero sample arrives. It keeps decaying
-// state from sitting in the denormal range (wasm cannot flush it) and costs nothing audible. on == 0 turns it off.
+// The silence gate (on by default): once the input has been exactly zero for longer than the engine's tail (and at
+// least 100 ms), the engine is reset and the output is zeros, with no processing, until a non-zero sample or a Params
+// record arrives. A record counts as activity: the engine then runs the new values on the silence for that long
+// again, as the plugin's engine does all the time, so a Mode change made while idle has finished its crossfade before
+// signal returns. The gate keeps decaying state from sitting in the denormal range (wasm cannot flush it) and costs
+// nothing audible. on == 0 turns it off.
 FCMP_WEB_EXPORT(fcmp_web_set_gate) void fcmp_web_set_gate(FcmpWebEngine* engine, std::int32_t on) noexcept;
 
 // The self-check: renders a short fixed program through this ABI (five Modes; per Mode create, a Params record,
-// configure, an edit that ramps, a reconfigure to HQ with lookahead, process and Pull throughout) inside the module and writes a 64-bit hash of what came out as two 32-bit halves, hash[0] the low
-// one (a wasm32 export cannot return an i64 to JavaScript without BigInt glue). The value is the same on every target
-// whose arithmetic meets fcdsp's contract. Allocates and frees one engine. Returns 0, or -1 on failure.
+// configure, an edit that ramps, a reconfigure to HQ with lookahead, process and Pull throughout) inside the module
+// and writes a 64-bit hash of what came out as two 32-bit halves, hash[0] the low one (a wasm32 export cannot return
+// an i64 to JavaScript without BigInt glue). The value is the same on every target whose arithmetic meets fcdsp's
+// contract. Allocates and frees one engine. Returns 0, or -1 on failure.
 FCMP_WEB_EXPORT(fcmp_web_selfcheck) std::int32_t fcmp_web_selfcheck(std::uint32_t* hash) noexcept;
 
 } // extern "C"

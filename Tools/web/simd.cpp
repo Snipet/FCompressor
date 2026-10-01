@@ -11,13 +11,16 @@
 //                nothing in fcdsp depends on which. Results are compared bit for bit, any NaN equal to any NaN.
 //   3. fma, fms  bit for bit against std::fma over more than 10^7 triples: random bit patterns, operands of nearby
 //                scale, cancellation, sums that land on or beside the midpoint of two floats (where a multiply-add in
-//                double rounds twice), sums beside FLT_MIN and FLT_MAX, infinities and NaNs, and vectors that mix
-//                these lane by lane (the wasm fma has a fast and a slow path per vector). The reference is a scalar
-//                round-to-odd form which this check first holds to std::fma itself: natively that is the hardware
-//                instruction; on wasm it is musl's software fmaf, compared and reported.
-//   4. tiny      the flush rule: a result of add, sub, mul, div, fma or fms below FLT_MIN is a signed zero. arm64
-//                decides before rounding, x86-64 and wasm after (Simd.h): the one place the expected value depends on
-//                the backend, with min/max of a NaN or of +0 against -0 (wasm has x86's rule).
+//                double rounds twice), sums beside FLT_MIN and the overflow threshold, infinities and NaNs, and
+//                vectors that mix these lane by lane (the wasm fma has a fast and a slow path per vector). The
+//                reference is a scalar round-to-odd form which this check first holds to std::fma itself: natively
+//                that is the hardware instruction; on wasm it is musl's software fmaf, compared and reported.
+//   4. tiny      the flush rule: a tiny result of add, sub, mul, div, fma or fms is a signed zero. arm64 decides on
+//                the exact result (below FLT_MIN); x86-64 and wasm on the exact result rounded to 24 bits with no
+//                lower bound on the exponent (below FLT_MIN (1 - 2^-25); Simd.h, FlushTiny.h): the one place the
+//                expected value depends on the backend, with min/max of a NaN or of +0 against -0 (wasm has x86's
+//                rule). Neither is "the IEEE result is below FLT_MIN": a product of FLT_MIN (1 - 2^-24) rounds up to
+//                FLT_MIN under gradual underflow and is zero on all three.
 //   5. fastmath  log2, exp2, tanh, logCosh, tanPi, sinPi, cosPi over fixed sweeps of normal numbers, hashed, against
 //                constants recorded from the native arm64 build: the wasm run has to reproduce native bits.
 //
@@ -72,12 +75,12 @@ namespace
     constexpr bool kFlushSums = true;
 #elif defined(FCDSP_SIMD_WASM)
     constexpr const char* kBackend = "wasm32 SIMD128";
-    constexpr bool kTinyBeforeRounding = false;             // detail::flushTiny decides on the rounded result
+    constexpr bool kTinyBeforeRounding = false;             // FlushTiny.h: x86's rule, computed
     constexpr bool kMinMaxNeon = false;                     // pmin/pmax swapped: the second operand, as minps/maxps
     constexpr bool kFlushSums = FCDSP_WASM_FLUSH_ADDSUB != 0;
 #else
     constexpr const char* kBackend = "x86-64 SSE";
-    constexpr bool kTinyBeforeRounding = false;             // MXCSR.FTZ decides on the rounded result
+    constexpr bool kTinyBeforeRounding = false;             // MXCSR.FTZ: rounded to 24 bits, unbounded exponent
     constexpr bool kMinMaxNeon = false;                     // minps/maxps: the second operand
     constexpr bool kFlushSums = true;
 #endif
@@ -142,14 +145,19 @@ namespace
 
     // ---- scalar references (default FP mode) ------------------------------------------------------------------------
     // The flush rule. `rounded` is the IEEE result; `exact` is a double with the exact result's sign that lies on the
-    // exact result's side of FLT_MIN (the exact value itself, or it rounded to nearest or to odd in double).
+    // exact result's side of the limit (the exact value itself, or it rounded to nearest or to odd in double).
+    //   before rounding (arm64): tiny = the exact result is below FLT_MIN.
+    //   after rounding (x86-64, wasm): tiny = the exact result, rounded to 24 bits with no lower bound on the
+    //     exponent, is below FLT_MIN. The largest such float is FLT_MIN (1 - 2^-24); halfway from it to FLT_MIN the
+    //     tie goes to the even one, FLT_MIN. So tiny = the exact result is below FLT_MIN (1 - 2^-25).
+    // The IEEE result does not decide either: gradual underflow rounds to a multiple of 2^-149, so everything from
+    // FLT_MIN (1 - 2^-24) up already reads FLT_MIN.
+    constexpr double kTinyLimit = kTinyBeforeRounding ? kMinD : 0x1.ffffffp-127;
     float flushed(float rounded, double exact) noexcept
     {
         if (isNan(rounded) || isInf(rounded))
             return rounded;
-        if (kTinyBeforeRounding)
-            return (exact != 0.0 && std::fabs(exact) < kMinD) ? signedZero(std::signbit(exact)) : rounded;
-        return (rounded != 0.0f && std::fabs(rounded) < kFltMin) ? signedZero(std::signbit(rounded)) : rounded;
+        return (exact != 0.0 && std::fabs(exact) < kTinyLimit) ? signedZero(std::signbit(exact)) : rounded;
     }
 
     // Sums and differences of normal floats are exact when they are tiny, so their double is the exact value there.
@@ -164,7 +172,9 @@ namespace
         return kFlushSums ? flushed(r, static_cast<double>(a) - static_cast<double>(b)) : r;
     }
     float refMul(float a, float b) noexcept { return flushed(a * b, static_cast<double>(a) * static_cast<double>(b)); }
-    // A quotient of two floats is FLT_MIN exactly or at least 2^-24 away from it (relative), so the double decides.
+    // A quotient of two normal floats is never within 2^-49 (relative) of either limit without being equal to it (two
+    // 24-bit integers cannot have that ratio), so the double decides. One quotient lands in the range gradual
+    // underflow rounds up: FLT_MIN (1 - 2^-24) exactly, 0x1.fffffep-126 / 2.
     float refDiv(float a, float b) noexcept { return flushed(a / b, static_cast<double>(a) / static_cast<double>(b)); }
 
     // a + b*c with one rounding, and the exact sum rounded to odd in double (the side of FLT_MIN it lies on). The
@@ -540,7 +550,11 @@ namespace
                 const uint32_t pickK = rng.bounded(16u);
                 const int k = pickK < 2u ? -126 : pickK == 2u ? -125 : pickK == 3u ? 127
                                                                      : static_cast<int>(rng.bounded(241u)) - 120;
-                const uint32_t mantissa = (rng.next() & 3u) == 0u ? (rng.next() & 3u) : (rng.next() & 0x007fffffu);
+                uint32_t mantissa = (rng.next() & 3u) == 0u ? (rng.next() & 3u) : (rng.next() & 0x007fffffu);
+                // In the last binade, half the time the top of it: with a = +-FLT_MAX the sum straddles
+                // FLT_MAX + 2^103, where the one rounding decides between FLT_MAX and infinity.
+                if (k == 127 && (rng.next() & 1u) != 0u)
+                    mantissa = 0x007fffffu - (rng.next() & 3u);
                 a = fromBits((rng.next() & 0x80000000u) | (static_cast<uint32_t>(k + 127) << 23) | mantissa);
                 constexpr double kT[5] = { 0.5, 1.0, 1.5, 3.0, 5.0 };
                 const double target = kT[rng.bounded(5u)] * pow2(k - 24);
@@ -806,12 +820,30 @@ namespace
              isNanBits(eval(Op::mul, qnan, kFltMin)) && eval(Op::mul, kInf, kFltMin) == bitsOf(kInf)
                  && isNanBits(eval(Op::fma, qnan, 1.0f, 1.0f)) && eval(Op::add, -kInf, 1.0f) == bitsOf(-kInf),
              1);
-        // FLT_MIN (1 - 2^-24) is exactly halfway below FLT_MIN and rounds up to it: flushed where the mode decides
-        // before rounding (arm64), kept where it decides after (x86-64, wasm). Simd.h documents the difference.
+        // The boundary. An exact result in [FLT_MIN (1 - 2^-24), FLT_MIN) reads FLT_MIN under gradual underflow:
+        //   - FLT_MIN (1 - 2^-24), a float with the exponent unbounded, is tiny on every backend;
+        //   - FLT_MIN (1 - 2^-25) is the tie of the 24-bit rounding and goes to FLT_MIN: tiny on arm64 only. It is
+        //     (2^25 - 1) 2^-151 = (31 * 601) * 1801 * 2^-151, a product of two floats;
+        //   - FLT_MIN (1 - 2^-46) = (2^24 - 2)(2^23 + 1) 2^-173 rounds to FLT_MIN: tiny on arm64 only.
+        const float belowMin = fromBits(0x3f7fffffu);       // 1 - 2^-24
+        const float tieA = 18631.0f * 0x1p-75f, tieB = 1801.0f * 0x1p-76f;
+        const float upA = 0x1.fffffcp-64f, upB = 0x1.000002p-63f;
         const uint32_t upToMin = kTinyBeforeRounding ? 0u : bitsOf(kFltMin);
-        r.bits("tiny.mul.rounds_up_to_min", eval(Op::mul, kFltMin, fromBits(0x3f7fffffu)), upToMin);
+        r.bits("tiny.mul.below_24bit_min_flushed", eval(Op::mul, kFltMin, belowMin), 0u);
+        r.bits("tiny.mul.sign_below_24bit_min", eval(Op::mul, -kFltMin, belowMin), 0x80000000u);
+        r.bits("tiny.div.below_24bit_min_flushed", eval(Op::div, 0x1.fffffep-126f, 2.0f), 0u);
+        r.bits("tiny.mul.tie_rounds_to_min", eval(Op::mul, tieA, tieB), upToMin);
+        r.bits("tiny.mul.rounds_up_to_min", eval(Op::mul, upA, upB), upToMin);
         if (kFmaExact)
-            r.bits("tiny.fma.rounds_up_to_min", eval(Op::fma, 0.0f, kFltMin, fromBits(0x3f7fffffu)), upToMin);
+        {
+            r.bits("tiny.fma.below_24bit_min_flushed", eval(Op::fma, 0.0f, kFltMin, belowMin), 0u);
+            r.bits("tiny.fms.below_24bit_min_flushed", eval(Op::fms, 0.0f, kFltMin, belowMin), 0x80000000u);
+            // 2 FLT_MIN - (1 + 2^-23)(2 - 2^-23) 2^-127 = FLT_MIN (1 - 2^-24 + 2^-47): inexact, and just above the
+            // tie of gradual underflow (IEEE: FLT_MIN), yet below the 24-bit tie: tiny on every backend
+            r.bits("tiny.fma.sum_below_24bit_min", eval(Op::fms, 2.0f * kFltMin, 0x1.000002p-63f, 0x1.fffffep-64f), 0u);
+            r.bits("tiny.fma.tie_rounds_to_min", eval(Op::fma, 0.0f, tieA, tieB), upToMin);
+            r.bits("tiny.fma.rounds_up_to_min", eval(Op::fma, 0.0f, upA, upB), upToMin);
+        }
 
         // min/max: the operand that may be NaN goes second and propagates on every backend; the rest is the backend's.
         const auto nan01 = [](uint32_t v) { return isNanBits(v) ? 1 : 0; };
@@ -935,20 +967,33 @@ namespace
         row("fastmath.cospi.hash", hashScalar([](float x) noexcept { return fcdsp::cosPi(x); }, xs), kHashCosPi,
             xs.size());
 
-        // every scalar form is lane 0 of its vector form (FastMath.h)
+        // A lane's result does not depend on its neighbours: lane k of the vector form on four different inputs is
+        // the scalar form (lane 0 of a splat, FastMath.h) of that input. On wasm one lane on fma's slow path takes
+        // the other three with it, and they must come out as the fast path would have left them.
         long long bad = 0, count = 0;
         {
             const fcdsp::ScopedFtz ftz;
-            for (std::size_t i = 0; i + 4 <= xt.size(); i += 64, count += 4)
+            float out[4];
+            const auto lanes = [&](auto vectorForm, auto scalarForm, const float* x) noexcept
             {
-                const float x = xt[i];
-                bad += bitsOf(fcdsp::log2(x)) != bitsOf(simd::lane<0>(fcdsp::log2(simd::set1(x))));
-                bad += bitsOf(fcdsp::exp2(x)) != bitsOf(simd::lane<0>(fcdsp::exp2(simd::set1(x))));
-                bad += bitsOf(fcdsp::tanh(x)) != bitsOf(simd::lane<0>(fcdsp::tanh(simd::set1(x))));
-                bad += bitsOf(fcdsp::logCosh(x)) != bitsOf(simd::lane<0>(fcdsp::logCosh(simd::set1(x))));
+                simd::store(out, vectorForm(simd::load(x)));
+                for (int k = 0; k < 4; ++k, ++count)
+                    bad += !same(out[k], scalarForm(x[k]));
+            };
+            for (std::size_t i = 0; i + 4 <= xt.size(); i += 8)
+            {
+                const float* const x = xt.data() + i;
+                lanes([](f32x4 v) noexcept { return fcdsp::log2(v); },
+                      [](float v) noexcept { return fcdsp::log2(v); }, x);
+                lanes([](f32x4 v) noexcept { return fcdsp::exp2(v); },
+                      [](float v) noexcept { return fcdsp::exp2(v); }, x);
+                lanes([](f32x4 v) noexcept { return fcdsp::tanh(v); },
+                      [](float v) noexcept { return fcdsp::tanh(v); }, x);
+                lanes([](f32x4 v) noexcept { return fcdsp::logCosh(v); },
+                      [](float v) noexcept { return fcdsp::logCosh(v); }, x);
             }
         }
-        r.mismatches("fastmath.scalar_is_lane0", bad, count);
+        r.mismatches("fastmath.lanes_independent", bad, count);
         r.eq("fastmath.exact_values",
              fcdsp::log2(1.0f) == 0.0f && fcdsp::log2(8.0f) == 3.0f && fcdsp::exp2(0.0f) == 1.0f
                  && fcdsp::exp2(-3.0f) == 0.125f && fcdsp::exp2(200.0f) == 0x1p126f && fcdsp::tanh(20.0f) == 1.0f
@@ -960,9 +1005,10 @@ namespace
 FCMP_WEB_COMMAND(simd)
 {
     Report r;
-    std::printf("NOTE  web.simd: %s; fma %s; a tiny result is flushed %s rounding; add and sub flush: %s\n", kBackend,
+    std::printf("NOTE  web.simd: %s; fma %s; tiny is decided %s; add and sub flush: %s\n", kBackend,
                 kFmaExact ? "exact (one rounding)" : "UNFUSED (two roundings: the measured fallback)",
-                kTinyBeforeRounding ? "before" : "after", kFlushSums ? "yes" : "no");
+                kTinyBeforeRounding ? "on the exact result" : "after rounding to 24 bits (unbounded exponent)",
+                kFlushSums ? "yes" : "no");
     moves(r);
     unaryOps(r);
     binaryOps(r);

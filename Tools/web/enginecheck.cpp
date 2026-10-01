@@ -10,21 +10,30 @@
 //
 //   print <golden>  every registered Mode's dsp.print material (Tools/probes/common/PrintProgram.h) through the C ABI
 //                   at the plugin's default setup (STD, no lookahead, 48 kHz), each channel hashed as the Harness's
-//                   hashFloats does, against tests/golden/base/modes/<key>/dsp.print.txt: 8 rows per Mode. A NOTE per
-//                   set gives the hash of its 22 raw values: lo, hi and mid pass through the host maps (libm), so a
-//                   raw hash that differs from the native run's says the C library moved the set, not the DSP.
+//                   hashFloats does, against tests/golden/base/modes/<key>/dsp.print.txt: 8 rows per Mode. A Mode
+//                   with no print row at all is not blessed yet (dsp.print reports it, and --strict fails it there):
+//                   a MISSING note here. A Mode with some of its rows, or an engine that could not be set up, fails.
+//                   A NOTE per set gives the hash of its 22 raw values: lo, hi and mid pass through the host maps
+//                   (libm), so a raw hash that differs from the native run's says the C library moved the set, not
+//                   the DSP.
 //   selfcheck       the module's own self-check hash against the constant below, and the ABI's contract rows (what a
-//                   record changes, what is refused, any frame count, denormal input).
-//   tail            per Mode, a burst then 10 s of silence with the silence gate off: no 1/3 s of the silence may cost
+//                   record changes, what is refused, any frame count, denormal input, the silence gate and records).
+//   tail            per Mode, a burst then 10 s of silence with the silence gate off: no 2/3 s of the silence may cost
 //                   2x the active signal's time per block (denormals: wasm cannot flush them; trivially true
-//                   natively). Then the gate itself, on the first Mode: it closes after the tail and opens on signal.
+//                   natively). Wall-clock time, so: the Mode is rendered once untimed first (node compiles while it
+//                   runs), every 1/3 s window keeps its best time over three runs (a denormal's cost is there in
+//                   every run, another process's is not), and the figure judged is the worst pair of adjacent windows
+//                   (a state stuck in the denormal range stays there). Natively the limit takes FCMP_TIMING_SCALE
+//                   (ADR-87) and a sanitizer build is not judged; the wasm build, the one this exists for, keeps x2.
+//                   Then the gate itself, on the first Mode: it closes after the tail and opens on signal.
 //   speed           the real-time factor per Mode at ECO, STD and HQ (48 kHz, 128-frame quanta, the print program);
 //                   fails when the worst Mode at HQ is below 4x real time. A measurement of this machine under its
-//                   current load: registered for the web only.
+//                   current load: registered for the web only, and run alone (cmake/FcmpWeb.cmake).
 #include "web/WebCheck.h"
 
 #include "PrintProgram.h"
 #include "Signals.h"
+#include "Tolerances.h"
 
 #include "web/engine/WebEngine.h"
 #include "web/engine/WebProtocol.h"
@@ -105,6 +114,11 @@ namespace
     std::int32_t postAttach(FcmpWebEngine* e, bool attached)
     {
         return post(e, proto::AttachMsg { proto::header(proto::Kind::attach, sizeof(proto::AttachMsg)), attached ? 1u : 0u });
+    }
+
+    std::int32_t postReset(FcmpWebEngine* e)
+    {
+        return post(e, proto::ResetMsg { proto::header(proto::Kind::reset, sizeof(proto::ResetMsg)) });
     }
 
     // A Pull and the reply's fixed part; false when the engine refused or the reply is malformed.
@@ -230,7 +244,7 @@ FCMP_WEB_COMMAND(print)
     const std::string goldenRoot = argv[1];
     const printprog::Program in = printprog::program();
     Rows rows { "web.engine.print" };
-    int missing = 0;
+    int missing = 0, modesCompared = 0;
     std::uint64_t rawAll = 1469598103934665603ull;
     std::vector<float> l, r;
     for (const ModeSlot* ms : modes())
@@ -238,6 +252,10 @@ FCMP_WEB_COMMAND(print)
         const std::string key(ms->key);
         std::map<std::string, std::string> golden;
         const bool haveGolden = readGolden(goldenRoot + "/base/modes/" + key + "/dsp.print.txt", golden);
+        // Blessed: the Mode has print rows. Then every row this run makes must be among them.
+        const bool blessed = std::any_of(golden.begin(), golden.end(),
+                                         [](const auto& kv) { return kv.first.rfind("print.", 0) == 0; });
+        modesCompared += blessed ? 1 : 0;
         for (const printprog::Set& set : printprog::sets(*ms->entry))
         {
             // As dsp.print configures its host: the values first, so the engine starts snapped at them.
@@ -257,6 +275,11 @@ FCMP_WEB_COMMAND(print)
                 const auto it = golden.find(name);
                 if (it == golden.end())
                 {
+                    if (blessed || !ok)                 // a hole in a blessed Mode, or no engine: never silent
+                    {
+                        rows.row(false, key + " " + name, got + (blessed ? ": the Mode's golden has no such row" : ""));
+                        continue;
+                    }
                     // A Mode whose rows are not blessed yet: dsp.print reports them as candidates; not a failure here.
                     std::printf("MISSING  web.engine.print %s %s: %s (%s)\n", key.c_str(), name.c_str(), got.c_str(),
                                 haveGolden ? "no golden row" : "no golden file");
@@ -270,8 +293,8 @@ FCMP_WEB_COMMAND(print)
     }
     std::printf("NOTE     raw sets: hash of all raw hashes %s (the web run's differs from the native run's when the C "
                 "library's pow or log moved a set)\n", hex(rawAll).c_str());
-    if (missing > 0)
-        std::printf("NOTE     %d row(s) have no golden\n", missing);
+    std::printf("NOTE     %d row(s) compared, of %d Mode(s) with blessed print rows; %d row(s) of unblessed Modes\n",
+                rows.passed + rows.failed, modesCompared, missing);
     if (rows.passed + rows.failed == 0)
     {
         std::printf("FAIL     web.engine.print: no golden row found under %s\n", goldenRoot.c_str());
@@ -307,6 +330,143 @@ namespace
     bool allZero(std::span<const float> v) noexcept
     {
         return std::all_of(v.begin(), v.end(), [](float x) { return x == 0.0f; });
+    }
+
+    bool gatedNow(FcmpWebEngine* e)
+    {
+        proto::ReplyHead head {};
+        return pull(e, head) && (head.flags & proto::kReplyGated) != 0u;
+    }
+
+    // Silent quanta until a Pull says the gate is closed: the zero frames rendered before the first gated quantum, or
+    // -1 when it has not closed after `limit` frames.
+    long long silenceUntilGated(FcmpWebEngine* e, long long limit)
+    {
+        std::array<float, kQuantum> outL {}, outR {}, zeros {};
+        for (long long silent = 0; silent < limit; silent += kQuantum)
+        {
+            fcmp_web_process(e, zeros.data(), zeros.data(), outL.data(), outR.data(), kQuantum);
+            if (gatedNow(e))
+                return silent;
+        }
+        return -1;
+    }
+
+    void silence(FcmpWebEngine* e, int quanta)
+    {
+        std::array<float, kQuantum> outL {}, outR {}, zeros {};
+        for (int q = 0; q < quanta; ++q)
+            fcmp_web_process(e, zeros.data(), zeros.data(), outL.data(), outR.data(), kQuantum);
+    }
+
+    // The gate's threshold for a Mode's defaults, as the wrapper computes it: the descriptor's tail plus the latency,
+    // at least 100 ms (WebEngine.h).
+    long long gateFrames(const ModeEntry& en, std::int32_t latency)
+    {
+        const RawParams raw = printprog::defaults(en);
+        Resolution res;
+        resolve(en, raw, res);
+        const double tailS = static_cast<double>(en.desc->tailSeconds != nullptr ? en.desc->tailSeconds(res.eng) : 0.0f)
+                           + static_cast<double>(latency) / kFs;
+        return static_cast<long long>(std::max(tailS, 0.1) * kFs);
+    }
+
+    bool sameBits(const std::vector<float>& a, const std::vector<float>& b)
+    {
+        return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    }
+
+    // The silence gate against records (WebEngine.h): the plugin's engine runs through silence, so whatever is edited
+    // there is settled when signal returns. The gated engine has to give the same audio.
+    void gateRecordRows(Rows& rows, const std::vector<const ModeSlot*>& all, const std::vector<float>& inL,
+                        const std::vector<float>& inR)
+    {
+        constexpr std::size_t kBurst = 94 * kQuantum;   // 0.25 s
+        constexpr int kHoldQuanta = 75;                 // 0.2 s
+        const std::span<const float> a = std::span<const float>(inL).first(kBurst), b = std::span<const float>(inR).first(kBurst);
+        const std::span<const float> a2 = std::span<const float>(inL).subspan(kBurst, kBurst),
+                                     b2 = std::span<const float>(inR).subspan(kBurst, kBurst);
+        std::vector<float> l, r, l2, r2;
+
+        // The longest and the shortest default tail: a Mode change between them is also the largest change of threshold.
+        const ModeEntry* longest = all.front()->entry;
+        const ModeEntry* shortest = all.front()->entry;
+        for (const ModeSlot* ms : all)
+        {
+            if (gateFrames(*ms->entry, 0) > gateFrames(*longest, 0))
+                longest = ms->entry;
+            if (gateFrames(*ms->entry, 0) < gateFrames(*shortest, 0))
+                shortest = ms->entry;
+        }
+        if (longest == shortest)
+        {
+            std::printf("NOTE     abi.gate: one Mode (or equal tails): the Mode-change rows need two\n");
+            return;
+        }
+        const Plain x = plainOf(printprog::defaults(*longest)), y = plainOf(printprog::defaults(*shortest));
+
+        // The reference for "the engine is in Mode y and settled": a fresh engine, `quanta` of silence, the signal.
+        const auto fresh = [&](const Plain& p, int quanta, std::vector<float>& outL, std::vector<float>& outR)
+        {
+            Engine e;
+            (void) postParams(e, p, true);
+            (void) fcmp_web_configure(e, kFs, kQuantum);
+            silence(e, quanta);
+            render(e, a2, b2, outL, outR);
+        };
+
+        // -- a Mode change while the gate is closed: the record opens it, the engine crossfades on the silence
+        {
+            Engine e;
+            (void) postParams(e, x, true);
+            const std::int32_t latency = fcmp_web_configure(e, kFs, kQuantum);
+            render(e, a, b, l, r);
+            const long long closed = silenceUntilGated(e, gateFrames(*longest, latency) + 100 * kQuantum);
+            const bool posted = postParams(e, y, false) == 0;
+            silence(e, 1);
+            rows.row(closed >= 0 && posted && !gatedNow(e), "abi.gate.record_opens",
+                     "closed after " + std::to_string(closed) + " silent frames");
+            silence(e, kHoldQuanta - 1);
+            render(e, a2, b2, l, r);
+            fresh(y, kHoldQuanta, l2, r2);
+            rows.row(sameBits(l, l2) && sameBits(r, r2) && !allZero(l), "abi.gate.mode_change_while_closed");
+        }
+
+        // -- a record that shortens the tail does not close the gate before the engine has run the new values
+        {
+            Engine e;
+            (void) postParams(e, x, true);
+            const std::int32_t latency = fcmp_web_configure(e, kFs, kQuantum);
+            const long long before = gateFrames(*longest, latency), after = gateFrames(*shortest, latency);
+            render(e, a, b, l, r);
+            // silent for longer than the new threshold, and still inside the old one
+            const long long quanta = (before + after) / (2 * kQuantum);
+            silence(e, static_cast<int>(quanta));
+            const bool open = !gatedNow(e) && quanta * kQuantum > after + kQuantum && quanta * kQuantum < before;
+            (void) postParams(e, y, false);
+            const long long closed = silenceUntilGated(e, after + 100 * kQuantum);
+            rows.row(open && closed > after && closed <= after + 2 * kQuantum, "abi.gate.shorter_tail_runs_first",
+                     "threshold " + std::to_string(before) + " -> " + std::to_string(after) + " frames, " + std::to_string(quanta * kQuantum)
+                         + " silent at the record, closed " + std::to_string(closed) + " after it");
+            render(e, a2, b2, l, r);
+            fresh(y, 0, l2, r2);
+            rows.row(sameBits(l, l2) && sameBits(r, r2) && !allZero(l), "abi.gate.reopens_as_a_fresh_engine");
+        }
+
+        // -- values posted while closed, then Reset, then signal at once: they start settled (nothing ramps)
+        {
+            Plain quieter = x;
+            quieter[idx(Pid::output)] = -12.0f;
+            Engine e;
+            (void) postParams(e, x, true);
+            const std::int32_t latency = fcmp_web_configure(e, kFs, kQuantum);
+            render(e, a, b, l, r);
+            const long long closed = silenceUntilGated(e, gateFrames(*longest, latency) + 100 * kQuantum);
+            const bool posted = postParams(e, quieter, false) == 0 && postReset(e) == 0;
+            render(e, a2, b2, l, r);
+            fresh(quieter, 0, l2, r2);
+            rows.row(closed >= 0 && posted && sameBits(l, l2) && sameBits(r, r2) && !allZero(l), "abi.gate.reset_keeps_new_values");
+        }
     }
 
     void contractRows(Rows& rows)
@@ -466,6 +626,8 @@ namespace
                          && std::memcmp(r.data(), r2.data(), r.size() * sizeof(float)) == 0,
                      "abi.denormal_input_is_zero");
         }
+
+        gateRecordRows(rows, all, inL, inR);
     }
 } // namespace
 
@@ -493,17 +655,24 @@ namespace
     constexpr int kWindowQuanta = 125;                  // 1/3 s
     constexpr int kActiveWindows = 6;                   // 2 s of signal
     constexpr int kSilentWindows = 30;                  // 10 s of silence
-    constexpr int kTailAttempts = 3;
+    constexpr int kWarmSilentWindows = 3;
+    constexpr int kTailRuns = 3;
+
+#if defined(__has_feature)
+  #if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+    #define FCMP_WEB_TAIL_SANITIZED 1
+  #endif
+#endif
 
     struct TailTimes
     {
-        double active = 0.0;                            // seconds per block: the median active window
+        double active = 0.0;                            // seconds per block: the lower median active window
         std::array<double, kSilentWindows> silent {};   // seconds per block, per window of the silence
     };
 
-    // One run: the burst, then the silence, timed per window. false: the engine could not be set up.
-    bool tailRun(const ModeEntry& en, const std::vector<float>& inL, const std::vector<float>& inR, TailTimes& t,
-                 bool& stillRunning)
+    // One run: the burst, then `silentWindows` of silence, timed per window. false: the engine could not be set up.
+    bool tailRun(const ModeEntry& en, const std::vector<float>& inL, const std::vector<float>& inR, int silentWindows,
+                 TailTimes& t, bool& stillRunning)
     {
         Engine e;
         if (e.e == nullptr || postParams(e, plainOf(printprog::defaults(en)), true) != 0
@@ -522,8 +691,8 @@ namespace
             active[static_cast<std::size_t>(w)] = secondsSince(t0) / kWindowQuanta;
         }
         std::sort(active.begin(), active.end());
-        t.active = active[kActiveWindows / 2];
-        for (int w = 0; w < kSilentWindows; ++w)
+        t.active = active[(kActiveWindows - 1) / 2];
+        for (int w = 0; w < silentWindows; ++w)
         {
             const auto t0 = std::chrono::steady_clock::now();
             for (int q = 0; q < kWindowQuanta; ++q)
@@ -532,7 +701,7 @@ namespace
         }
         proto::ReplyHead head {};
         stillRunning = pull(e, head) && (head.flags & proto::kReplyGated) == 0u
-                    && head.frame.publishCount == static_cast<std::uint32_t>((kActiveWindows + kSilentWindows) * kWindowQuanta);
+                    && head.frame.publishCount == static_cast<std::uint32_t>((kActiveWindows + silentWindows) * kWindowQuanta);
         return true;
     }
 
@@ -547,7 +716,7 @@ namespace
         resolve(en, raw, res);
         const double tailS = static_cast<double>(en.desc->tailSeconds != nullptr ? en.desc->tailSeconds(res.eng) : 0.0f)
                            + static_cast<double>(latency) / kFs;
-        const auto tailFrames = static_cast<long long>(tailS * kFs);
+        const auto tailFrames = static_cast<long long>(std::max(tailS, 0.1) * kFs);     // WebEngine.h: at least 100 ms
 
         std::array<float, kQuantum> outL {}, outR {}, zeros {};
         for (std::size_t off = 0; off + kQuantum <= 24000; off += kQuantum)
@@ -584,24 +753,30 @@ FCMP_WEB_COMMAND(tail)
     std::vector<float> inL, inR;
     burst(inL, inR, static_cast<std::size_t>(kActiveWindows * kWindowQuanta * kQuantum), 0x7461696c);
     const std::vector<const ModeSlot*> all = modes();
+#if defined(FCMP_WEB_TAIL_SANITIZED)
+    const bool judged = false;                          // a CPU-cost ratio means nothing under a sanitizer
+    const double limit = 2.0;
+#elif defined(__wasm__)
+    const bool judged = true;
+    const double limit = 2.0;                           // the run this check exists for: never loosened
+#else
+    const bool judged = true;
+    const double limit = 2.0 * fcmp::probe::tol::timingScale();     // ADR-87
+#endif
     for (const ModeSlot* ms : all)
     {
         const std::string key(ms->key);
-        // Timing on a shared machine: a window is judged by its best time over up to three runs (a denormal's cost
-        // is there in every run; another process's is not).
-        TailTimes best;
-        bool ran = true, stillRunning = true, pass = false;
-        double worst = 0.0;
-        int worstWindow = 0, attempts = 0;
-        for (; attempts < kTailAttempts && ran && !pass; ++attempts)
+        TailTimes best, t;
+        bool running = false;
+        // Untimed first: under node the Mode's code is compiled while this runs, so the timed baseline is warm.
+        bool ran = tailRun(*ms->entry, inL, inR, kWarmSilentWindows, t, running), stillRunning = true;
+        for (int run = 0; run < kTailRuns && ran; ++run)
         {
-            TailTimes t;
-            bool running = false;
-            ran = tailRun(*ms->entry, inL, inR, t, running);
+            ran = tailRun(*ms->entry, inL, inR, kSilentWindows, t, running);
             if (!ran)
                 break;
             stillRunning = stillRunning && running;
-            if (attempts == 0)
+            if (run == 0)
                 best = t;
             else
             {
@@ -609,21 +784,31 @@ FCMP_WEB_COMMAND(tail)
                 for (std::size_t w = 0; w < best.silent.size(); ++w)
                     best.silent[w] = std::min(best.silent[w], t.silent[w]);
             }
-            worst = 0.0;
-            for (std::size_t w = 0; w < best.silent.size(); ++w)
-                if (best.silent[w] > worst)
-                {
-                    worst = best.silent[w];
-                    worstWindow = static_cast<int>(w);
-                }
-            pass = worst < 2.0 * best.active;
         }
-        char detail[200];
+        // The worst pair of adjacent windows: both of them slow in every run.
+        double worst = 0.0;
+        int worstWindow = 0;
+        for (std::size_t w = 0; w + 1 < best.silent.size(); ++w)
+        {
+            const double pair = std::min(best.silent[w], best.silent[w + 1]);
+            if (pair > worst)
+            {
+                worst = pair;
+                worstWindow = static_cast<int>(w);
+            }
+        }
+        const bool pass = worst < limit * best.active;
+        char detail[220];
         std::snprintf(detail, sizeof detail,
-                      "active %.2f us/block, silence worst %.2f us/block at %.1f s (x%.2f, limit x2; %d run(s))",
-                      best.active * 1e6, worst * 1e6, static_cast<double>(worstWindow) / 3.0,
-                      best.active > 0.0 ? worst / best.active : 0.0, attempts);
-        rows.row(ran && pass, key + " tail.cost", ran ? detail : "the engine could not be configured");
+                      "active %.2f us/block, silence worst %.2f us/block over 2/3 s from %.1f s (x%.2f, limit x%.3g; best of %d "
+                      "runs)", best.active * 1e6, worst * 1e6, static_cast<double>(worstWindow) / 3.0,
+                      best.active > 0.0 ? worst / best.active : 0.0, limit, kTailRuns);
+        if (!ran)
+            rows.row(false, key + " tail.cost", "the engine could not be configured");
+        else if (judged)
+            rows.row(pass, key + " tail.cost", detail);
+        else
+            std::printf("NOTE     web.engine.tail %s tail.cost: %s: not judged in a sanitizer build\n", key.c_str(), detail);
         if (ran && !stillRunning)
             rows.row(false, key + " tail.gate_off", "the engine stopped running with the gate off");
     }
@@ -640,7 +825,7 @@ FCMP_WEB_COMMAND(speed)
     const double audioS = static_cast<double>(in.l.size()) / kFs;
     const char* const qualityName[3] = { "ECO", "STD", "HQ" };
     std::printf("NOTE     speed: real-time factor (audio time / processing time), 48 kHz, %d-frame quanta, %.0f s of the "
-                "print program at each Mode's defaults, best of 2\n", kQuantum, audioS);
+                "print program at each Mode's defaults, best of 3\n", kQuantum, audioS);
     std::printf("NOTE     speed: %-14s %8s %8s %8s\n", "Mode", qualityName[0], qualityName[1], qualityName[2]);
     double worstHq = 0.0;
     std::string worstKey;
@@ -654,7 +839,7 @@ FCMP_WEB_COMMAND(speed)
             Plain p = plainOf(printprog::defaults(*ms->entry));
             p[idx(Pid::quality)] = static_cast<float>(q);
             double bestS = 0.0;
-            for (int rep = 0; rep < 2; ++rep)
+            for (int rep = 0; rep < 3; ++rep)
             {
                 Engine e;
                 if (e.e == nullptr || postParams(e, p, true) != 0 || fcmp_web_configure(e, kFs, kQuantum) < 0)
