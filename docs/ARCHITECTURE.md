@@ -415,7 +415,7 @@ only, never of the Mode (01 §5.6; ADR-15):
   `clean`) with a footer notice; a newer `stateVersion` loads best effort with a notice; an older `modeRev` gets a
   notice. Loading resets `listen` and `delta`, runs inside one batch, and raises the engine snap after the last write.
 - No `UndoManager` (ADR-23). Since v1.2 the plugin keeps its own history of the editor's edits and an A/B compare
-  (`plugin/EditHistory.h`, ADR-91); host automation is never part of it.
+  (`plugin/portable/EditHistory.h`, ADR-91); host automation is never part of it.
 
 **Presets** (01 §9.2) store **raw** values of the Mode-filtered parameters keyed by ID plus `modeId`/`modeRev`
 attributes; the Mode snaps them on read. The store is HR's preset core, generalised into `FunkGui::presets` (SQLite from
