@@ -1072,23 +1072,31 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     `fcmp_web_process` itself never allocates, locks or calls libm. The module is standalone: no JavaScript glue, no
     imports, exports by the compiler's `export_name` attribute only (545 KB; the slow paths of fma and of the flush
     are out of line, which took 130 KB off and made STD about a quarter faster).
-  - **Measured (Sprint A, this Mac, node 24, 48 kHz, 128-frame quanta, the `dsp.print` material):**
+  - **Measured (Sprint A, 48 kHz, 128-frame quanta, the `dsp.print` material, real-time factor under node):**
 
     | | rows equal to the native goldens | worst Mode at HQ (mu-67) | clean ECO / STD / HQ |
     |---|---|---|---|
-    | exact fma (shipped) | **112 of 112** (`web.engine.print`, all 14 Modes × 8) | 19.8× real time | 182× / 84× / 55× |
-    | unfused (measurement) | 0 of 112 | 41.4× | 251× / 189× / 94× |
+    | exact fma (shipped), the lead's Mac (arm64) | **112 of 112** (`web.engine.print`, all 14 Modes × 8) | 20.4× | 168× / 102× / 55× |
+    | exact fma, the CI runner (x86-64) | 112 of 112 | 12.6× | 102× / 62× / 32× |
+    | unfused (measurement only), the lead's Mac | 0 of 112 | 40.8× | 295× / 187× / 92× |
 
-    Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate, so the demo runs the plugin's
-    exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log` move nothing. The
-    x86 runner's numbers (denormal cost, V8's emulated compares) come from the CI `web` job.
+    Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate on both machines, so the demo
+    runs the plugin's exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log`
+    move nothing. On the x86 runner no 2/3 s of a Mode's silent tail costs more than 0.92× its active signal with the
+    gate off (`web.engine.tail`): the flush leaves no denormal for V8 to trip over. Natively on x86-64, `web.simd`
+    passes on the Linux CI runner, which is where the flush rule above was learned.
   - **Tests** (`cmake/FcmpWeb.cmake`): `fcmp_web_check` is built from `Tools/web/*.cpp` in every configuration, and its
     subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels `verify;web`, judged by
     exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms bit-equal to a one-rounding
-    reference on 12.6 million triples; the FastMath functions hashed against native arm64 constants);
+    reference on 12.6 million triples; the flush rule of each backend on both sides of its boundary and on the tie;
+    the FastMath functions hashed against native arm64 constants, and lane by lane against their scalar forms);
     `web.engine.print` renders `dsp.print`'s material through the C ABI in 128-frame quanta and compares with the same
-    golden rows; `web.engine.selfcheck`, `.tail`, `.speed` and `.abi` (node instantiates the shipped module with an
-    empty import object). Natively four of them run in every gate, so the wrapper cannot drift from the engine.
+    golden rows (in the wasm build a Mode without golden rows fails: no `dsp.print` runs beside it);
+    `web.engine.selfcheck` (the module's own hash, the ABI's contract, the silence gate against records), `.tail`,
+    `.speed` and `.abi` (node instantiates the shipped module with an empty import object). The two that measure time
+    run alone; `.tail` judges the worst pair of adjacent 1/3 s windows over three runs after a warm-up, at ×2 in the
+    wasm build and with ADR-87's scale natively. Natively four of them run in every gate, so the wrapper cannot drift
+    from the engine.
   - **FunkGui** (card G-A, for v0.12.0): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core),
     the committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a
     storage backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
