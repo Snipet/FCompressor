@@ -3,7 +3,7 @@
 //
 // - UNDO and REDO: arrows drawn as polylines (a hook to the left, and its mirror), ink52 (ink100 and accent under the
 //   hand), ink16 when there is nothing to take back; a release inside fires. Their footer line names the step
-//   ("UNDO THRESHOLD   CMD-Z"), their a11y buttons are disabled when there is nothing.
+//   ("UNDO THRESHOLD   CMD-Z"; CTRL-Z off macOS, ADR-92), their a11y buttons are disabled when there is nothing.
 // - A | B: two letters, the active one ink100 on a 1 px rule, the other ink32 (ink70 under the hand); a click on the
 //   other one switches (EditAccess::selectSlot, an undo step). A popup click, or a11y showMenu, opens a menu with "Copy A
 //   to B" (or B to A) in a live editor; headless no menu opens. A11y: a radioGroup "Compare" of two radioButtons.
@@ -50,6 +50,11 @@ namespace fcmp::ui
         // after its last notch, and the history refuses to undo, redo or switch while a gesture is open. A drag stays
         // open (and the history refuses).
         static EditAccess& edits(PanelContext&);
+
+        // The platform's command key (ADR-92): Cmd on macOS; elsewhere JUCE's command modifier is Ctrl, so a key event
+        // carries mods.cmd and mods.ctrl together. commandOnly: that key held with no other modifier but Shift.
+        static bool commandOnly(const funkgui::Mods&) noexcept;
+        static const char* commandKeyName() noexcept;            // "CMD" or "CTRL", as the footer lines write it
 
         explicit EditControls(PanelContext&);
         ~EditControls();

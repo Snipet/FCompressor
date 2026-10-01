@@ -1001,6 +1001,13 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     (theme, Mode) in a private X server confirmed rendering and input through the child window.
   - **Not done:** LV2 or CLAP; JACK in the Standalone; a Linux release script; arm64 Linux verification; a vsync-driven
     frame clock.
+  - **Merged with the rest of v1.2 (the lead, on macOS):** this decision was ADR-91 on its branch and is ADR-92, since
+    undo/A-B took 91 on main. Undo's chord is the platform's command key: Cmd-Z on macOS, Ctrl-Z elsewhere
+    (`EditControls::commandOnly`; JUCE's command modifier is Ctrl there, so the event carries both flags, and X11 reports
+    the chord as the control character 0x1A, which FunkGui v0.11.0's EditorHost now delivers as its key code). The
+    footer lines say CTRL-Z there. `gui-live.sh` keeps its ALSA seed, though `FCMP_UI_NO_LIVE` now ignores the device's
+    rate (03 §3.6, `ui.nolive`). The key path is covered headless (`ui.edits` `keys.ctrl_cmd_z`); a real Ctrl-Z on a
+    Linux desktop has not been pressed yet.
 
 ## HardwareReverb migration
 

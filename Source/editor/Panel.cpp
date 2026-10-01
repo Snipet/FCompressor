@@ -697,7 +697,8 @@ namespace fcmp::ui
 
     bool Panel::key(const funkgui::KeyEvent& e)
     {
-        const bool undoChord = e.key == funkgui::Key::character && e.mods.cmd && !e.mods.ctrl && !e.mods.alt
+        // The platform's command key and Z (Cmd on macOS, Ctrl elsewhere: EditControls::commandOnly, ADR-92).
+        const bool undoChord = e.key == funkgui::Key::character && EditControls::commandOnly(e.mods)
                                && (e.ch == U'z' || e.ch == U'Z');
         // ADR-89: an open typed-value field takes the keys (Return and Tab set the value, Esc cancels); a Tab that set
         // it then moves the focus on, also from a control a click focused. Cmd-Z takes the typing back (the field

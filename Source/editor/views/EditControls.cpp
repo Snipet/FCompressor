@@ -81,6 +81,24 @@ namespace fcmp::ui
         return ctx.facade.edits();
     }
 
+    bool EditControls::commandOnly(const funkgui::Mods& m) noexcept
+    {
+       #if JUCE_MAC
+        return m.cmd && !m.ctrl && !m.alt;
+       #else
+        return m.cmd && !m.alt;                                  // Ctrl is the command key: both flags are set
+       #endif
+    }
+
+    const char* EditControls::commandKeyName() noexcept
+    {
+       #if JUCE_MAC
+        return "CMD";
+       #else
+        return "CTRL";
+       #endif
+    }
+
     EditControls::EditControls(PanelContext& ctx) : ctx_(ctx) {}
 
     EditControls::~EditControls()
@@ -141,11 +159,11 @@ namespace fcmp::ui
         slot_ = slot;
         usedB_ = used;
         if (canUndo_)
-            std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO %s   CMD-Z", e.undoName());
+            std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO %s   %s-Z", e.undoName(), commandKeyName());
         else
             std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO   NOTHING TO UNDO");
         if (canRedo_)
-            std::snprintf(redoSpec_, sizeof redoSpec_, "REDO %s   SHIFT-CMD-Z", e.redoName());
+            std::snprintf(redoSpec_, sizeof redoSpec_, "REDO %s   SHIFT-%s-Z", e.redoName(), commandKeyName());
         else
             std::snprintf(redoSpec_, sizeof redoSpec_, "REDO   NOTHING TO REDO");
 
