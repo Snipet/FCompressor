@@ -7,6 +7,10 @@
 #   linux-dsp     the same as dsp, on x86-64 Linux with Clang.
 #   linux-plugin  the same as plugin, on x86-64 Linux with Clang: the VST3 and Standalone (the Vulkan editor), then
 #                 every probe against the same goldens: Linux has no golden overlay of its own.
+#   web           the browser demo's engine (ADR-93; the `web` preset): fcdsp as wasm32 through Emscripten at the pinned
+#                 version, fcmp-engine.wasm and its checks under node, against the same goldens. An x86-64 runner on
+#                 purpose: denormal cost and V8's code for the wasm compares show there, not on the lead's Mac. The
+#                 module is uploaded as an artifact; nothing is published.
 #
 # Dependencies: Scripts/deps.sh fetches JUCE and bgfx.cmake at their pinned SHAs and builds shaderc into ~/audio/.deps,
 # which is cached per pin and runner (the key is deps.sh itself, where the pins live). FunkGui is cloned from GitHub at
@@ -154,4 +158,62 @@ jobs:
             build-lead/verify-ctest.log
             build-lead/probe-results
             build-lead/golden-candidates
+          if-no-files-found: ignore
+
+  web:
+    name: Web engine (wasm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FCMP_EMSCRIPTEN: 6.0.3                    # cmake/FcmpDeps.cmake's pin (the configure fails on any other)
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          cmake --version | head -1 && ninja --version
+      - name: Cache emsdk
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ env.FCMP_EMSCRIPTEN }}-ubuntu-24.04-x86_64
+      - name: Emscripten
+        run: |
+          if [ ! -x "$HOME/emsdk/emsdk" ]; then
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          fi
+          "$HOME/emsdk/emsdk" install "$FCMP_EMSCRIPTEN"
+          "$HOME/emsdk/emsdk" activate "$FCMP_EMSCRIPTEN"
+          . "$HOME/emsdk/emsdk_env.sh"
+          echo "$HOME/emsdk" >> "$GITHUB_PATH"
+          echo "$HOME/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+          echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+          echo "EMSDK_NODE=$EMSDK_NODE" >> "$GITHUB_ENV"
+          emcc --version | head -1 && "$EMSDK_NODE" --version
+      - name: Configure
+        run: cmake --preset web
+      - name: Build
+        run: cmake --build --preset web
+      - name: Verify
+        run: Scripts/verify.sh --strict build-web
+      - name: Numbers (the x86 runner's)
+        if: always()
+        run: |
+          NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
+          "$NODE" build-web/fcmp_web_check.js simdbench || true
+          "$NODE" build-web/fcmp_web_check.js speed || true
+          "$NODE" build-web/fcmp_web_check.js tail || true
+      - name: Upload the engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-engine
+          path: build-web/fcmp-engine.wasm
+          if-no-files-found: error
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-results
+          path: build-web/verify-ctest.log
           if-no-files-found: ignore

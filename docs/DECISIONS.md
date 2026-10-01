@@ -1030,6 +1030,59 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       `llvm-ar` and `llvm-ranlib` (`cmake/FcmpPlatform.cmake`), which need no plugin; install the `llvm` package.
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
+- **ADR-93 A browser demo: FCompressor as WebAssembly (v1.2 or later; in progress).** The user asked for web builds
+  through WASM, to demo the plugin in a browser. The demo runs the real DSP and shows the real editor; it is not a port
+  and not a second code base. Design pass: five scouts, three independent designs and a judge
+  (`docs/sprints/web/plan.md` and the reports beside it). Sprints A to D; this entry grows with them.
+  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset),
+    with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules joined by a MessagePort:
+    `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and, from Sprint D, the editor module (the unchanged
+    Panel over a web facade, FunkGui's core without JUCE, a WebGL2 sink) on the main thread. No SharedArrayBuffer, so no
+    cross-origin isolation headers: any static host serves it.
+  - **Arithmetic: the plugin's, bit for bit.** fcdsp gains a third backend, WASM SIMD128
+    (`Source/fcdsp/core/{Simd.h,FlushTiny.h,ScopedFtz.h,FastMath.h}`; never `-mrelaxed-simd`, whose fused multiply-add
+    is implementation-defined). Emscripten's SSE and NEON emulation was rejected: both give an unfused fma, against
+    Simd.h's one-rounding contract. wasm has no fused multiply-add, so `fma`/`fms` are exact in software: a multiply-add
+    in f64 (the product of two floats is exact there), and a round-to-odd correction only for lanes that land on a float
+    rounding boundary (24 SIMD operations and a branch; 33 more on the slow path, taken on 0.1 to 3.5 % of engine calls
+    on program material). `-DFCOMPRESSOR_WEB_FMA=unfused` builds the two-rounding form for measurement only.
+  - **Denormals.** wasm has no flush-to-zero and no denormals-are-zero. The backend makes a result of add, sub, mul,
+    div, fma or fms whose magnitude is below FLT_MIN a signed zero, after rounding (the x86 rule Simd.h allows), by a
+    speculative test that costs four operations when no lane is tiny. Operands are read as they are. The engine wrapper
+    zeroes denormal input samples and, after exactly-zero input for longer than the engine's tail, resets the engine and
+    outputs zeros until signal returns (a silence gate; `web.engine.tail` measures the cost with it off).
+  - **The engine module** (`Source/web/engine`, portable C++ over fcdsp alone: lint `web.engine`, so the same sources
+    build natively for the checks). `fcmp_web_*`: create, configure, process (any frame count; the worklet gives 128),
+    post and reply (the byte protocol of `WebProtocol.h`: Params with the 30 plain values and a snap flag, Attach,
+    Reset, Pull; the reply carries the UiFrame, the new HistoryRing columns, flags and the latency), latency, the gate
+    switch and a self-check. Raw values become BlockParams exactly as `Processor::buildBlockParams` makes them.
+    **A deviation from the real-time rules, recorded here:** a quality or lookahead-budget change reconfigures (and
+    allocates) inside `fcmp_web_post`, between two render quanta, because the worklet has no other thread;
+    `fcmp_web_process` itself never allocates, locks or calls libm. The module is standalone: no JavaScript glue, no
+    imports, exports by the compiler's `export_name` attribute only (678 KB).
+  - **Measured (Sprint A, this Mac, node 24, 48 kHz, 128-frame quanta, the `dsp.print` material):**
+
+    | | rows equal to the native goldens | worst Mode at HQ (mu-67) | clean ECO / STD / HQ |
+    |---|---|---|---|
+    | exact fma (shipped) | **112 of 112** (`web.engine.print`, all 14 Modes × 8) | 19.8× real time | 182× / 84× / 55× |
+    | unfused (measurement) | 0 of 112 | 41.4× | 251× / 189× / 94× |
+
+    Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate, so the demo runs the plugin's
+    exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log` move nothing. The
+    x86 runner's numbers (denormal cost, V8's emulated compares) come from the CI `web` job.
+  - **Tests** (`cmake/FcmpWeb.cmake`): `fcmp_web_check` is built from `Tools/web/*.cpp` in every configuration, and its
+    subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels `verify;web`, judged by
+    exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms bit-equal to a one-rounding
+    reference on 12.6 million triples; the FastMath functions hashed against native arm64 constants);
+    `web.engine.print` renders `dsp.print`'s material through the C ABI in 128-frame quanta and compares with the same
+    golden rows; `web.engine.selfcheck`, `.tail`, `.speed` and `.abi` (node instantiates the shipped module with an
+    empty import object). Natively four of them run in every gate, so the wrapper cannot drift from the engine.
+  - **FunkGui** (card G-A, for v0.12.0): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core),
+    the committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a
+    storage backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
+  - **Not done yet:** the editor in the browser (Sprints B to D: host-neutral menus, file chooser and clipboard, the
+    WebGL2 sink, the web facade, the page); a browser run of anything (node stands in for V8 so far); hosting. Nothing
+    is published until the user decides where.
 
 ## HardwareReverb migration
 

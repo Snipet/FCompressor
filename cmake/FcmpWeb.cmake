@@ -36,8 +36,8 @@
 #             repository root, {build} = the build directory, {engine} = the built fcmp-engine.wasm (web only).
 # A Tools/web/*.cpp test runs `fcmp_web_check <args>` (under node for the web); a web/tests/*.mjs test runs
 # `node <file> <args>`. One file may carry several lines. Labels: verify;web, so Scripts/verify.sh runs them and judges
-# them by exit code (they are not Harness probes: no results JSON, no golden candidates). A malformed line is a
-# configure error.
+# them by exit code (they are not Harness probes: no results JSON, no golden candidates). A test whose name ends in
+# .speed or .tail measures time and runs alone (RUN_SERIAL). A malformed line is a configure error.
 include_guard(GLOBAL)
 
 set(FCMP_WEB_SOURCE_DIR ${FCMP_SOURCE_ROOT}/web)
@@ -148,6 +148,11 @@ function(_fcmp_web_register file kind)
       add_test(NAME ${_name} COMMAND fcmp_web_check ${_cmd_args})     # under node for the web (the toolchain's emulator)
     endif()
     set_tests_properties(${_name} PROPERTIES LABELS "verify;web;global" TIMEOUT ${_timeout})
+    # A test that measures time (web.engine.speed, web.engine.tail) runs alone: beside other tests on a small CI
+    # runner its figure is the neighbours' load.
+    if(_name MATCHES "\\.(speed|tail)$")
+      set_tests_properties(${_name} PROPERTIES RUN_SERIAL TRUE)
+    endif()
   endforeach()
 endfunction()
 
