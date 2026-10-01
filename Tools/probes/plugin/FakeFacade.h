@@ -22,8 +22,8 @@
 // - The script calls (script01, setPlain, setMode, …) are a host or automation writing: no gesture, not logged.
 #pragma once
 
-#include "plugin/EditHistory.h"
 #include "plugin/ProcessorFacade.h"
+#include "plugin/portable/EditHistory.h"
 
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Resolve.h"

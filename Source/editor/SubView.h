@@ -173,6 +173,9 @@ namespace fcmp::ui
         double   scale = 0.0;                       // the backing scale the drawable is sized for
         int      zoomPercent = 100;                 // the effective UI zoom
         uint32_t frames = 0, overflows = 0;         // frames drawn, frames dropped (transient buffer full)
+        // Web Sprint B (ADR-93; lead-approved FZ4 revision, additive): the API the frame is drawn with, upper case, as
+        // the DISPLAY row prints it ("METAL" on macOS, "VULKAN" on Linux). A literal: whoever sets `gpu` sets it.
+        const char* renderer = "";
     };
 
     // Everything a sub-view is constructed with. Owned by the Panel, which outlives every sub-view; services are fixed

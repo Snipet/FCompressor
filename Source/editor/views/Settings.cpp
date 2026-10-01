@@ -486,7 +486,7 @@ namespace fcmp::ui
                 l.add("HEADLESS");
             else
             {
-                l.add("METAL");
+                l.add(r.renderer);                               // "METAL", "VULKAN": the host names its API
                 l.add(kSep);
                 l.addInt(r.zoomPercent);
                 l.add(" % ZOOM");
