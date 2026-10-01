@@ -1,6 +1,7 @@
 #!/bin/bash
 #
-# Scripts/verify.sh [--integration] <build-dir>: the definition-of-done gate (03 §0.9, §3.2.4, §4.7; SPRINTS §7 D8).
+# Scripts/verify.sh [--integration] [--strict] <build-dir>: the definition-of-done gate (03 §0.9, §3.2.4, §4.7; SPRINTS
+# §7 D8).
 #
 #   1. Refuses --quick (the gate always runs the full grids). With --integration (the lead's sprint-end run) it refuses a
 #      build configured with any dependency override in fcmp-deps.txt (K2 #26c); otherwise it prints the override.
@@ -19,15 +20,18 @@
 #      fcmp_probes, cmake/FcmpBuiltFrom.cmake) says the probes were built from that same HEAD with a clean tree, so a
 #      commit, merge or checkout without a rebuild cannot certify stale binaries (FZ0 errata, R-B0 #12). release.sh
 #      requires the stamp; validate.sh appends its result to it.
+#   7. With --strict (CI, ADR-92) DRIFT and MISSING fail too: nobody reads a CI log's candidate lines, and on Linux CI is
+#      the only gate the lead has, so there the blessed goldens must hold exactly. Without it nothing changes.
 #
-# Exit: 0 = no blocking results (candidates allowed), 1 = blocking results, 2 = usage or setup error.
+# Exit: 0 = no blocking results (candidates allowed, unless --strict), 1 = blocking results, 2 = usage or setup error.
 set -u
 
 usage() {
-  sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,/^# Exit:/p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 INTEGRATION=0
+STRICT=0
 BUILD=""
 for arg in "$@"; do
   case "$arg" in
@@ -35,6 +39,7 @@ for arg in "$@"; do
       echo "verify.sh: --quick is refused: the gate runs every probe on its full grids (03 §4.7)" >&2
       exit 2 ;;
     --integration) INTEGRATION=1 ;;
+    --strict) STRICT=1 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "verify.sh: unknown option '$arg'" >&2; usage >&2; exit 2 ;;
     *)
@@ -274,6 +279,10 @@ case "$RC" in
     fi
     exit 0 ;;
   3)
+    if [ "$STRICT" -eq 1 ]; then
+      echo "== DRIFT or MISSING under --strict: verify.sh fails (the goldens must hold exactly here; see the groups above)"
+      exit 1
+    fi
     echo "== no blocking results; the DRIFT/MISSING groups above need a one-line reason each in the handoff"
     exit 0 ;;
   *)

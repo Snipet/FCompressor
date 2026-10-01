@@ -28,9 +28,9 @@ set(FCMP_BGFX_SUB_SHAS bgfx=c7684e20da1e385edc439ef39cdb42b8c661016f
 # Harness v2 and placeholder core/gpu/presets targets and placeholder funkgui_* functions (SPRINTS §7 D1, D19).
 # FCMP_FUNKGUI_SHA is the tagged COMMIT (`git rev-parse v0.1.0^{commit}`); the annotated tag object's SHA (what a bare
 # `git rev-parse v0.1.0` prints) is accepted too and peeled to its commit by every check below (R-B0 #10).
-set(FCMP_FUNKGUI_TAG     v0.10.0)
-set(FCMP_FUNKGUI_SHA     b9c7d968abbfe9ec63a7a80a14f87d3836934c85)
-set(FCMP_FUNKGUI_VERSION 0.10.0)
+set(FCMP_FUNKGUI_TAG     v0.11.1)
+set(FCMP_FUNKGUI_SHA     923ec44b8c5fb6f5d46f855555eca815ab31f939)
+set(FCMP_FUNKGUI_VERSION 0.11.1)
 
 # ---- helpers -------------------------------------------------------------------------------------------------------
 # fcmp_git(<out> <dir> <args>...): read-only git in <dir>; <out> = stripped stdout, <out>_RESULT = exit code. The
@@ -152,6 +152,17 @@ if(NOT FCOMPRESSOR_DSP_ONLY)
   endif()
   fcmp_assert_git("${juce_SOURCE_DIR}" ${FCMP_JUCE_SHA} JUCE)
   fcmp_source_dir_used(JUCE "${juce_SOURCE_DIR}")
+  # ADR-92: Clang 20 and later put -Wnontrivial-memcall in -Wall, and it fires inside JUCE 8.0.4's bundled HarfBuzz and
+  # VST3 SDK, which our targets compile with JUCE's recommended warnings (03 §2.2). Third-party code: silenced on JUCE's
+  # module translation units only, as a source property (it follows JUCE's own -Wall, which a target option would not),
+  # and only where the compiler has the warning (not AppleClang 17). Our sources keep it.
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-Wnontrivial-memcall FCMP_CXX_HAS_WNONTRIVIAL_MEMCALL)
+  if(FCMP_CXX_HAS_WNONTRIVIAL_MEMCALL)
+    file(GLOB _fcmp_juce_module_tus "${juce_SOURCE_DIR}/modules/juce_*/juce_*.cpp")
+    set_source_files_properties(${_fcmp_juce_module_tus} DIRECTORY ${PROJECT_SOURCE_DIR}
+                                PROPERTIES COMPILE_OPTIONS -Wno-nontrivial-memcall)
+  endif()
   fcmp_deps_row(JUCE ${FCMP_JUCE_TAG} ${FCMP_JUCE_SHA} "${juce_SOURCE_DIR}" ${FCMP_JUCE_OVERRIDE} "version ${_jv}")
 endif()
 
@@ -185,11 +196,20 @@ if(NOT FCOMPRESSOR_HEADLESS)
   fcmp_select_shaderc()
   set(BGFX_BUILD_EXAMPLES OFF)
   set(BGFX_INSTALL OFF)
+  # Linux (ADR-92): the editor draws into an X11 child window (JUCE's peers are X11; a Wayland desktop runs them through
+  # XWayland), so bgfx never sees a wl_surface, and with its Wayland backend bgfx would link libwayland-egl into the
+  # plugin. As FunkGui's cmake/FunkGuiDeps.cmake sets it for its own fetch.
+  set(BGFX_WITH_WAYLAND OFF)
   FetchContent_MakeAvailable(bgfx)
   # Hidden symbols: release.sh checks with `nm -gU` that a plugin binary exports only its entry points (K2 #26f).
   foreach(_t bgfx bx bimg bimg_decode bimg_encode)
     if(TARGET ${_t})
       set_target_properties(${_t} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+      # Linux (ADR-92): the pinned bgfx warns under Clang 22 in its own sources (renderer_gl.cpp's
+      # -Wtautological-constant-compare, bimg's miniz #pragma message). Third-party code, never edited (03 §2.2).
+      if(NOT APPLE)
+        target_compile_options(${_t} PRIVATE -w)
+      endif()
     endif()
   endforeach()
   # metal-cpp's private implementation (bgfx/src/renderer_mtl.cpp) marks ~2,000 MTL/NS/CA symbols visibility("default")

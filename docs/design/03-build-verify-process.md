@@ -255,7 +255,8 @@ set(CMAKE_CXX_STANDARD 20) ; set(CMAKE_CXX_STANDARD_REQUIRED ON) ; set(CMAKE_CXX
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)                    # Release default (HR :48-52)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
-if(NOT APPLE) message(FATAL_ERROR "FCompressor targets macOS only.") endif()
+# (ADR-92: the macOS-only check became include(cmake/FcmpPlatform.cmake): macOS or Linux, Clang only, the formats per
+#  platform, and JUCE 8.0.4's upstream-Clang workaround. Linux defaults CMAKE_CXX_COMPILER to clang++ before project().)
 # options (§2.2) ...
 include(cmake/FcmpArch.cmake)     # flags need FCMP_ARCHS; must precede targets
 include(cmake/FcmpDeps.cmake)     # JUCE -> bgfx (GPU) -> FunkGui, with assertions

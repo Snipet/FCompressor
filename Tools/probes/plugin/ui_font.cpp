@@ -1,4 +1,4 @@
-// FCMP_PROBE layer=ui name=font scope=global timeout=120
+// FCMP_PROBE layer=ui name=font scope=global timeout=120 platform=apple
 //
 // ui.font (03 §3.6, F §0.9; U1s): every string any registered Mode can put on screen has every glyph in the atlas, so
 // a Mode that brings a label with a new character (µ, ∞, ≈ …) fails here in plain text instead of drawing a gap.
@@ -14,6 +14,10 @@
 // font.missing (codepoints without a glyph, all strings) == 0 and font.missing.<key> == 0 per Mode; space is not a
 // glyph. Golden row: font.atlas.hash (exact) — FunkGui's FNV-1a of the atlas pixels; a CoreGraphics update can move it,
 // which is a known drift reason (03 §3.6).
+//
+// macOS only (ADR-92): FunkGui rasterises the glyphs with juce::Graphics into a native Image, CoreGraphics here and
+// JUCE's software renderer on Linux, so the atlas hash is a property of the platform. Linux runs this same body as
+// ui.font_linux (ui_font_linux.cpp), whose golden holds Linux's atlas; every spec row is the same on both.
 #include "ProbeRegistry.h"
 
 #include "FakeFacade.h"
@@ -216,7 +220,17 @@ namespace
     }
 }
 
+namespace fcmp::probe
+{
+    int uiFont(funkgui::test::Probe& P);         // ui.font's body; ui.font_linux runs it too (ui_font_linux.cpp)
+}
+
 FCMP_PROBE(ui, font)
+{
+    return fcmp::probe::uiFont(P);
+}
+
+int fcmp::probe::uiFont(funkgui::test::Probe& P)
 {
     const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
     funkgui::FontService& fonts = funkgui::FontService::get();

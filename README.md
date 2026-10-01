@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/Snipet/FCompressor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Snipet/FCompressor/actions/workflows/ci.yml)
 ![macOS 14+ on Apple Silicon](https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20Silicon-555)
+![Linux x86-64](https://img.shields.io/badge/Linux-x86--64%20·%20X11%20and%20Wayland-555)
 ![AU · VST3 · Standalone](https://img.shields.io/badge/formats-AU%20·%20VST3%20·%20Standalone-555)
 [![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-555)](LICENSE)
 
-An all-in-one compressor plugin for macOS. Fourteen compressor types, called **Modes**, share one interface: the same
-controls in the same places for every Mode, with a Mode free to lock a control or restrict it to its hardware's steps.
-Everything the display draws (the transfer curve, the operating point, the gain-reduction history, the meters) is
+An all-in-one compressor plugin for macOS and Linux. Fourteen compressor types, called **Modes**, share one interface:
+the same controls in the same places for every Mode, with a Mode free to lock a control or restrict it to its hardware's
+steps. Everything the display draws (the transfer curve, the operating point, the gain-reduction history, the meters) is
 computed by the same code the audio runs, and the test suite checks that it matches.
 
 ![FCompressor running the Opto 2A Mode](docs/images/fcompressor.png)
@@ -65,6 +66,27 @@ cmake --preset owner && cmake --build --preset owner   # Release; installs into 
 `Scripts/deps.sh` optionally caches JUCE, bgfx and a prebuilt shader compiler in `~/audio/.deps`, so new build
 directories skip the downloads and the shader-compiler build.
 
+### Linux
+
+Linux builds the VST3 and the Standalone (there is no AU) on x86-64 with Clang, from the same presets. JUCE's windows
+are X11 windows, so on a Wayland desktop the editor runs through XWayland, as every JUCE plugin and the Linux hosts that
+embed them do. The editor draws with Vulkan; without a Vulkan driver it shows a "GPU renderer unavailable" screen while
+the audio keeps working.
+
+```sh
+# Debian / Ubuntu (24.04 or later); other distributions have the same packages under their own names.
+# CMake 3.30 or later is needed: Ubuntu 24.04's own is 3.28, so there take it from Kitware's apt repository,
+# `pipx install cmake` or `snap install cmake --classic` (Ubuntu 24.10 and Debian 13 can `apt install cmake`).
+sudo apt install clang llvm ninja-build pkg-config git python3 \
+  libasound2-dev libfreetype-dev libfontconfig1-dev libglib2.0-dev libsqlite3-dev \
+  libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
+  libgl-dev libegl-dev
+cmake --preset owner && cmake --build --preset owner   # Release; installs the VST3 into ~/.vst3
+```
+
+The Standalone is `build/FCompressor_artefacts/Release/Standalone/FCompressor`. Clang is the default compiler on Linux
+(set `CC`/`CXX` to choose another Clang); preferences and presets live in `~/.config/FCompressor/`.
+
 ## Testing
 
 Every probe is a CTest test, and `Scripts/verify.sh` classifies the results against the blessed goldens:
@@ -76,7 +98,7 @@ Scripts/verify.sh build-agent                         # the pass/fail gate
 ```
 
 CI runs the DSP library and the shipping configuration (GPU editor, Release, LTO) through the same gate on every push
-and pull request.
+and pull request, on Apple Silicon and on x86-64 Linux, against the same goldens.
 
 ## Repository map
 

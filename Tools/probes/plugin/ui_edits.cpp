@@ -6,10 +6,13 @@
 //
 //   a11y.*       buttons "Undo" and "Redo" at layout::edits, disabled with nothing to take back; a radioGroup "Compare"
 //                of radioButtons "A" (checked) and "B"; they follow SAVE in the Tab order
-//   click.*      after one THRESHOLD gesture Undo is enabled and its footer line is "UNDO THRESHOLD   CMD-Z"; a click on
-//                UNDO puts the value back, a click on REDO the new one
+//   click.*      after one THRESHOLD gesture Undo is enabled and its footer line is "UNDO THRESHOLD   CMD-Z" (CTRL-Z off
+//                macOS); a click on UNDO puts the value back and REDO's line is "REDO THRESHOLD   SHIFT-CMD-Z" (or
+//                SHIFT-CTRL-Z); a click on REDO puts the new value back
 //   keys.*       Cmd-Z undoes and Shift-Cmd-Z redoes, whatever has the focus; with nothing to take back the host keeps
-//                the key (Panel::key false); under the preset browser Cmd-Z takes nothing back
+//                the key (Panel::key false); under the preset browser Cmd-Z takes nothing back; with Ctrl held too it
+//                is the host's chord on macOS, and the undo chord itself elsewhere (JUCE's command key is Ctrl there,
+//                so a real Ctrl-Z carries both flags, ADR-92)
 //   wheel.*      Cmd-Z at once after a wheel burst on THRESHOLD (still open: it closes 0.5 s after its last notch) undoes
 //                the burst
 //   ab.*         a click on B selects it (and fills it); a click on A comes back; on the focused group → selects B, ←
@@ -125,10 +128,22 @@ namespace
         P.eq("click.undo_enabled", b(u != nullptr && u->enabled), 1);
         r.host.move(E::kUndo.centreX(), E::kUndo.centreY());
         r.tick();
+        // The footer names the platform's command key, spelled out here (not read back from EditControls).
+       #if JUCE_MAC
+        const char* undoLine = "UNDO THRESHOLD   CMD-Z";
+        const char* redoLine = "REDO THRESHOLD   SHIFT-CMD-Z";
+       #else
+        const char* undoLine = "UNDO THRESHOLD   CTRL-Z";
+        const char* redoLine = "REDO THRESHOLD   SHIFT-CTRL-Z";
+       #endif
         const funkgui::A11yItem* footer = r.item(ui::a11yId(ui::ViewIndex::footer, 1));
-        P.eq("click.footer", b(footer != nullptr && footer->value == "UNDO THRESHOLD   CMD-Z"), 1);
+        P.eq("click.footer", b(footer != nullptr && footer->value == undoLine), 1);
         r.click(E::kUndo);
         P.eq("click.undo", b(r.raw(Pid::thr) == before), 1);
+        r.host.move(E::kRedo.centreX(), E::kRedo.centreY());
+        r.tick();
+        const funkgui::A11yItem* footerRedo = r.item(ui::a11yId(ui::ViewIndex::footer, 1));
+        P.eq("click.footer_redo", b(footerRedo != nullptr && footerRedo->value == redoLine), 1);
         r.click(E::kRedo);
         P.eq("click.redo", b(r.raw(Pid::thr) == after), 1);
     }
@@ -162,6 +177,22 @@ namespace
         {
             Rig r;
             P.eq("keys.nothing_passes", b(!r.panel.key(undoKey(false)) && !r.panel.key(undoKey(true))), 1);
+        }
+        {
+            Rig r;
+            const float before = r.raw(Pid::thr);
+            r.edit(Pid::thr, -29.0f);
+            const float after = r.raw(Pid::thr);
+            funkgui::KeyEvent k = undoKey(false);
+            k.mods.ctrl = true;
+            const bool used = r.panel.key(k);
+            r.tick();
+           #if JUCE_MAC
+            const bool hostsChord = true;                        // Ctrl-Cmd-Z is not undo: the host keeps it
+           #else
+            const bool hostsChord = false;                       // Ctrl is the command key: this is undo
+           #endif
+            P.eq("keys.ctrl_cmd_z", b(used == !hostsChord && r.raw(Pid::thr) == (hostsChord ? after : before)), 1);
         }
         {
             Rig r;

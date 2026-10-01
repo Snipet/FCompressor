@@ -459,8 +459,14 @@ FCMP_PROBE(proc, presets)
     }
     const juce::File dbFile = juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(dbEnv));
     const juce::File workDir = dbFile.getParentDirectory();
+    // The real database, which this probe must never open: FunkPresets' default location (ADR-92: ~/.config on Linux).
+   #if JUCE_LINUX || JUCE_BSD
+    const juce::File realDb = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                                  .getChildFile("FCompressor/Presets.db");
+   #else
     const juce::File realDb = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
                                   .getChildFile("Application Support/FCompressor/Presets.db");
+   #endif
     {
         const juce::File where = fp::PresetStore::defaultLocation(cfg);
         const bool sandboxed = cfg.isValid() && where == dbFile && where != realDb;

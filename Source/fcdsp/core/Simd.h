@@ -167,8 +167,16 @@ inline f32x4 floor(f32x4 a) noexcept FCDSP_NONBLOCKING        { return _mm_floor
 
 inline m32x4 gt  (f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING             { return _mm_cmpgt_ps(a, b); }
 inline m32x4 ge  (f32x4 a, f32x4 b) noexcept FCDSP_NONBLOCKING             { return _mm_cmpge_ps(a, b); }
-// blendv reads each mask lane's sign bit; an m32x4 is all-ones or all-zeros per lane, so this is NEON's bsl.
-inline f32x4 sel (m32x4 mask, f32x4 t, f32x4 f) noexcept FCDSP_NONBLOCKING { return _mm_blendv_ps(f, t, mask); }
+// blendv reads each mask lane's sign bit; an m32x4 is all-ones or all-zeros per lane, so this is NEON's bsl. The empty
+// asm hides the mask's origin from the optimiser (ADR-92, found by the first x86 run, dsp.simd): Clang lowers
+// sel(gt(a, b), a, b) to maxps (and the like to minps), equal under the default FP mode, but under DAZ maxps returns a
+// denormal operand flushed to zero where bsl, and blendv, return its bits. Every spelling of the blend (float or
+// integer blendv, and/andnot/or) is matched; the fence emits no instruction.
+inline f32x4 sel (m32x4 mask, f32x4 t, f32x4 f) noexcept FCDSP_NONBLOCKING
+{
+    __asm__("" : "+x"(mask));
+    return _mm_blendv_ps(f, t, mask);
+}
 inline m32x4 band(m32x4 a, m32x4 b) noexcept FCDSP_NONBLOCKING             { return _mm_and_ps(a, b); }
 inline m32x4 bor (m32x4 a, m32x4 b) noexcept FCDSP_NONBLOCKING             { return _mm_or_ps(a, b); }
 

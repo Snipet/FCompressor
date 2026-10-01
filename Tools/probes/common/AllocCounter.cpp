@@ -16,7 +16,11 @@
 
 namespace
 {
-    constinit std::atomic<pthread_t> gArmed{nullptr};
+    // No armed thread: a value-initialised pthread_t, null on macOS (a pointer) and 0 on Linux (an unsigned long),
+    // which no running thread ever has (ADR-92).
+    constexpr pthread_t kNoThread{};
+
+    constinit std::atomic<pthread_t> gArmed{kNoThread};
     constinit std::atomic<std::uint64_t> gAllocations{0};
     constinit std::atomic<std::uint64_t> gDeallocations{0};
     constinit std::atomic<std::uint64_t> gBytes{0};
@@ -25,7 +29,7 @@ namespace
     bool counting() noexcept
     {
         const pthread_t armed = gArmed.load(std::memory_order_relaxed);
-        return armed != nullptr && pthread_equal(armed, pthread_self()) != 0;
+        return armed != kNoThread && pthread_equal(armed, pthread_self()) != 0;
     }
 
     void noteAllocation(std::size_t n) noexcept
@@ -84,7 +88,7 @@ namespace
 namespace fcmp::probe::alloc
 {
     void arm() noexcept { gArmed.store(pthread_self(), std::memory_order_relaxed); }
-    void disarm() noexcept { gArmed.store(nullptr, std::memory_order_relaxed); }
+    void disarm() noexcept { gArmed.store(kNoThread, std::memory_order_relaxed); }
 
     void reset() noexcept
     {
@@ -120,6 +124,14 @@ void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) n
 {
     try { return allocateAligned(n, a); } catch (...) { return nullptr; }
 }
+
+// The sized forms are declared first: before Clang 19 sized deallocation is off by default, so with libstdc++ neither
+// the compiler nor <new> declares them, and their definitions alone fail -Wmissing-prototypes (Ubuntu 24.04's Clang 18,
+// ADR-92). Where they are declared already these are plain redeclarations.
+void operator delete(void* p, std::size_t) noexcept;
+void operator delete[](void* p, std::size_t) noexcept;
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept;
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept;
 
 void operator delete(void* p) noexcept { deallocate(p); }
 void operator delete[](void* p) noexcept { deallocate(p); }

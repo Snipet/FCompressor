@@ -6,6 +6,10 @@
 # - FunkGui is linked PRIVATE only: core + presets in every JUCE configuration, gpu in the GPU one. A PUBLIC link would
 #   compile FunkGui's sources (.mm included) into every format wrapper, so configure fails if one appears (K2 #26e).
 # - Product identity comes from cmake/FcmpSources.cmake (the same values as the generated FcmpProduct.h).
+# - Formats are cmake/FcmpPlatform.cmake's FCMP_PLUGIN_FORMATS: AU, VST3 and the Standalone on macOS; VST3 and the
+#   Standalone on Linux (ADR-92), where the Apple-only arguments below (AU_MAIN_TYPE, the microphone text, the hardened
+#   runtime, PLIST_TO_MERGE) are ignored by JUCE. The Linux Standalone plays through ALSA (PipeWire's ALSA plug-in on
+#   current desktops); JUCE_JACK stays off, because JUCE 8.0.4's JACK source warns under its own recommended flags.
 include_guard(GLOBAL)
 
 set(FCOMPRESSOR_COMPANY_WEBSITE "" CACHE STRING "Shown by hosts (VST3 manifest, AU)")
@@ -18,7 +22,7 @@ juce_add_plugin(FCompressor
     COMPANY_EMAIL                 "${FCOMPRESSOR_COMPANY_EMAIL}"
     PLUGIN_MANUFACTURER_CODE      ${FCMP_MANUFACTURER_CODE}
     PLUGIN_CODE                   ${FCMP_PLUGIN_CODE}
-    FORMATS                       AU VST3 Standalone
+    FORMATS                       ${FCMP_PLUGIN_FORMATS}
     PRODUCT_NAME                  "${FCMP_PRODUCT_NAME}"
     VERSION                       ${PROJECT_VERSION}
     BUNDLE_ID                     ${FCMP_BUNDLE_ID}
@@ -69,10 +73,29 @@ if(NOT FCOMPRESSOR_HEADLESS)
   funkgui_add_font(FCompressor)      # font licence + bgfx/bx/bimg/bgfx.cmake licences as bundle resources (02 §1.6)
 endif()
 
+# Linux (ADR-92). bgfx.cmake links X11 and OpenGL (GLU, GLX, SM and ICE with them) into every consumer, though no symbol
+# of theirs is used here: JUCE loads Xlib itself and bgfx loads Vulkan at run time. --as-needed drops them, so a system
+# without libGLU still loads the plugin. And the VST3 exports only its entry points (the version script), as release.sh
+# requires of the macOS bundles (K2 #26f): libstdc++ gives namespace std default visibility, so without it every std
+# template the plugin instantiates would be exported too.
+if(FCMP_PLATFORM STREQUAL "linux")
+  foreach(_fmt VST3 Standalone)
+    if(TARGET FCompressor_${_fmt})
+      target_link_options(FCompressor_${_fmt} PRIVATE LINKER:--as-needed)
+    endif()
+  endforeach()
+  set(_fcmp_vst3_map ${FCMP_GENERATED_DIR}/vst3-exports.map)
+  file(CONFIGURE OUTPUT ${_fcmp_vst3_map}
+       CONTENT "{\n  global: GetPluginFactory; ModuleEntry; ModuleExit;\n  local: *;\n};\n")
+  target_link_options(FCompressor_VST3 PRIVATE LINKER:--version-script=${_fcmp_vst3_map})
+  set_property(TARGET FCompressor_VST3 APPEND PROPERTY LINK_DEPENDS ${_fcmp_vst3_map})
+endif()
+
 # GlueCompressor's guard against codesign's "resource fork, Finder information, or similar detritus not allowed" (B §4).
-# Ninja runs PRE_BUILD as PRE_LINK; the first build has no bundle yet, hence "|| true".
+# Ninja runs PRE_BUILD as PRE_LINK; the first build has no bundle yet, hence "|| true". macOS only: Linux has neither
+# codesign nor xattr's Finder detritus, and a Linux VST3 is no CMake bundle ($<TARGET_BUNDLE_DIR> is Apple's).
 foreach(_fmt AU VST3)
-  if(TARGET FCompressor_${_fmt})
+  if(APPLE AND TARGET FCompressor_${_fmt})
     add_custom_command(TARGET FCompressor_${_fmt} PRE_BUILD
         COMMAND /bin/sh -c "xattr -cr \"$<TARGET_BUNDLE_DIR:FCompressor_${_fmt}>\" 2>/dev/null || true"
         VERBATIM)

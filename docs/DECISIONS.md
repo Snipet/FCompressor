@@ -939,11 +939,97 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       host's), and with nothing to take back the host keeps it. An open wheel burst (a gesture until 0.5 s after its
       last notch) is closed into its entry before undo, redo or a switch, so "scroll, then Cmd-Z" works at once.
     - *Tests:* `proc.history` gains a save straight after a load, a load without `<COMPARE>`, a burst open across a
-      load, undo and redo around a Save As (in the probe's sandboxed store), and `ramp.*` (a sine through the processor: the first millisecond after an undo of OUTPUT −18 dB, and after
-      an A/B switch 18 dB louder, is within 3 dB of before, and the level lands 18 dB up); `ui.edits` gains the
-      pass-through, the browser and the wheel burst. The OUTPUT gaps the review found in older-session coverage are
+      load, undo and redo around a Save As (in the probe's sandboxed store), and `ramp.*` (a sine through the
+      processor: the first millisecond after an undo of OUTPUT −18 dB, and after an A/B switch 18 dB louder, is within
+      3 dB of before, and the level lands 18 dB up); `ui.edits` gains the pass-through, the browser and the wheel burst. The OUTPUT gaps the review found in older-session coverage are
       closed too: `state.absent` removes `output`, `proc.fixtures` loads v1 sessions over an OUTPUT away from 0 dB, and
       `proc.presets` checks a preset neither moves OUTPUT nor reads MODIFIED because of it.
+- **ADR-92 Linux: the VST3 and the Standalone on x86-64, the editor on Vulkan through X11 (v1.2).** The user asked
+  for Linux support with Wayland. ARCHITECTURE §1.2 had Linux as a v1 non-goal; it is now supported.
+  - **What runs:** the VST3 and the Standalone (no AU), built with Clang from the same presets, tested on x86-64 (Arch
+    Linux, Clang 22, KDE Plasma on Wayland; CI on Ubuntu 24.04). **Wayland is reached through XWayland.** JUCE 8.0.4's
+    windows are X11 windows, and a Linux host embeds a VST3 editor by X11 window ID: neither JUCE nor the hosts have a
+    Wayland embedding, so every JUCE plug-in on a Wayland desktop runs this way. A native Wayland editor would need a
+    JUCE with a Wayland backend. arm64 Linux gets `-march=armv8-a` (every NEON operation Simd.h uses) but is not verified.
+  - **The editor (FunkGui v0.11.0):** bgfx on Vulkan into an X11 child window of JUCE's peer, created on JUCE's display
+    connection through JUCE's own dynamically loaded Xlib. It selects no events, so pointer, wheel and key events reach
+    JUCE's peer window, as for JUCE's own OpenGL child window; it is placed and sized in device pixels at the drawable's
+    scale (`setRenderViewScale`, so a `UI_SCALE` capture keeps the window, the swapchain and the drawable one size);
+    creating and destroying it runs under an X error trap, because in a plug-in JUCE installs no X error handler and
+    GDK's aborts on an untrapped error. Vulkan only: bgfx's OpenGL path (EGL) aborts the process on any initialisation
+    failure, its Vulkan path fails softly into EditorHost's fallback screen. No display link on Linux: the FramePump
+    runs on its timer (60 Hz while anything moves, 12 at rest). Shaders: Metal and SPIR-V on every host; the Metal pair
+    compiled on Linux is the macOS golden byte for byte.
+  - **Build** (`cmake/FcmpPlatform.cmake`): macOS or Linux, Clang only (the warning list and lints are Clang's; Linux
+    defaults to `clang++` before `project()`). Upstream Clang rejects the layout constructor template in JUCE 8.0.4's
+    `juce_AudioPluginInstance.h` in every TU that includes it; where the compiler does, `-fdelayed-template-parsing` and
+    the silencing of its C++20 deprecation warning (JUCE configurations only; it goes when the JUCE pin moves). On Linux
+    also: bgfx without its Wayland backend and with `-w`, `-Wno-pass-failed` (libstdc++ 15+ puts `#pragma GCC unroll`
+    in `std::find_if`), `-Wno-nontrivial-memcall` on JUCE's module TUs (Clang 20+, in JUCE's HarfBuzz and VST3 SDK),
+    `--as-needed` (bgfx links X11 and OpenGL, GLU included, that nothing calls) and a version script so the VST3 exports
+    only `GetPluginFactory`, `ModuleEntry` and `ModuleExit`. No C++20 module scanning anywhere. `CMAKE_OSX_ARCHITECTURES`
+    and `FCOMPRESSOR_UNIVERSAL` mean something on Apple only; the rtsan preset on Linux uses the sanitizer (no
+    interposer). The Standalone plays through ALSA (PipeWire's ALSA plug-in on current desktops); JACK stays off because
+    JUCE 8.0.4's JACK source warns under its own recommended flags.
+  - **Storage on Linux:** preferences and presets in `~/.config/FCompressor/` (`XDG_CONFIG_HOME` is not read), not
+    JUCE's defaults (`~/FCompressor/` and `~/.config/Application Support/`); the preset keys' Unicode fold through GLib.
+  - **The first x86 run of the SSE backend** (Q6: Rosetta was never installed, so the x86 slice had only been compiled):
+    every DSP golden matched the arm64 values bit for bit, save two x86 findings, neither Linux's. (1) Clang lowers
+    `sel(gt(a, b), a, b)` to `maxps`, which under DAZ returns a denormal operand flushed where NEON's `bsl` returns its
+    bits, so `xarch.simd.ops.hash` differed: the SSE `sel` now fences its mask with an empty asm (every other spelling of
+    the blend is matched too), which emits no instruction. (2) `dsp.units` compared the whole MXCSR, whose sticky
+    exception flags the probe's own denormal products set on real hardware; it now compares the control bits.
+  - **Other portability fixes the first build found:** FunkGui's C-locale number text (`funkgui/core/CLocale.h`;
+    xlocale's null `locale_t` is Apple's), the probes' command line (`fcmp::probe::argc()/argv()` from ProbeMain instead
+    of `_NSGetArgc`), `AllocCounter`'s thread sentinel (`pthread_t` is an integer on Linux), `lint.headers` with the
+    build's ISA flags and the JUCE workaround on Linux.
+  - **Goldens:** Linux runs against the same goldens, with no overlay. The one platform-dependent row is the SDF font
+    atlas hash: FunkGui rasterises the glyphs with `juce::Graphics` into a native Image, CoreGraphics on macOS and JUCE's
+    software renderer on Linux, while every glyph metric agrees. So `ui.font` registers on macOS and `ui.font_linux` (the
+    same body) on Linux, through a new `platform=apple|linux` key on the FCMP_PROBE line; FunkGui does the same
+    (`fg.font.probe`, `fg.font.probe-linux`). `golden.py adopt` takes arm64 primaries only, so `ui.font_linux.txt` was
+    copied from the Linux x86-64 candidate.
+  - **Scripts:** `deps.sh` (cp -a, nproc, pluginval's plain executable), `validate.sh` (`~/.vst3`, no AU or auval),
+    `gui-live.sh` (flock; the Standalone isolated through HOME with XAUTHORITY kept, and seeded with ALSA's default
+    device at 48 kHz, the FakeFacade's rate, since JUCE opens an ALSA device at 44.1 kHz and the Characteristics views
+    plot the processor's filters at its rate), `check-headers.sh`; `release.sh` refuses to run on Linux (no Linux
+    packaging yet).
+  - **CI:** `linux-dsp` and `linux-plugin` (the `lead` preset through `verify.sh --integration`) on ubuntu-24.04.
+  - **Tests on Linux:** `verify.sh`: DSP-only 210/210 and headless 477/477, no drift; FunkGui's `agent-gui` 42/42.
+    Live: `gui-live.sh` 5/5 views equal between the Standalone's Vulkan editor (XWayland) and the headless probe;
+    FunkGui's `fg.gallery.live` 5/5 cases, BgfxSink's overflow path included. A screenshot and synthetic clicks
+    (theme, Mode) in a private X server confirmed rendering and input through the child window.
+  - **Not done:** LV2 or CLAP; JACK in the Standalone; a Linux release script; arm64 Linux verification; a vsync-driven
+    frame clock.
+  - **Merged with the rest of v1.2 (the lead, on macOS):** this decision was ADR-91 on its branch and is ADR-92, since
+    undo/A-B took 91 on main. Undo's chord is the platform's command key: Cmd-Z on macOS, Ctrl-Z elsewhere
+    (`EditControls::commandOnly`; JUCE's command modifier is Ctrl there, so the event carries both flags, and X11 reports
+    the chord as the control character 0x1A, which FunkGui v0.11.0's EditorHost now delivers as its key code). The
+    footer lines say CTRL-Z there. `gui-live.sh` keeps its ALSA seed, though `FCMP_UI_NO_LIVE` now ignores the device's
+    rate (03 §3.6, `ui.nolive`). The key path is covered headless (`ui.edits` `keys.ctrl_cmd_z`); a real Ctrl-Z on a
+    Linux desktop has not been pressed yet.
+  - **Review before the merge (four areas, two skeptics per finding; eight confirmed, all Linux-side or tests):**
+    - *Vulkan or nothing was not enforced* (FunkGui): bgfx's renderer fallback was left on, so a Vulkan that did not
+      come up went on to OpenGL through EGL, the very path that aborts, and then to Noop, so init never failed and the
+      fallback screen was never shown. FunkGui v0.11.0 initialises without the fallback and counts an init on another
+      renderer than its shaders' as failed. Its Linux smoke row for Vulkan could not fail and now reads the compiled-in
+      renderers.
+    - *`XDG_CONFIG_HOME` is not read:* JUCE 8.0.4 resolves `~/.config` from `user-dirs.dirs`, never from the
+      environment, and the branch said the variable was honoured. The texts now say what the code does. Following the
+      variable needs FunkGui code and Linux-only tests, left for a session on a Linux machine.
+    - *CI and scripts:* the CI jobs run `verify.sh --strict`, which fails on DRIFT or MISSING (on Linux CI is the only
+      gate the lead has, and nobody reads a CI log's candidates; the default gate is unchanged). `validate.sh` keeps its
+      bundle pairs in an array again (a path with a space was word-split). The README says where CMake 3.30 comes from on
+      Ubuntu 24.04.
+    - *The first runs of the Linux CI jobs* (Ubuntu 24.04: Clang 18, CMake 3.31, libstdc++) found three things the
+      author's Arch machine (Clang 22, CMake 4) could not. `AllocCounter.cpp`'s sized `operator delete`s had no
+      declaration (sized deallocation is off by default before Clang 19), failing `-Wmissing-prototypes`. FunkGui linked
+      `SQLite3::SQLite3`, a target name FindSQLite3 only has from CMake 4.3 (v0.11.1 links the one that exists). And the
+      runner's GNU `ar` indexes LTO bitcode through an LLVM 17 gold plugin that cannot read Clang 18's, so the archives
+      had no symbols and the Standalone did not link: on Linux, Release archives are now made with the compiler's own
+      `llvm-ar` and `llvm-ranlib` (`cmake/FcmpPlatform.cmake`), which need no plugin; install the `llvm` package.
+    - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
+      review as defence in depth; it needs a Linux build to check.
 
 ## HardwareReverb migration
 

@@ -67,7 +67,6 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include <crt_externs.h>                                         // _NSGetArgc / _NSGetArgv (macOS)
 
 #include <algorithm>
 #include <array>
@@ -145,8 +144,8 @@ namespace
 
     std::optional<std::string> argValue(std::string_view flag, bool own)
     {
-        const int argc = *_NSGetArgc();
-        char** argv = *_NSGetArgv();
+        const int argc = fcmp::probe::argc();
+        char** argv = fcmp::probe::argv();
         bool afterDashes = false;
         for (int i = 1; i < argc; ++i)
         {

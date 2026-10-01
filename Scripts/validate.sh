@@ -20,13 +20,17 @@
 #                VST3/FCompressor.vst3 (no auval: the AU is only reachable installed); the stamp line is
 #                "validate --vst3-only: pass", which release.sh does not accept.
 #
+# Linux (ADR-92): the VST3 only (there is no AU and no auval), installed as ~/.vst3/FCompressor.vst3, whose binary is
+# Contents/<arch>-linux/FCompressor.so; copies are cp -a. pluginval opens the editor, so it wants an X display (DISPLAY;
+# XWayland on a Wayland desktop).
+#
 # pluginval comes from the machine cache ($FCOMPRESSOR_DEPS_DIR or ~/audio/.deps; tools/pluginval-<tag>/pluginval, the
 # tag from DEPS.lock, built by Scripts/deps.sh). Everything is logged to <build>/validate.log.
 # Exit: 0 all passed, 1 a validation failed, 2 usage or setup error (including installed bundles that are not <build>'s).
 set -u
 
 usage() {
-  sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 VST3_ONLY=0
@@ -82,6 +86,21 @@ fi
 ART="$BUILD/${NAME}_artefacts/$CFG"
 BUILT_VST3="$ART/VST3/$NAME.vst3"
 BUILT_AU="$ART/AU/$NAME.component"
+# The installed bundles and each one's binary, relative to the bundle (macOS: VST3 and AU; Linux: the VST3 only).
+if [ "$(uname -s)" = Darwin ]; then
+  MACOS=1
+  BIN="Contents/MacOS/$NAME"
+  VST3="$HOME/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+  AU="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
+  BUNDLES=("$BUILT_VST3|$VST3" "$BUILT_AU|$AU")
+  copy_tree() { ditto "$1" "$2"; }
+else
+  MACOS=0
+  BIN="Contents/$(uname -m)-linux/$NAME.so"
+  VST3="$HOME/.vst3/$NAME.vst3"
+  BUNDLES=("$BUILT_VST3|$VST3")
+  copy_tree() { cp -a "$1" "$2"; }
+fi
 
 PV_TAG="$(awk -F'\t' '$1 == "pluginval" { print $2; exit }' "$DEPS_DIR/DEPS.lock" 2>/dev/null)"
 PV_TAG="${PV_TAG:-v1.0.4}"
@@ -120,43 +139,46 @@ if [ "$VST3_ONLY" = 1 ]; then
   step "pluginval (strictness 10) $BUILT_VST3" "$PV" "${PV_ARGS[@]}" --validate "$BUILT_VST3"
   STAMP_LINE="validate --vst3-only"
 else
-  VST3="$HOME/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
-  AU="$HOME/Library/Audio/Plug-Ins/Components/$NAME.component"
-  for b in "$BUILT_VST3" "$BUILT_AU"; do
-    if [ ! -f "$b/Contents/MacOS/$NAME" ]; then
-      echo "validate.sh: no $b/Contents/MacOS/$NAME (build the plugin in $BUILD first)" >&2
+  for pair in "${BUNDLES[@]}"; do
+    b="${pair%%|*}"
+    if [ ! -f "$b/$BIN" ]; then
+      echo "validate.sh: no $b/$BIN (build the plugin in $BUILD first)" >&2
       exit 2
     fi
   done
   if [ "$INSTALL" = 1 ]; then
-    for pair in "$BUILT_VST3|$VST3" "$BUILT_AU|$AU"; do
+    for pair in "${BUNDLES[@]}"; do
       from="${pair%%|*}"
       to="${pair#*|}"
       echo "== install $from -> $to"
-      mkdir -p "$(dirname "$to")" && rm -rf "$to" && ditto "$from" "$to" || {
+      mkdir -p "$(dirname "$to")" && rm -rf "$to" && copy_tree "$from" "$to" || {
         echo "validate.sh: installing $from as $to failed" >&2
         exit 2
       }
     done
   fi
-  for pair in "$BUILT_VST3|$VST3" "$BUILT_AU|$AU"; do
+  for pair in "${BUNDLES[@]}"; do
     from="${pair%%|*}"
     to="${pair#*|}"
     if [ ! -d "$to" ]; then
       echo "validate.sh: $to is not installed (Scripts/validate.sh --install $BUILD installs this build's bundles)" >&2
       exit 2
     fi
-    if ! cmp -s "$from/Contents/MacOS/$NAME" "$to/Contents/MacOS/$NAME"; then
-      echo "validate.sh: the installed $to is not $BUILD's build (Contents/MacOS/$NAME differs from $from);" \
+    if ! cmp -s "$from/$BIN" "$to/$BIN"; then
+      echo "validate.sh: the installed $to is not $BUILD's build ($BIN differs from $from);" \
            "refusing to validate it in this build's name. Scripts/validate.sh --install $BUILD installs this build's" \
            "bundles first." >&2
       exit 2
     fi
   done
-  killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
-  step "auval -strict -v aufx $CODE $MANU" auval -strict -v aufx "$CODE" "$MANU"
+  if [ "$MACOS" = 1 ]; then
+    killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
+    step "auval -strict -v aufx $CODE $MANU" auval -strict -v aufx "$CODE" "$MANU"
+  fi
   step "pluginval (strictness 10) $VST3" "$PV" "${PV_ARGS[@]}" --validate "$VST3"
-  step "pluginval (strictness 10) $AU" "$PV" "${PV_ARGS[@]}" --validate "$AU"
+  if [ "$MACOS" = 1 ]; then
+    step "pluginval (strictness 10) $AU" "$PV" "${PV_ARGS[@]}" --validate "$AU"
+  fi
   STAMP_LINE="validate"
 fi
 

@@ -18,11 +18,12 @@ wrong.
 
 ## 1. What FCompressor is
 
-An all-in-one compressor plugin for the author's own use (macOS; AU, VST3 and Standalone; manufacturer `Funk`, plugin
-code `Fcmp`, bundle id `com.funk.fcompressor`). Compressor types are called **Modes**: Clean, a VCA bus compressor, a
-feedback FET, an opto, a vari-mu, a diode bridge, and so on — 35 are catalogued (D §5.1) and more will be added
-continuously. **Every Mode shares exactly the same UI**: the same parameters in the same places, the same visual aids.
-Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio is 2 · 4 · 10).
+An all-in-one compressor plugin for the author's own use (macOS: AU, VST3 and Standalone; Linux from ADR-92: VST3 and
+Standalone; manufacturer `Funk`, plugin code `Fcmp`, bundle id `com.funk.fcompressor`). Compressor types are called
+**Modes**: Clean, a VCA bus compressor, a feedback FET, an opto, a vari-mu, a diode bridge, and so on — 35 are
+catalogued (D §5.1) and more will be added continuously. **Every Mode shares exactly the same UI**: the same parameters
+in the same places, the same visual aids. Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio
+is 2 · 4 · 10).
 
 ### 1.1 Goals
 
@@ -39,8 +40,8 @@ Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio is 
 
 ### 1.2 Non-goals (v1)
 
-- Windows, Linux, AAX, iOS; a resizable editor; host programs (`getNumPrograms() == 1`). (Plugin-side undo arrived in
-  v1.2 without JUCE's UndoManager: ADR-91.)
+- Windows, AAX, iOS; a resizable editor; host programs (`getNumPrograms() == 1`). (Linux was a non-goal of v1 and is
+  supported since v1.2: ADR-92. Plugin-side undo arrived in v1.2 without JUCE's UndoManager: ADR-91.)
 - An Intel slice that has never run: v1 ships arm64-only unless an x86 verify has passed (ADR-47, Q6).
 - Per-Mode parameter memory, a link-shape or reference-level parameter (candidate v2 appends; the global output trim
   shipped in v1.2 as `output`, ADR-88).
@@ -418,7 +419,8 @@ only, never of the Mode (01 §5.6; ADR-15):
 
 **Presets** (01 §9.2) store **raw** values of the Mode-filtered parameters keyed by ID plus `modeId`/`modeRev`
 attributes; the Mode snaps them on read. The store is HR's preset core, generalised into `FunkGui::presets` (SQLite from
-the macOS SDK, WAL, in-memory fallback; `~/Library/Application Support/FCompressor/Presets.db`), pending Q2. The factory
+the macOS SDK, WAL, in-memory fallback; `~/Library/Application Support/FCompressor/Presets.db`, on Linux
+`~/.config/FCompressor/Presets.db`), pending Q2. The factory
 bank is built from per-Mode `factory/<key>.inc` files with a content-hashed revision. There are no host programs.
 
 ---
@@ -456,7 +458,8 @@ bank is built from per-Mode `factory/<key>.inc` files with a content-hashed revi
 ## 11. Build and FetchContent strategy
 
 (03 §1–§2.)
-- `cmake_minimum_required(3.30)`; Release default; macOS 14.0 deployment target; Ninja.
+- `cmake_minimum_required(3.30)`; Release default; macOS 14.0 deployment target; Ninja. Linux (ADR-92): Clang,
+  `cmake/FcmpPlatform.cmake` for the formats and the JUCE 8.0.4 workaround, the same presets and goldens.
 - `cmake/FcmpDeps.cmake`: JUCE → bgfx (GPU only, with the prebuilt shaderc and hidden symbols) → FunkGui, each
   asserted; FunkGui configured with normal variables (`FUNKGUI_WITH_BGFX`, `FUNKGUI_WITH_PRESETS`,
   `FUNKGUI_HARNESS_ONLY` for DSP-only, `FUNKGUI_BUILD_TOOLS ON`); `fcmp-deps.txt` records provenance and any override.

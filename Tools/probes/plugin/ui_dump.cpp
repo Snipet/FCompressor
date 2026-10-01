@@ -45,7 +45,6 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <crt_externs.h>                                         // _NSGetArgc / _NSGetArgv (macOS)
 
 #include <cmath>
 #include <cstdio>
@@ -97,8 +96,8 @@ namespace
         Args a;
         if (!modeKey.empty())
             a.mode = std::string(modeKey);
-        const int argc = *_NSGetArgc();
-        char** argv = *_NSGetArgv();
+        const int argc = fcmp::probe::argc();
+        char** argv = fcmp::probe::argv();
         for (int i = 2; i < argc; ++i)
         {
             const std::string_view flag = argv[i] != nullptr ? argv[i] : "";

@@ -1,0 +1,3 @@
+# funkgui-golden 2  probe=ui.font_linux  scope=global
+# key	value	tolerance
+font.atlas.hash	8d0078b1bae2d442	exact

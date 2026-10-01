@@ -25,7 +25,12 @@
 include_guard(GLOBAL)
 
 # ---- architectures -------------------------------------------------------------------------------------------------
-if(CMAKE_OSX_ARCHITECTURES)
+# CMAKE_OSX_ARCHITECTURES means something on Apple only; Linux builds the host's architecture (ADR-92), so a preset that
+# pins one (lead-x86, release) cannot cross-compile there by accident.
+if(NOT APPLE AND FCOMPRESSOR_UNIVERSAL)
+  message(FATAL_ERROR "FCompressor: FCOMPRESSOR_UNIVERSAL (arm64 + x86_64 in one binary) exists on macOS only")
+endif()
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
   set(FCMP_ARCHS ${CMAKE_OSX_ARCHITECTURES})
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
   set(FCMP_ARCHS arm64)
@@ -53,7 +58,13 @@ endif()
 # ---- flags (one set for the plugin and the probes, so a fingerprint certifies the shipped arithmetic) --------------
 # ISA flags per slice. A universal build keeps each pair intact with SHELL: (CMake de-duplicates repeated options, which
 # turned HR's "-Xarch_x86_64 -mavx2 -Xarch_x86_64 -mfma" into an unscoped -mfma, a hard error on arm64; 03 §2.6).
-set(FCMP_ARCH_FLAGS_arm64  -mcpu=apple-m1)
+# Linux arm64 (ADR-92) cannot assume an Apple core: the AArch64 baseline, which has every NEON operation fcdsp's Simd.h
+# uses. x86_64 is the same everywhere (Haswell and later).
+if(APPLE)
+  set(FCMP_ARCH_FLAGS_arm64 -mcpu=apple-m1)
+else()
+  set(FCMP_ARCH_FLAGS_arm64 -march=armv8-a)
+endif()
 set(FCMP_ARCH_FLAGS_x86_64 -mavx2 -mfma)
 set(FCMP_ISA_FLAGS "")
 foreach(_a IN LISTS FCMP_ARCHS)
@@ -106,6 +117,13 @@ list(APPEND FCMP_WARNING_FLAGS
 if(FCOMPRESSOR_WERROR)
   list(APPEND FCMP_WARNING_FLAGS -Werror)
 endif()
+# Linux (ADR-92): libstdc++ 15+ puts `#pragma GCC unroll 4` in std::find_if (bits/stl_algobase.h), and Clang reports
+# every loop it then cannot unroll as -Wpass-failed, at the library's line, in our translation units. None of our code
+# asks for a loop transformation, so the warning can only be the library's. Not in FCMP_HEADER_CHECK_FLAGS: an optimiser
+# warning never fires under lint.headers' -fsyntax-only.
+if(NOT APPLE)
+  list(APPEND FCMP_WARNING_FLAGS -Wno-pass-failed)
+endif()
 # fcdsp only: a namespace-scope object with a dynamic initialiser or an exit-time destructor (std::vector<float> g(64);,
 # static std::vector<float> g = ...;) or a function-local static with a destructor is a compile error (R-B0 #3; LintDeps
 # covers the trivially destructible function-local statics).
@@ -133,6 +151,10 @@ if(FCOMPRESSOR_RTSAN)
     target_compile_options(fcmp_flags INTERFACE -fsanitize=realtime)
     target_link_options(fcmp_flags INTERFACE -fsanitize=realtime)
     list(APPEND FCMP_WARNING_FLAGS_FCDSP -Wfunction-effects)
+  elseif(NOT APPLE)
+    # The RtInterposer is dyld's __interpose (macOS only); on Linux the sanitizer itself is the check (Clang >= 20).
+    message(FATAL_ERROR "FCompressor: FCOMPRESSOR_RTSAN on Linux needs -fsanitize=realtime, which "
+                        "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} does not support")
   else()
     set(FCMP_RTSAN_MODE interposer)
     message(STATUS "FCompressor: FCOMPRESSOR_RTSAN: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} does not "
@@ -177,6 +199,11 @@ if(NOT FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH})
 endif()
 set(FCMP_CAN_RUN_PROBES ${FCMP_CAN_RUN_PROBES_${FCMP_RUN_ARCH}})
 if(NOT FCMP_CAN_RUN_PROBES)
+  if(APPLE)
+    set(_fcmp_hint "To enable them on Apple silicon: softwareupdate --install-rosetta --agree-to-license")
+  else()
+    set(_fcmp_hint "A program built by ${CMAKE_C_COMPILER} did not run; see CMakeFiles/CMakeConfigureLog.yaml")
+  endif()
   message(WARNING "FCompressor: ${FCMP_RUN_ARCH} programs cannot run on this machine, so every probe test is DISABLED. "
-                  "To enable them on Apple silicon: softwareupdate --install-rosetta --agree-to-license")
+                  "${_fcmp_hint}")
 endif()
