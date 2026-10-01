@@ -22,6 +22,14 @@ namespace fcmp::ui
             const char* v = funkgui::env(name);
             return v != nullptr && v[0] != '\0' && !(v[0] == '0' && v[1] == '\0');
         }
+
+        // RenderInfo::renderer: the API EditorHost's frame is drawn with. FunkGui fixes it per platform (BgfxContext,
+        // v0.11.0: Metal on Apple, Vulkan everywhere else, never a fallback to another) and has no call that names it.
+       #if defined(__APPLE__)
+        constexpr const char* kRenderer = "METAL";
+       #else
+        constexpr const char* kRenderer = "VULKAN";
+       #endif
     }
 
     EditorOptions EditorOptions::fromEnv()
@@ -79,6 +87,7 @@ namespace fcmp::ui
             r.zoomPercent = d.zoomPercent;
             r.frames = d.frames;
             r.overflows = d.overflows;
+            r.renderer = kRenderer;
             return r;
         });
         if (!options.unknownView.empty())

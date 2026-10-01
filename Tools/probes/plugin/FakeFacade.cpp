@@ -2,13 +2,11 @@
 // registers no test.
 #include "FakeFacade.h"
 
-#include "plugin/factory/FactoryBank.h"
+#include "plugin/portable/FactoryData.h"
 
 #include "fcdsp/engine/Oversampler.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/HostParams.h"
-
-#include <funkgui/presets/PresetTypes.h>
 
 #include <algorithm>
 #include <cmath>
@@ -74,17 +72,17 @@ namespace fcmp::probe
 
     // U6: the processor's list at its defaults since P3 (FakeFacade.h): the compiled factory bank in bank order (Init at
     // 0, then Modes.def slot order), Init current, unmodified; so a headless frame shows what the live Standalone shows
-    // at its defaults (gui-live parity of the preset strip).
+    // at its defaults (gui-live parity of the preset strip). The rows are FactoryData's, the bank without JUCE (web
+    // Sprint B, ADR-93): a probe that needs the funkgui::presets::Preset form takes it from factory/FactoryBank.h.
     FakePresets::FakePresets(FakeFacade& owner) : owner_(owner)
     {
-        for (const funkgui::presets::Preset& p : fcmp::factory::factoryBank())
+        for (const fcmp::factory::FactoryRow& f : fcmp::factory::factoryRows())
         {
             Row r;
-            r.uuid = p.uuid.toStdString();
-            r.name = p.name.toStdString();
-            r.category = p.category.toStdString();
-            if (const funkgui::presets::Attribute* a = p.attr(fcmp::factory::kModeIdAttr))
-                r.modeKey = a->value.toStdString();
+            r.uuid = f.uuid;
+            r.name = f.name;
+            r.category = f.category;
+            r.modeKey = f.modeKey;
             r.factory = true;
             rows_.push_back(std::move(r));
         }
