@@ -1,0 +1,62 @@
+// Scratch (not project code): a draft of the op set of fcdsp::simd on WASM SIMD128, to check that the intrinsics exist
+// and what the exact fma costs.
+#include <wasm_simd128.h>
+#include <atomic>
+#include <cstdint>
+#if defined(__has_cpp_attribute) && __has_cpp_attribute(clang::nonblocking)
+  #define NB [[clang::nonblocking]]
+#else
+  #define NB
+#endif
+using f32x4 = v128_t;
+using m32x4 = v128_t;
+inline f32x4 load(const float* p) noexcept NB { return wasm_v128_load(p); }
+inline void store(float* p, f32x4 v) noexcept NB { wasm_v128_store(p, v); }
+inline f32x4 set1(float s) noexcept NB { return wasm_f32x4_splat(s); }
+inline f32x4 add(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_add(a, b); }
+inline f32x4 mul(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_mul(a, b); }
+inline f32x4 div(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_div(a, b); }
+inline f32x4 minv(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_min(a, b); }
+inline f32x4 pminx86(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_pmin(b, a); }
+inline f32x4 absv(f32x4 a) noexcept NB { return wasm_f32x4_abs(a); }
+inline f32x4 sqrtv(f32x4 a) noexcept NB { return wasm_f32x4_sqrt(a); }
+inline f32x4 floorv(f32x4 a) noexcept NB { return wasm_f32x4_floor(a); }
+inline m32x4 gt(f32x4 a, f32x4 b) noexcept NB { return wasm_f32x4_gt(a, b); }
+inline f32x4 sel(m32x4 m, f32x4 t, f32x4 f) noexcept NB { return wasm_v128_bitselect(t, f, m); }
+template <int I> inline float lane(f32x4 v) noexcept NB { return wasm_f32x4_extract_lane(v, I); }
+template <int I> inline f32x4 withLane(f32x4 v, float s) noexcept NB { return wasm_f32x4_replace_lane(v, I, s); }
+// a + b*c with one rounding: exact double product, TwoSum, round to odd, demote.
+static inline v128_t fmaHalf(v128_t a, v128_t b, v128_t c) noexcept NB      // f64x2 in, f64x2 (rounded to odd) out
+{
+    const v128_t p = wasm_f64x2_mul(b, c);
+    const v128_t s = wasm_f64x2_add(p, a);
+    const v128_t bb = wasm_f64x2_sub(s, p);
+    const v128_t e = wasm_f64x2_add(wasm_f64x2_sub(p, wasm_f64x2_sub(s, bb)), wasm_f64x2_sub(a, bb));
+    const v128_t zero = wasm_f64x2_const_splat(0.0);
+    const v128_t ePos = wasm_f64x2_gt(e, zero), eNeg = wasm_f64x2_lt(e, zero);
+    const v128_t inexact = wasm_v128_or(ePos, eNeg);
+    const v128_t even = wasm_i64x2_eq(wasm_v128_and(s, wasm_i64x2_const_splat(1)), wasm_i64x2_const_splat(0));
+    const v128_t away = wasm_i64x2_eq(ePos, wasm_f64x2_gt(s, zero));         // same sign: +1 on the bits, else -1
+    const v128_t step = wasm_v128_or(away, wasm_i64x2_const_splat(1));       // away: -1 | 1 = -1 ... see below
+    (void) step;
+    const v128_t delta = wasm_v128_bitselect(wasm_i64x2_const_splat(1), wasm_i64x2_const_splat(-1), away);
+    const v128_t adj = wasm_i64x2_add(s, delta);
+    return wasm_v128_bitselect(adj, s, wasm_v128_and(inexact, even));
+}
+f32x4 fmaExact(f32x4 a, f32x4 b, f32x4 c) noexcept NB
+{
+    const v128_t lo = fmaHalf(wasm_f64x2_promote_low_f32x4(a), wasm_f64x2_promote_low_f32x4(b), wasm_f64x2_promote_low_f32x4(c));
+    const v128_t ah = wasm_i32x4_shuffle(a, a, 2, 3, 2, 3), bh = wasm_i32x4_shuffle(b, b, 2, 3, 2, 3), ch = wasm_i32x4_shuffle(c, c, 2, 3, 2, 3);
+    const v128_t hi = fmaHalf(wasm_f64x2_promote_low_f32x4(ah), wasm_f64x2_promote_low_f32x4(bh), wasm_f64x2_promote_low_f32x4(ch));
+    return wasm_i32x4_shuffle(wasm_f32x4_demote_f64x2_zero(lo), wasm_f32x4_demote_f64x2_zero(hi), 0, 1, 4, 5);
+}
+f32x4 fmaUnfused(f32x4 a, f32x4 b, f32x4 c) noexcept NB { return wasm_f32x4_add(a, wasm_f32x4_mul(b, c)); }
+// FastMath's integer helpers
+v128_t log2k(f32x4 x) noexcept NB { return wasm_f32x4_convert_i32x4(wasm_i32x4_shr(wasm_i32x4_sub(wasm_v128_and(x, wasm_i32x4_const_splat(0x7fffffff)), wasm_i32x4_const_splat(0x3f3504f3)), 23)); }
+f32x4 scaleByPow2(f32x4 p, f32x4 n) noexcept NB { return wasm_i32x4_add(p, wasm_i32x4_shl(wasm_i32x4_trunc_sat_f32x4(n), 23)); }
+// atomics without -pthread
+std::atomic<uint64_t> g64{0};
+std::atomic<uint32_t> g32{0};
+uint64_t touch() noexcept { g32.store(1, std::memory_order_release); std::atomic_thread_fence(std::memory_order_release); return g64.fetch_add(1, std::memory_order_acq_rel); }
+static_assert(std::atomic<uint64_t>::is_always_lock_free && std::atomic<uint32_t>::is_always_lock_free);
+static_assert(alignof(v128_t) == 16 && sizeof(void*) == 4);

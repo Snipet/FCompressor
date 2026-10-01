@@ -6,14 +6,16 @@
 # Sources (cmake/FcmpSources.cmake globs; adding a file edits no CMake):
 #   Source/web/engine/*.cpp   the engine wrapper: the C ABI over fcdsp::EngineHost and the byte protocol. It names
 #                             neither JUCE nor Emscripten (lint.deps rule web.engine), so it builds natively too.
-#   Tools/web/*.cpp           fcmp_web_check: one program with subcommands (its own main), which drives the wrapper as
-#                             the worklet does (128-frame quanta) and compares with the native goldens.
+#   Tools/web/*.cpp           fcmp_web_check: one program, one subcommand per check (Tools/web/WebCheck.h; Main.cpp
+#                             is the lead's dispatcher). It checks the wasm arithmetic against the native contract and
+#                             drives the wrapper as the worklet does (128-frame quanta) against the native goldens.
 #   web/tests/*.mjs           node scripts run against the built wasm (the web configuration only).
 #
 # Targets
 #   fcmp_web_engine_lib   STATIC, every configuration: Source/web/engine over fcdsp.
-#   fcmp_web_check        every configuration: Tools/web over fcmp_web_engine_lib. Natively a plain executable; for the
-#                         web a node program (NODERAWFS, so it reads the goldens from the source tree).
+#   fcmp_web_check        every configuration: Tools/web over fcdsp, and over fcmp_web_engine_lib once it exists.
+#                         Natively a plain executable; for the web a node program (NODERAWFS, so it reads the goldens
+#                         from the source tree).
 #   fcmp_web_engine       web only: fcmp-engine.wasm, a standalone module with no JavaScript glue and no imports. It
 #                         exports the functions the wrapper marks with the compiler's own wasm attribute,
 #                         __attribute__((export_name("fcmp_...")))  under `#if defined(__wasm__)` (no Emscripten
@@ -51,10 +53,16 @@ if(FCMP_WEB_ENGINE_SOURCES)
 endif()
 
 # ---- the check program -----------------------------------------------------------------------------------------------
-if(FCMP_WEB_TOOL_SOURCES AND TARGET fcmp_web_engine_lib)
+if(FCMP_WEB_TOOL_SOURCES)
   add_executable(fcmp_web_check ${FCMP_WEB_TOOL_SOURCES})
-  target_link_libraries(fcmp_web_check PRIVATE fcmp_web_engine_lib fcmp_warnings)
-  target_include_directories(fcmp_web_check PRIVATE ${FCMP_TOOLS_ROOT})
+  target_link_libraries(fcmp_web_check PRIVATE fcdsp)
+  # The probes' warning list, not fcdsp's: the subcommands register themselves with static constructors.
+  target_compile_options(fcmp_web_check PRIVATE ${FCMP_WARNING_FLAGS})
+  if(TARGET fcmp_web_engine_lib)
+    target_link_libraries(fcmp_web_check PRIVATE fcmp_web_engine_lib)
+  endif()
+  # Tools/ for "web/WebCheck.h" and the probes' JUCE-free helpers ("probes/common/Signals.h", "PrintProgram.h").
+  target_include_directories(fcmp_web_check PRIVATE ${FCMP_TOOLS_ROOT} ${FCMP_TOOLS_ROOT}/probes/common)
   if(FCOMPRESSOR_LTO)
     target_link_options(fcmp_web_check PRIVATE $<$<CONFIG:Release>:-flto>)
   endif()

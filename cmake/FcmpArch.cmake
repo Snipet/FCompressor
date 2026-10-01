@@ -89,6 +89,20 @@ set(FCMP_FP_FLAGS -O3 -fno-math-errno -fno-trapping-math -ffp-contract=off)
 add_library(fcmp_flags INTERFACE)
 target_compile_options(fcmp_flags INTERFACE ${FCMP_ISA_FLAGS} ${FCMP_FP_FLAGS})
 
+# wasm32 has no fused multiply-add (ADR-93). fcdsp's contract is one rounding (Simd.h), which its wasm backend keeps
+# with an exact software fma: `exact`, the default, and what the goldens check. `unfused` (a multiply, then an add:
+# two roundings) is the measured fallback, never the shipped arithmetic unless ADR-93 says so; it defines
+# FCDSP_WASM_FMA_UNFUSED for every target, like the ISA flags. Web only.
+if(FCMP_PLATFORM STREQUAL "web")
+  set(FCOMPRESSOR_WEB_FMA exact CACHE STRING "wasm fma: exact (one rounding, the contract) or unfused (measurement)")
+  set_property(CACHE FCOMPRESSOR_WEB_FMA PROPERTY STRINGS exact unfused)
+  if(FCOMPRESSOR_WEB_FMA STREQUAL "unfused")
+    target_compile_definitions(fcmp_flags INTERFACE FCDSP_WASM_FMA_UNFUSED=1)
+  elseif(NOT FCOMPRESSOR_WEB_FMA STREQUAL "exact")
+    message(FATAL_ERROR "FCompressor: FCOMPRESSOR_WEB_FMA is exact or unfused, not '${FCOMPRESSOR_WEB_FMA}'")
+  endif()
+endif()
+
 add_library(fcmp_lto INTERFACE)
 if(FCOMPRESSOR_LTO)
   target_compile_options(fcmp_lto INTERFACE $<$<CONFIG:Release>:-flto>)
