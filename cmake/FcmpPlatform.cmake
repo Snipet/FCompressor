@@ -42,6 +42,22 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")
                       "build directory (clang is the default there unless CC/CXX or CMAKE_CXX_COMPILER say otherwise).")
 endif()
 
+# Linux, -flto (ADR-92). fcmp_lto's objects are LLVM bitcode, and GNU ar and ranlib can index a bitcode member only
+# through an LLVM gold plugin of the compiler's own LLVM. A machine may have another one in binutils' plugin directory
+# (GitHub's Ubuntu 24.04 image: Clang 18 beside LLVM 17's plugin): ar then prints "failed to create LTO module" per
+# member and writes an archive without their symbols, and every link against it ends in undefined references. The
+# compiler's own llvm-ar and llvm-ranlib read bitcode with no plugin, so every static library here is made with them
+# (ours, JUCE's shared code, FunkGui's and bgfx's: they are all created after this file).
+if(FCMP_PLATFORM STREQUAL "linux" AND FCOMPRESSOR_LTO AND CMAKE_BUILD_TYPE STREQUAL "Release")
+  if(NOT CMAKE_CXX_COMPILER_AR OR NOT CMAKE_CXX_COMPILER_RANLIB)
+    message(FATAL_ERROR "FCompressor: -flto on Linux needs the llvm-ar and llvm-ranlib of ${CMAKE_CXX_COMPILER} "
+                        "(install the distribution's llvm package), or configure with -DFCOMPRESSOR_LTO=OFF")
+  endif()
+  set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}")
+  set(CMAKE_RANLIB "${CMAKE_CXX_COMPILER_RANLIB}")
+  message(STATUS "FCompressor: LTO archives with ${CMAKE_AR}")
+endif()
+
 if(FCOMPRESSOR_DSP_ONLY)
   return()                                   # no JUCE: nothing to work around, and fcdsp keeps its own flags
 endif()

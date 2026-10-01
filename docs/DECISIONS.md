@@ -1021,6 +1021,13 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       gate the lead has, and nobody reads a CI log's candidates; the default gate is unchanged). `validate.sh` keeps its
       bundle pairs in an array again (a path with a space was word-split). The README says where CMake 3.30 comes from on
       Ubuntu 24.04.
+    - *The first runs of the Linux CI jobs* (Ubuntu 24.04: Clang 18, CMake 3.31, libstdc++) found three things the
+      author's Arch machine (Clang 22, CMake 4) could not. `AllocCounter.cpp`'s sized `operator delete`s had no
+      declaration (sized deallocation is off by default before Clang 19), failing `-Wmissing-prototypes`. FunkGui linked
+      `SQLite3::SQLite3`, a target name FindSQLite3 only has from CMake 4.3 (v0.11.1 links the one that exists). And the
+      runner's GNU `ar` indexes LTO bitcode through an LLVM 17 gold plugin that cannot read Clang 18's, so the archives
+      had no symbols and the Standalone did not link: on Linux, Release archives are now made with the compiler's own
+      `llvm-ar` and `llvm-ranlib` (`cmake/FcmpPlatform.cmake`), which need no plugin; install the `llvm` package.
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
 
