@@ -236,74 +236,81 @@ if(NOT FCOMPRESSOR_HEADLESS)
   endif()
 endif()
 
-# 3c. FunkGui: its options as normal variables (02 §1.9), then the override check BEFORE its CMake runs.
-if(FCOMPRESSOR_HEADLESS)
-  set(FUNKGUI_WITH_BGFX OFF)
+# 3c. FunkGui. Not in the web configuration yet (ADR-93): its engine module and checks need neither FunkGui nor the
+#     harness; the editor module links FunkGui's JUCE-free core once that is tagged. Emscripten is that build's pinned
+#     tool instead: its version is a provenance row.
+if(FCOMPRESSOR_WEB)
+  fcmp_deps_row(Emscripten "${EMSCRIPTEN_VERSION}" - "${EMSCRIPTEN_ROOT_PATH}" no "wasm32, node ${CMAKE_CROSSCOMPILING_EMULATOR}")
 else()
-  set(FUNKGUI_WITH_BGFX ON)
-endif()
-if(FCOMPRESSOR_DSP_ONLY)                  # no JUCE: FunkGui provides FunkGui::harness only
-  set(FUNKGUI_WITH_PRESETS OFF)
-  set(FUNKGUI_HARNESS_ONLY ON)
-else()
-  set(FUNKGUI_WITH_PRESETS ON)
-  set(FUNKGUI_HARNESS_ONLY OFF)
-endif()
-set(FUNKGUI_BUILD_TOOLS ON)               # funkgui_framerender for the DoD and verify-gui-live (K2 #26d)
+  # 3c. FunkGui: its options as normal variables (02 §1.9), then the override check BEFORE its CMake runs.
+  if(FCOMPRESSOR_HEADLESS)
+    set(FUNKGUI_WITH_BGFX OFF)
+  else()
+    set(FUNKGUI_WITH_BGFX ON)
+  endif()
+  if(FCOMPRESSOR_DSP_ONLY)                  # no JUCE: FunkGui provides FunkGui::harness only
+    set(FUNKGUI_WITH_PRESETS OFF)
+    set(FUNKGUI_HARNESS_ONLY ON)
+  else()
+    set(FUNKGUI_WITH_PRESETS ON)
+    set(FUNKGUI_HARNESS_ONLY OFF)
+  endif()
+  set(FUNKGUI_BUILD_TOOLS ON)               # funkgui_framerender for the DoD and verify-gui-live (K2 #26d)
 
-set(FCMP_FUNKGUI_OVERRIDE "")
-if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)
-  set(_dir "${FETCHCONTENT_SOURCE_DIR_FUNKGUI}")
-  fcmp_git_root(_is_root "${_dir}")
-  if(NOT _is_root)
-    message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} is not the root of a git checkout. Allowed overrides: "
-                        "your own FunkGui worktree, or a lead-made FunkGui.wt/pin-<sha7> (03 §4.5)")
+  set(FCMP_FUNKGUI_OVERRIDE "")
+  if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)
+    set(_dir "${FETCHCONTENT_SOURCE_DIR_FUNKGUI}")
+    fcmp_git_root(_is_root "${_dir}")
+    if(NOT _is_root)
+      message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} is not the root of a git checkout. Allowed overrides: "
+                          "your own FunkGui worktree, or a lead-made FunkGui.wt/pin-<sha7> (03 §4.5)")
+    endif()
+    fcmp_git(_anc "${_dir}" merge-base --is-ancestor "${FCMP_FUNKGUI_SHA}^{commit}" HEAD)
+    fcmp_git(_head "${_dir}" rev-parse -q --verify "HEAD^{commit}")
+    if(NOT _anc_RESULT EQUAL 0)
+      message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} (HEAD ${_head}) does not descend from the pin "
+                          "${FCMP_FUNKGUI_TAG} = ${FCMP_FUNKGUI_SHA} (git merge-base --is-ancestor exited ${_anc_RESULT}"
+                          "${_anc_ERROR}). Use your own FunkGui worktree or a lead-made FunkGui.wt/pin-<sha7> (K2 #26b)")
+    endif()
+    fcmp_git(_desc "${_dir}" describe --tags --always --dirty)
+    set(FCMP_FUNKGUI_OVERRIDE "${_dir}")
+    message(WARNING "FunkGui OVERRIDE ${_dir} @ ${_desc} (pin ${FCMP_FUNKGUI_TAG}). Declare it in the handoff; "
+                    "Scripts/verify.sh --integration refuses it. Remove it with -UFETCHCONTENT_SOURCE_DIR_FUNKGUI.")
   endif()
-  fcmp_git(_anc "${_dir}" merge-base --is-ancestor "${FCMP_FUNKGUI_SHA}^{commit}" HEAD)
-  fcmp_git(_head "${_dir}" rev-parse -q --verify "HEAD^{commit}")
-  if(NOT _anc_RESULT EQUAL 0)
-    message(FATAL_ERROR "FCompressor: FunkGui override ${_dir} (HEAD ${_head}) does not descend from the pin "
-                        "${FCMP_FUNKGUI_TAG} = ${FCMP_FUNKGUI_SHA} (git merge-base --is-ancestor exited ${_anc_RESULT}"
-                        "${_anc_ERROR}). Use your own FunkGui worktree or a lead-made FunkGui.wt/pin-<sha7> (K2 #26b)")
-  endif()
-  fcmp_git(_desc "${_dir}" describe --tags --always --dirty)
-  set(FCMP_FUNKGUI_OVERRIDE "${_dir}")
-  message(WARNING "FunkGui OVERRIDE ${_dir} @ ${_desc} (pin ${FCMP_FUNKGUI_TAG}). Declare it in the handoff; "
-                  "Scripts/verify.sh --integration refuses it. Remove it with -UFETCHCONTENT_SOURCE_DIR_FUNKGUI.")
-endif()
 
-FetchContent_MakeAvailable(FunkGui)
-FetchContent_GetProperties(FunkGui SOURCE_DIR FCMP_FUNKGUI_DIR)
-fcmp_git(_fg_head "${FCMP_FUNKGUI_DIR}" rev-parse -q --verify "HEAD^{commit}")
-if(FCMP_FUNKGUI_OVERRIDE)
-  fcmp_deps_row(FunkGui "${_desc}" "${_fg_head}" "${FCMP_FUNKGUI_DIR}" yes "version ${FUNKGUI_VERSION}, pin ${FCMP_FUNKGUI_TAG}")
-else()
-  fcmp_assert_git("${FCMP_FUNKGUI_DIR}" ${FCMP_FUNKGUI_SHA} FunkGui)
-  if(NOT FUNKGUI_VERSION STREQUAL FCMP_FUNKGUI_VERSION)
-    message(FATAL_ERROR "FCompressor: FunkGui ${FCMP_FUNKGUI_TAG} reports FUNKGUI_VERSION '${FUNKGUI_VERSION}', "
-                        "the pin says ${FCMP_FUNKGUI_VERSION}")
+  FetchContent_MakeAvailable(FunkGui)
+  FetchContent_GetProperties(FunkGui SOURCE_DIR FCMP_FUNKGUI_DIR)
+  fcmp_git(_fg_head "${FCMP_FUNKGUI_DIR}" rev-parse -q --verify "HEAD^{commit}")
+  if(FCMP_FUNKGUI_OVERRIDE)
+    fcmp_deps_row(FunkGui "${_desc}" "${_fg_head}" "${FCMP_FUNKGUI_DIR}" yes "version ${FUNKGUI_VERSION}, pin ${FCMP_FUNKGUI_TAG}")
+  else()
+    fcmp_assert_git("${FCMP_FUNKGUI_DIR}" ${FCMP_FUNKGUI_SHA} FunkGui)
+    if(NOT FUNKGUI_VERSION STREQUAL FCMP_FUNKGUI_VERSION)
+      message(FATAL_ERROR "FCompressor: FunkGui ${FCMP_FUNKGUI_TAG} reports FUNKGUI_VERSION '${FUNKGUI_VERSION}', "
+                          "the pin says ${FCMP_FUNKGUI_VERSION}")
+    endif()
+    fcmp_deps_row(FunkGui ${FCMP_FUNKGUI_TAG} ${_fg_head} "${FCMP_FUNKGUI_DIR}" no "version ${FUNKGUI_VERSION}")   # the commit
   endif()
-  fcmp_deps_row(FunkGui ${FCMP_FUNKGUI_TAG} ${_fg_head} "${FCMP_FUNKGUI_DIR}" no "version ${FUNKGUI_VERSION}")   # the commit
-endif()
 
-# The target and function names FCompressor links against freeze at FZ0 (SPRINTS §0.3); fail here, not at link time.
-set(_fg_need FunkGui::harness)
-if(NOT FCOMPRESSOR_DSP_ONLY)
-  list(APPEND _fg_need FunkGui::core FunkGui::presets)
-endif()
-if(NOT FCOMPRESSOR_HEADLESS)
-  list(APPEND _fg_need FunkGui::gpu)
-endif()
-foreach(_t IN LISTS _fg_need)
-  if(NOT TARGET ${_t})
-    message(FATAL_ERROR "FCompressor: FunkGui ${FUNKGUI_VERSION} at ${FCMP_FUNKGUI_DIR} defines no ${_t}")
+  # The target and function names FCompressor links against freeze at FZ0 (SPRINTS §0.3); fail here, not at link time.
+  set(_fg_need FunkGui::harness)
+  if(NOT FCOMPRESSOR_DSP_ONLY)
+    list(APPEND _fg_need FunkGui::core FunkGui::presets)
   endif()
-endforeach()
-foreach(_f funkgui_configure_product funkgui_compile_shaders funkgui_add_font)
-  if(NOT COMMAND ${_f})
-    message(FATAL_ERROR "FCompressor: FunkGui ${FUNKGUI_VERSION} at ${FCMP_FUNKGUI_DIR} defines no ${_f}()")
+  if(NOT FCOMPRESSOR_HEADLESS)
+    list(APPEND _fg_need FunkGui::gpu)
   endif()
-endforeach()
+  foreach(_t IN LISTS _fg_need)
+    if(NOT TARGET ${_t})
+      message(FATAL_ERROR "FCompressor: FunkGui ${FUNKGUI_VERSION} at ${FCMP_FUNKGUI_DIR} defines no ${_t}")
+    endif()
+  endforeach()
+  foreach(_f funkgui_configure_product funkgui_compile_shaders funkgui_add_font)
+    if(NOT COMMAND ${_f})
+      message(FATAL_ERROR "FCompressor: FunkGui ${FUNKGUI_VERSION} at ${FCMP_FUNKGUI_DIR} defines no ${_f}()")
+    endif()
+  endforeach()
+endif()   # NOT FCOMPRESSOR_WEB
 
 # 4. Provenance. One row per dependency this configuration uses (TAB-separated; see the header line).
 set(_txt "# fcmp-deps 1 (cmake/FcmpDeps.cmake): name\ttag\tsha\tdir\toverride\tnote\n")

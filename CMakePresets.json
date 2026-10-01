@@ -80,6 +80,12 @@
       "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ]
     },
     {
+      "name": "web",
+      "displayName": "web: the browser demo, wasm32 through Emscripten, no JUCE, Release (ADR-93)",
+      "inherits": [ "cfg-release", "base" ],
+      "cacheVariables": { "FCOMPRESSOR_WEB": "ON" }
+    },
+    {
       "name": "asan",
       "displayName": "asan: DSP-only, RelWithDebInfo, AddressSanitizer + UBSan, both halting (lead, milestones)",
       "inherits": [ "dsponly", "cfg-relwithdebinfo", "base" ],
@@ -129,6 +135,7 @@
     { "name": "agent-probes", "configurePreset": "agent",    "targets": [ "fcmp_probes" ],        "jobs": 6, "nativeToolOptions": [ ] },
     { "name": "agent-gui",  "configurePreset": "agent-gui",  "targets": [ "all", "fcmp_probes" ], "jobs": 6, "nativeToolOptions": [ ] },
     { "name": "dsp",        "configurePreset": "dsp",        "targets": [ "all", "fcmp_probes" ], "jobs": 6, "nativeToolOptions": [ ] },
+    { "name": "web",        "configurePreset": "web",        "targets": [ "fcmp_web" ], "jobs": 6, "nativeToolOptions": [ ] },
     { "name": "asan",       "configurePreset": "asan",       "targets": [ "all", "fcmp_probes" ] },
     { "name": "tsan",       "configurePreset": "tsan",       "targets": [ "all", "fcmp_probes" ] },
     { "name": "tsan-agent", "configurePreset": "tsan-agent", "targets": [ "all", "fcmp_probes" ] },
@@ -145,6 +152,7 @@
     { "name": "agent",      "configurePreset": "agent",      "inherits": [ "test-base" ] },
     { "name": "agent-gui",  "configurePreset": "agent-gui",  "inherits": [ "test-base" ] },
     { "name": "dsp",        "configurePreset": "dsp",        "inherits": [ "test-base" ] },
+    { "name": "web",        "configurePreset": "web",        "inherits": [ "test-base" ] },
     { "name": "asan",       "configurePreset": "asan",       "inherits": [ "test-base" ] },
     { "name": "tsan",       "configurePreset": "tsan",       "inherits": [ "test-base" ] },
     { "name": "tsan-agent", "configurePreset": "tsan-agent", "inherits": [ "test-base" ] },
@@ -161,6 +169,8 @@
       { "type": "configure", "name": "agent-gui" }, { "type": "build", "name": "agent-gui" }, { "type": "test", "name": "agent-gui" } ] },
     { "name": "dsp-verify", "steps": [
       { "type": "configure", "name": "dsp" }, { "type": "build", "name": "dsp" }, { "type": "test", "name": "dsp" } ] },
+    { "name": "web-verify", "steps": [
+      { "type": "configure", "name": "web" }, { "type": "build", "name": "web" }, { "type": "test", "name": "web" } ] },
     { "name": "asan-verify", "steps": [
       { "type": "configure", "name": "asan" }, { "type": "build", "name": "asan" }, { "type": "test", "name": "asan" } ] },
     { "name": "tsan-verify", "steps": [

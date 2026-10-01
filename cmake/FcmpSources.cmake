@@ -96,6 +96,10 @@ file(GLOB FCMP_PROBE_COMMON_SOURCES CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/probes/
 file(GLOB FCMP_PROBE_DSP_SOURCES    CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/probes/dsp/*.cpp)
 file(GLOB FCMP_PROBE_PLUGIN_SOURCES CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/probes/plugin/*.cpp)
 file(GLOB FCMP_BENCH_SOURCES        CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/bench/*.cpp)
+# The web demo (ADR-93; cmake/FcmpWeb.cmake): the engine wrapper names neither JUCE nor Emscripten (lint web.engine),
+# so the same sources build natively for its checks; Tools/web holds those checks' programs.
+file(GLOB FCMP_WEB_ENGINE_SOURCES   CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/web/engine/*.cpp)
+file(GLOB FCMP_WEB_TOOL_SOURCES     CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/web/*.cpp)
 
 # ---- editor choice (SPRINTS §7 D22): exactly one CreateEditor*.cpp per target, chosen here, never by #if ------------
 set(FCMP_CREATE_EDITOR_GENERIC ${FCMP_SOURCE_ROOT}/plugin/CreateEditorGeneric.cpp)

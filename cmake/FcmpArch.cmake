@@ -2,7 +2,7 @@
 # :366-387, renamed).
 #
 # Defines
-#   FCMP_ARCHS            the slices this configuration compiles (arm64 and/or x86_64)
+#   FCMP_ARCHS            the slices this configuration compiles (arm64 and/or x86_64; wasm32 alone for the web)
 #   FCMP_ARCH_COUNT       1 or 2
 #   FCMP_RUN_ARCH         the arch the probes EXECUTE as: a single arch -> that arch; universal -> the host. It selects
 #                         the golden overlay (03 §3.3) through the probes' --arch argument.
@@ -30,7 +30,9 @@ include_guard(GLOBAL)
 if(NOT APPLE AND FCOMPRESSOR_UNIVERSAL)
   message(FATAL_ERROR "FCompressor: FCOMPRESSOR_UNIVERSAL (arm64 + x86_64 in one binary) exists on macOS only")
 endif()
-if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+if(FCMP_PLATFORM STREQUAL "web")
+  set(FCMP_ARCHS wasm32)                     # ADR-93: whatever the host is; the probes of it run under node
+elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
   set(FCMP_ARCHS ${CMAKE_OSX_ARCHITECTURES})
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
   set(FCMP_ARCHS arm64)
@@ -41,8 +43,8 @@ else()
 endif()
 list(REMOVE_DUPLICATES FCMP_ARCHS)
 foreach(_a IN LISTS FCMP_ARCHS)
-  if(NOT _a MATCHES "^(arm64|x86_64)$")
-    message(FATAL_ERROR "FCompressor: unsupported architecture '${_a}' (arm64 and x86_64 only)")
+  if(NOT _a MATCHES "^(arm64|x86_64|wasm32)$")
+    message(FATAL_ERROR "FCompressor: unsupported architecture '${_a}' (arm64, x86_64, and wasm32 for the web)")
   endif()
 endforeach()
 list(LENGTH FCMP_ARCHS FCMP_ARCH_COUNT)
@@ -66,6 +68,9 @@ else()
   set(FCMP_ARCH_FLAGS_arm64 -march=armv8-a)
 endif()
 set(FCMP_ARCH_FLAGS_x86_64 -mavx2 -mfma)
+# wasm32 (ADR-93): fixed-width SIMD only. Never -mrelaxed-simd: its fused multiply-add is implementation-defined, and
+# fcdsp's arithmetic has to be the same in every browser.
+set(FCMP_ARCH_FLAGS_wasm32 -msimd128)
 set(FCMP_ISA_FLAGS "")
 foreach(_a IN LISTS FCMP_ARCHS)
   foreach(_f IN LISTS FCMP_ARCH_FLAGS_${_a})
