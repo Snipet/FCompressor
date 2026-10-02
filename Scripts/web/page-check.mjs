@@ -40,6 +40,7 @@
 //   --driver-log <file>  the exchange with the driver and the driver's own output; always written (default: under
 //                        the system's temporary directory, and the path is printed)
 //   --screenshot <png>   a picture at the self-test's verdict, and again of the page showing when the run cannot go on
+//                        (the directories of these three files are made when they are missing)
 //   --driver <path>      the driver (default: $CHROMEWEBDRIVER/chromedriver, $GECKOWEBDRIVER/geckodriver,
 //                        /usr/bin/safaridriver; else the name on PATH). A .mjs/.js path runs under this node (tests).
 //   --binary <path>      the browser itself (chrome, firefox)
@@ -55,7 +56,7 @@ import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, 
 import { createServer } from 'node:http';
 import { createServer as createSocket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 
 const usage = 'usage: page-check.mjs <site> --browser chrome|firefox|safari [--live <dir>] [--expect <dir>] [--frames] '
             + '[--pages] [--autoplay] [--timeout <s>] [--log <file>] [--driver-log <file>] [--screenshot <png>] '
@@ -107,6 +108,10 @@ for (const key of ['live', 'expect']) {
 if (opt.browser === 'safari' && !opt.safariHere && process.env.GITHUB_ACTIONS !== 'true')
   refuse('Safari is driven only on a CI runner (it opens a window and plays sound); --safari-here overrides');
 opt.driverLog = resolve(opt.driverLog || join(tmpdir(), `page-check-${opt.browser}-driver.log`));
+for (const file of [opt.driverLog, opt.log, opt.screenshot]) {      // a CI step need not make their directories first
+  if (!file) continue;
+  try { mkdirSync(dirname(resolve(file)), { recursive: true }); } catch (e) { refuse(`${file}: ${e.message}`); }
+}
 
 // ---- what a browser is asked for ------------------------------------------------------------------------------------
 function capabilities(o, platform = process.platform) {

@@ -16,7 +16,9 @@
 //   pages.*                      the live pages by the live-page protocol
 //   caps.*, driver.*             what each browser and each driver is asked for; the Safari refusal; where a driver
 //                                is looked for
+//   files.*                      the directories of --log, --driver-log and --screenshot
 //   usage.*                      the command line
+// The short bounds given to the runs that must time out are multiplied by FCMP_TIMING_SCALE (a loaded machine).
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -82,8 +84,11 @@ VIEWS.forEach((view, i) => {
 
 // ---- runs of the runner ---------------------------------------------------------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const scale = Math.max(1, Number(process.env.FCMP_TIMING_SCALE) || 1);
+const seconds = (s) => String(Math.round(s * scale));       // a --timeout that the run is meant to reach
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const readRecord = (path) => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
+const textOf = (path) => { try { return readFileSync(path, 'utf8'); } catch { return ''; } };
 let runs = 0;
 let running = 0;
 const queue = [];
@@ -115,7 +120,7 @@ async function run(scenario, args, { env = {}, signalWhen = null, ownDriverLog =
     child.on('exit', (code) => { clearInterval(watch); done({ code, out, err, ms: Date.now() - t0 }); });
   });
   result.record = readRecord(recordPath);
-  result.driverLog = existsSync(driverLogPath) ? readFileSync(driverLogPath, 'utf8') : '';
+  result.driverLog = textOf(driverLogPath);
   // The driver is gone: looked at for a moment, since a killed process takes one to leave the table.
   result.gone = result.record !== null;
   for (let i = 0; result.gone && alive(result.record.pid); i += 1) {
@@ -136,25 +141,29 @@ const said = (r) => `exit ${r.code} after ${r.ms} ms`;
 const shot = join(scratch, 'pass.png');
 const logFile = join(scratch, 'pass.txt');
 const lateShot = join(scratch, 'running.png');
+const made = join(scratch, 'made');                     // not there: the runner makes what its files need
 
 // Every run is started here and judged below, so that six go at a time.
 const R = {
   pass: run('pass', [...chrome, '--live', live, '--expect', expect, '--screenshot', shot, '--log', logFile]),
   fail: run('fail', [...chrome, '--log', join(scratch, 'fail.txt')]),
-  running: run('running', [...chrome, '--timeout', '6', '--screenshot', lateShot]),
-  hang: run('hang', [...chrome, '--timeout', '6']),
+  running: run('running', [...chrome, '--timeout', seconds(6), '--screenshot', lateShot]),
+  hang: run('hang', [...chrome, '--timeout', seconds(6)]),
   nosession: run('nosession', chrome),
   noid: run('noid', chrome),
   crash: run('crash', [...chrome, '--timeout', '90']),
   lost: run('lost', [...chrome, '--timeout', '90']),
-  notready: run('notready', [...chrome, '--timeout', '5']),
-  silent: run('silent', [...chrome, '--timeout', '5']),
+  notready: run('notready', [...chrome, '--timeout', seconds(5)]),
+  silent: run('silent', [...chrome, '--timeout', seconds(5)]),
   nostatus: run('nostatus', chrome),
   garbage: run('garbage', [...chrome, '--timeout', '90']),
   scripterror: run('scripterror', [...chrome, '--timeout', '90']),
   flaky: run('flaky', all),
   noshot: run('noshot', [...chrome, '--screenshot', join(scratch, 'none.png')]),
-  nolog: run('pass', [...chrome, '--log', join(scratch, 'no-such-directory', 'log.txt')]),
+  nolog: run('pass', [...chrome, '--log', join(scratch, 'tmp')]),
+  newDirs: run('pass', [...chrome, '--log', join(made, 'a', 'log.txt'), '--screenshot', join(made, 'b', 'c', 'p.png'),
+                        '--driver-log', join(made, 'd', 'driver.log')], { ownDriverLog: false }),
+  noDir: run('pass', [...chrome, '--log', join(scratch, 'secret.txt', 'log.txt')]),
   nodriver: run('pass', [site, '--browser', 'chrome', '--driver', join(scratch, 'no-such-driver')]),
   noversion: run('noversion', chrome),
   notimeouts: run('notimeouts', chrome),
@@ -169,7 +178,7 @@ const R = {
   framefewer: run('pass', [...chrome, '--expect', fewer, '--frames']),
   failframes: run('fail', frames),
   livefail: run('livefail', pages),
-  livehang: run('livehang', [...pages, '--timeout', '8']),
+  livehang: run('livehang', [...pages, '--timeout', seconds(8)]),
   livebare: run('pass', [...chrome, '--live', bare, '--pages']),
   capsChrome: run('pass', [...chrome, '--autoplay', '--arg', '--use-angle=gl', '--binary', '/opt/x/chrome']),
   capsHeaded: run('pass', [...chrome, '--headed']),
@@ -213,8 +222,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       `sessions deleted ${r.record.deleted}, the driver is ${r.gone ? 'gone' : 'ALIVE'}`);
   row(existsSync(shot) && readFileSync(shot).subarray(1, 4).toString() === 'PNG' && r.record.screenshots === 1,
       'pass.screenshot', `${r.record.screenshots} picture(s) asked for`);
-  const logged = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
-  row(logged === r.out, 'pass.logfile', '--log holds what was printed');
+  row(textOf(logFile) === r.out, 'pass.logfile', '--log holds what was printed');
   row(/renderer: Fake Renderer \(software\)/.test(r.out) && r.record.lostContexts === 1, 'pass.renderer',
       'the WebGL renderer is named, and its throwaway context given back');
   row(r.record.urls.length === 1 && /^http:\/\/127\.0\.0\.1:\d+\/index\.html\?selftest=1$/.test(r.record.urls[0]),
@@ -266,13 +274,13 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /^page-check: 0\/1 passed\npage-check: FAIL: selftest: editor\.pixels$/m.test(r.out), 'fail.exit', said(r));
   row(r.record.deleted === 1 && r.gone, 'fail.cleanup');
   row(/^page-check: the driver's log: .*driver-\d+\.log$/m.test(r.err) && !/the driver said/.test(r.err)
-      && readFileSync(join(scratch, 'fail.txt'), 'utf8').includes('the driver\'s log:'), 'fail.driverlog',
+      && textOf(join(scratch, 'fail.txt')).includes('the driver\'s log:'), 'fail.driverlog',
       'a FAIL names the driver\'s log, on stderr and in --log');
 }
 {
   const r = R.running;
-  row(r.code === 2 && /no verdict within 6 s: the self-test \(the title was 'RUNNING'\)/.test(r.err), 'timeout.exit',
-      said(r));
+  row(r.code === 2 && r.err.includes(`no verdict within ${seconds(6)} s: the self-test (the title was 'RUNNING')`),
+      'timeout.exit', said(r));
   row(/^NOTE {5}a fake browser$/m.test(r.out) && !/passed/.test(r.out), 'timeout.log',
       'the log as last read is printed');
   row(r.record.deleted === 1 && r.gone && existsSync(lateShot), 'timeout.cleanup',
@@ -349,8 +357,15 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /no screenshot \(GET \/session\/\S+\/screenshot: HTTP 500 .*unable to capture screen/.test(r.out),
       'noshot.exit', 'a picture that cannot be taken does not change the verdict');
   const l = R.nolog;
-  row(l.code === 2 && /^page-check: ENOENT.*log\.txt/m.test(l.err) && l.record.deleted === 1 && l.gone, 'nolog.exit',
+  row(l.code === 2 && /^page-check: EISDIR/m.test(l.err) && l.record.deleted === 1 && l.gone, 'nolog.exit',
       `a log that cannot be written is not a pass (${said(l)})`);
+  const m = R.newDirs;
+  row(m.code === 0 && existsSync(join(made, 'a', 'log.txt')) && existsSync(join(made, 'b', 'c', 'p.png'))
+      && /> POST \/session /.test(textOf(join(made, 'd', 'driver.log'))), 'files.directories',
+      'the directories of --log, --screenshot and --driver-log are made');
+  const n = R.noDir;
+  row(n.code === 2 && n.record === null && /^page-check: .*secret\.txt.log\.txt: /m.test(n.err), 'files.refused',
+      'a file whose directory cannot be made is refused before anything is started');
   const d = R.nodriver;
   row(d.code === 2 && /no-such-driver did not start \(ENOENT\)/.test(d.err), 'nodriver.exit', said(d));
   const v = R.noversion;
@@ -371,7 +386,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       `the runner told to stop ends the session and the driver (${said(t)})`);
   const d = R.defaultLog;
   const path = join(scratch, 'tmp', 'page-check-chrome-driver.log');
-  row(d.code === 0 && existsSync(path) && /> POST \/session /.test(readFileSync(path, 'utf8'))
+  row(d.code === 0 && /> POST \/session /.test(textOf(path))
       && d.out.includes(`its log: ${path}`),
       'driverlog.default', 'with no --driver-log the log is written under the temporary directory, and named');
 }
@@ -450,7 +465,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /^page-check: FAIL: live\/b\.html: rows\.count$/m.test(r.out),
       'pages.fail', said(r));
   const h = R.livehang;
-  row(h.code === 2 && /no verdict within 8 s: live\/b\.html \(the title was 'RUNNING'\)/.test(h.err)
+  row(h.code === 2 && h.err.includes(`no verdict within ${seconds(8)} s: live/b.html (the title was 'RUNNING')`)
       && /^PASS {5}live\/a\.html/m.test(h.out) && /^NOTE {5}the live page b\.html$/m.test(h.out)
       && h.record.deleted === 1 && h.gone,
       'pages.hang', `a live page with no verdict ends the run, named (${said(h)})`);
@@ -489,6 +504,14 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   const d = R.capsFirefoxDefault.record.capabilities['moz:firefoxOptions'];
   row(d.prefs['media.volume_scale'] === '0.0' && !('media.autoplay.default' in d.prefs) && d.args.includes('-headless')
       && !('binary' in d), 'caps.firefox.default');
+  // A snap Firefox (a Linux machine that has one): the profile goes where the snap can read it, unless --binary
+  // names another Firefox. Anywhere else geckodriver is told nothing about it.
+  const snap = process.platform === 'linux' && existsSync('/snap/firefox/current');
+  const root = join(home, 'snap', 'firefox', 'common', 'page-check');
+  const argv = R.capsFirefoxDefault.record.argv.join(' ');
+  row(snap ? argv.endsWith(` --log debug --profile-root ${root}`) && existsSync(root)
+           : /^--port \d+ --log debug$/.test(argv),
+      'caps.firefox.snap', `${snap ? 'a snap Firefox' : 'no snap Firefox'}: ${argv}`);
 }
 {
   const refused = R.safariRefused;
