@@ -5,18 +5,25 @@
 // scenario: run by hand when a row or the page changes.
 //
 //   node Scripts/web/scenario/mutants.mjs --dir <site> --out <dir> [--only <mutant>[,<mutant>...]] [--list] [--keep]
-//                                         [--chrome <path>] [--chrome-flag <switch>]...
+//                                         [--timeout <s>] [--chrome <path>] [--chrome-flag <switch>]...
 //
 //   --dir <site>     the site as it is built (build-web/site): never written to
-//   --out <dir>      <dir>/<mutant>.log is the scenario's output on that mutant; <dir>/<mutant>/ is the mutated site,
-//                    removed afterwards unless --keep
+//   --out <dir>      <dir>/<mutant>.log is the scenario's output on that mutant; while it runs, <dir>/<mutant>/ is the
+//                    mutated site and <dir>/<mutant>.run/ the scenario's --out. Both go when that scenario has ended,
+//                    on every way out (the mutated site stays with --keep)
 //   --only, --list   these mutants only; the mutants' names and what each breaks
+//   --timeout <s>    each scenario's own bound (its --timeout; 480, its default): one that has not ended 30 s after
+//                    it is stopped, and its mutant fails
 //   --chrome, --chrome-flag   passed to the scenario
 //
 // A mutant passes when the scenario ends with exit 1 on it and every row the mutant names is red. A text that is to
-// be replaced must be in its file exactly once: when the page has changed so that it is not, the run ends with exit 2
-// and the mutant must be written again. Output: PASS|FAIL rows, then `mutants: N/M passed`. Exit 0, 1, or 2 (usage,
-// no site, a mutant that does not apply).
+// be replaced must be in its file exactly once: every mutant chosen is worked out before anything is written, and when
+// the page has changed so that one does not apply, the run ends there with exit 2, nothing copied, and the mutant must
+// be written again. Each scenario runs in a process group of its own, with the Chrome it starts. SIGINT, SIGTERM and
+// SIGHUP are passed on to it (its library then stops its Chrome); should it not have ended 10 s later, its whole
+// group is killed; then its directories go, its log says it was interrupted, and the run ends with exit 2. Output:
+// PASS|FAIL rows, then `mutants: N/M passed`. Exit 0, 1, or 2 (usage, no site, a mutant that does not apply, an
+// interrupted run).
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -172,6 +179,19 @@ const MUTANTS = [
     edits: [{ file: 'fcmp-worklet.js', find: '    this.quanta += 1;\n', put: '    this.quanta += 2;\n' }],
     groups: ['start'],
     red: ['start.audio'] },
+  { name: 'stops-between',
+    what: 'the engine stops by itself while the demo plays, between two groups: here once its counters were read for '
+          + 'the third time, which is at the end of the group start',
+    edits: [{ file: 'fcmp-worklet.js', find: "      else if (data && data.fcmp === 'stats') this.stats();\n",
+              put: "      else if (data && data.fcmp === 'stats') {\n"
+                   + '        this.stats();\n'
+                   + '        this.asked = (this.asked || 0) + 1;\n'
+                   + '        if (this.asked === 3) {\n'
+                   + "          this.port.postMessage({ fcmp: 'error', error: 'mutant: it stops' });\n"
+                   + '        }\n'
+                   + '      }\n' }],
+    groups: ['start', 'screens'],
+    red: ['screens.page', 'errors.records'] },
   { name: 'stray-records',
     what: 'the page posts a record of its own to the worklet every 20 ms: a Params record by its size and kind, '
           + 'and nothing the engine takes',
@@ -213,13 +233,13 @@ const MUTANTS = [
 ];
 
 const usage = 'usage: mutants.mjs --dir <site> --out <dir> [--only <mutant>[,<mutant>...]] [--list] [--keep] '
-            + '[--chrome <path>] [--chrome-flag <switch>]...';
+            + '[--timeout <s>] [--chrome <path>] [--chrome-flag <switch>]...';
 const cannot = (why) => {
   console.error(`mutants: ${why}`);
   process.exit(2);
 };
 
-const opt = { dir: '', out: '', only: '', list: false, keep: false, pass: [] };
+const opt = { dir: '', out: '', only: '', list: false, keep: false, timeoutS: 480, pass: [] };
 for (let i = 2; i < process.argv.length; i += 1) {
   const a = process.argv[i];
   const next = () => (i + 1 < process.argv.length ? process.argv[++i] : cannot(usage));
@@ -228,6 +248,7 @@ for (let i = 2; i < process.argv.length; i += 1) {
   else if (a === '--only') opt.only = next();
   else if (a === '--list') opt.list = true;
   else if (a === '--keep') opt.keep = true;
+  else if (a === '--timeout') opt.timeoutS = Number(next());
   else if (a === '--chrome' || a === '--chrome-flag') opt.pass.push(a, next());
   else cannot(usage);
 }
@@ -235,57 +256,131 @@ if (opt.list) {
   for (const m of MUTANTS) console.log(`${m.name.padEnd(20)} ${m.what}`);
   process.exit(0);
 }
-if (!opt.dir || !opt.out) cannot(usage);
+if (!opt.dir || !opt.out || !(opt.timeoutS > 0)) cannot(usage);
 const chosen = opt.only === '' ? MUTANTS : opt.only.split(',').map((name) => MUTANTS.find((m) => m.name === name)
   || cannot(`there is no mutant "${name}" (the mutants: ${MUTANTS.map((m) => m.name).join(', ')})`));
 const dir = resolve(opt.dir);
 const out = resolve(opt.out);
 if (!existsSync(join(dir, 'index.html'))) cannot(`${dir} is not the site: it has no index.html`);
-mkdirSync(out, { recursive: true });
 
-// The mutated copy of the site at `to`.
-function mutate(m, to) {
-  rmSync(to, { recursive: true, force: true });
-  cpSync(dir, to, { recursive: true });
+// Every chosen mutant's files as they will be, from the site's own, before anything is written: { m, files (name ->
+// text) }. One that does not apply ends the run here.
+const planned = chosen.map((m) => {
+  const files = new Map();
   for (const edit of m.edits) {
-    const file = join(to, edit.file);
-    const text = readFileSync(file, 'utf8');
+    let text = files.get(edit.file);
+    if (text === undefined) {
+      try {
+        text = readFileSync(join(dir, edit.file), 'utf8');
+      } catch {
+        cannot(`the mutant ${m.name} does not apply: the site has no ${edit.file}`);
+      }
+    }
     const found = edit.find === '' ? 1 : text.split(edit.find).length - 1;
     if (found !== 1) {
       cannot(`the mutant ${m.name} does not apply: ${edit.file} has "${edit.find.trim()}" ${found} times, not once`);
     }
-    writeFileSync(file, edit.find === '' ? edit.put + text : text.replace(edit.find, () => edit.put));
+    files.set(edit.file, edit.find === '' ? edit.put + text : text.replace(edit.find, () => edit.put));
   }
-}
+  return { m, files };
+});
+mkdirSync(out, { recursive: true });
 
-// The scenario on the site at `site`: { code, output }.
-const scenario = (site, m) => new Promise((ended) => {
-  const args = [join(import.meta.dirname, '..', 'scenario.mjs'), '--dir', site, '--out', join(out, `${m.name}.run`),
-                '--only', m.groups.join(','), ...(m.groups.includes('pictures') ? ['--png'] : []), ...opt.pass];
-  const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+const STOP_MS = 10000;                                // a scenario told to stop has this long, then its group is killed
+const GRACE_S = 30;                                   // past its own bound, a scenario that has not ended is stopped
+const LATE = Symbol('late');
+const within = (ms, promise) => {
+  let timer = 0;
+  return Promise.race([promise, new Promise((r) => { timer = setTimeout(() => r(LATE), ms); })])
+    .finally(() => clearTimeout(timer));
+};
+const signal = (pid, sig) => {
+  try {
+    process.kill(pid, sig);
+  } catch { /* gone */ }
+};
+
+// The mutant whose scenario runs: { site, run (its --out), child, done (resolves { code, output } once it has
+// closed) }; null between two.
+let current = null;
+let interrupted = '';                                 // the signal that ended the run
+let hung = false;                                     // the scenario overran its bound and was stopped
+
+// Stops the current scenario: `sig` to it, whose library then kills its Chrome by pid and whose driver removes its
+// scratch; should it not have closed within STOP_MS, its process group is killed whole (the Chrome it started is in
+// it). The group is signalled only while the scenario lives, when its number is still its own.
+const stop = async (c, sig) => {
+  signal(c.child.pid, sig);
+  if (await within(STOP_MS, c.done) !== LATE) return;
+  signal(-c.child.pid, 'SIGKILL');
+  await within(STOP_MS, c.done);
+};
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (interrupted !== '') return;
+    interrupted = sig;
+    if (current === null) process.exit(2);           // no scenario runs, and nothing of a mutant is on disk
+    stop(current, sig);                               // the loop below ends the run once the scenario has closed
+  });
+}
+// An exit with a scenario still running (an error of this script): its group is killed and its directories go.
+const removeCurrent = () => {
+  if (current === null) return;
+  if (current.child.exitCode === null && current.child.signalCode === null) signal(-current.child.pid, 'SIGKILL');
+  if (!opt.keep) rmSync(current.site, { recursive: true, force: true });
+  rmSync(current.run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+};
+process.on('exit', removeCurrent);
+
+// The scenario on the mutated site at `site`, in a process group of its own: `current` while it runs.
+const scenario = (site, run, m) => {
+  const args = [join(import.meta.dirname, '..', 'scenario.mjs'), '--dir', site, '--out', run, '--only',
+                m.groups.join(','), ...(m.groups.includes('pictures') ? ['--png'] : []), '--timeout',
+                String(opt.timeoutS), ...opt.pass];
+  const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
-  child.on('error', (error) => ended({ code: null, output: `${output}could not start: ${error.message}\n` }));
-  child.on('close', (code, signal) => ended({ code: code ?? signal, output }));
-});
+  const done = new Promise((ended) => {
+    child.on('error', (error) => ended({ code: null, output: `${output}could not start: ${error.message}\n` }));
+    child.on('close', (code, sig) => ended({ code: code ?? sig, output }));
+  });
+  current = { site, run, child, done };
+  const c = current;
+  const timer = setTimeout(() => {
+    hung = true;
+    stop(c, 'SIGTERM');
+  }, (opt.timeoutS + GRACE_S) * 1000);
+  return done.finally(() => clearTimeout(timer));
+};
 
 let passed = 0;
-for (const m of chosen) {
+for (const { m, files } of planned) {
   const site = join(out, m.name);
-  mutate(m, site);
+  const run = join(out, `${m.name}.run`);
+  rmSync(site, { recursive: true, force: true });
+  cpSync(dir, site, { recursive: true });
+  for (const [name, text] of files) writeFileSync(join(site, name), text);
   const t0 = Date.now();
-  const { code, output } = await scenario(site, m);
-  writeFileSync(join(out, `${m.name}.log`), output);
-  if (!opt.keep) rmSync(site, { recursive: true, force: true });
-  rmSync(join(out, `${m.name}.run`), { recursive: true, force: true });
+  hung = false;
+  const { code, output } = await scenario(site, run, m);
+  const ended = interrupted !== '' ? `mutants: interrupted by ${interrupted}\n`
+              : hung ? `mutants: no end within ${opt.timeoutS + GRACE_S} s: stopped\n` : '';
+  writeFileSync(join(out, `${m.name}.log`), output + ended);
+  removeCurrent();
+  current = null;
+  if (interrupted !== '') {
+    console.log(`mutants: interrupted by ${interrupted} (in the mutant ${m.name}): ${passed} passed before it`);
+    process.exit(2);
+  }
   const rows = output.split('\n').map((line) => /^(PASS|FAIL)\s+scenario ([^\s:]+)/.exec(line)).filter((r) => r);
   const red = rows.filter((r) => r[1] === 'FAIL').map((r) => r[2]);
   const green = m.red.filter((name) => !red.includes(name));
-  const ok = code === 1 && green.length === 0;
+  const ok = !hung && code === 1 && green.length === 0;
   if (ok) passed += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}     mutants ${m.name}: ${m.what}: the scenario ends with exit ${code} after `
-              + `${((Date.now() - t0) / 1000).toFixed(0)} s, ${red.length} of ${rows.length} rows red`
+              + `${((Date.now() - t0) / 1000).toFixed(0)} s${hung ? ' (it overran its bound and was stopped)' : ''}, `
+              + `${red.length} of ${rows.length} rows red`
               + `${green.length > 0 ? `; NOT red: ${green.join(', ')}` : ''}; red: ${red.join(', ') || 'none'}`);
 }
 console.log(`mutants: ${passed}/${chosen.length} passed`);

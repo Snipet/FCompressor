@@ -14,7 +14,7 @@
 //
 // The numbers at 48 kHz in the Mode the page starts in (CLEAN): 4 samples at STD, 61 at HQ, none at ECO, and the
 // budget on top (240 and 960). At another rate the rows hold the budget's part to rate x time and say so.
-import { OVERLAY, PID, ROLE, sleep } from './driver.mjs';
+import { OVERLAY, PID, ROLE } from './driver.mjs';
 
 export const page = 'new';
 
@@ -30,14 +30,10 @@ export async function run({ u, row, note }) {
     return { s, status: l.status, worklet: l.worklet, reply: s.tap.reply,
              latencies: [l.status.latency, l.worklet.latency, s.tap.reply.latency, s.tap.reply.frameLatency] };
   };
+  // Reads until `test` holds: through the driver's waiting, so the wait counts as every other does.
   const until = async (test, ms = 6000) => {
-    const t0 = Date.now();
-    for (;;) {
-      const r = await read();
-      if (test(r)) return { ok: true, r };
-      if (Date.now() - t0 >= ms) return { ok: false, r };
-      await sleep(40);
-    }
+    const w = await u.untilOn(read, test, ms);
+    return { ok: w.ok, r: w.v };
   };
   const start = await read();
   const rate = start.s.rate;

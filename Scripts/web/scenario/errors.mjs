@@ -3,7 +3,8 @@
 //
 //   errors.console   no uncaught error and no error-level console line on the demo page, on any page of the run (the
 //                    tab's console is kept across its documents). A renderer's warning is not an error.
-//   errors.records   on every page that ran: every record the editor posted reached the worklet (posted === records,
+//   errors.records   on every page of the run that was started: the demo still plays as its last group ends (or as the
+//                    group after it begins), every record the editor posted reached the worklet (posted === records,
 //                    read at one instant), the engine refused none, and the editor refused no reply
 import { REPLY } from './driver.mjs';
 
@@ -18,11 +19,17 @@ export async function browser(u) {
   return `${product}; ${renderer}`;
 }
 
-// The page's ledger as a group leaves it: null when the page does not run (nothing was posted to an engine).
+// The page's ledger as a group leaves it. { ran: false } for a page where the demo was never started (START not
+// pressed, or a start that did not come to play): nothing was posted to an engine there. A page that was started and
+// no longer plays (the demo stopped, or failed) is `broken`, as is one that cannot be looked at.
 export async function ledger(u) {
   try {
     const s = await u.look();
-    if (s.state !== 'running') return { ran: false };
+    if (s.state !== 'running') {
+      return u.tapped() ? { ran: true, broken: `the demo no longer plays: the page is ${s.state || 'not booted'} and `
+                                               + `says "${s.says}"` }
+                        : { ran: false };
+    }
     const l = await u.ledger();
     return { ran: true, posted: l.status.posted, records: l.worklet.records, refused: l.worklet.refused,
              lastRefusal: l.worklet.lastRefusal, ok: l.worklet.ok, editorRefused: l.status.refused,
@@ -47,6 +54,6 @@ export async function run(t, ledgers) {
   const posted = ran.reduce((sum, l) => sum + (l.posted || 0), 0);
   row(ran.length > 0 && bad.length === 0, 'records',
       bad.length > 0 ? `after ${bad[0].after}: ${JSON.stringify(bad[0])}`
-      : ran.length === 0 ? 'no page of the run was playing when its last group ended: there is nothing to count'
+      : ran.length === 0 ? 'the demo was started on no page of the run: there is nothing to count'
       : `${ran.length} page(s): ${posted} records posted, all taken by the worklet, none refused`);
 }

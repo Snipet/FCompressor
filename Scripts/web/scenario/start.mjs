@@ -66,7 +66,7 @@ export async function run({ u, row, scratch }) {
       + `${l.worklet.refused} refused by the worklet, ${l.status.refused} replies refused by the editor`);
 
   const c0 = JSON.parse(await u.p.ev(CLOCK));
-  await u.until((s) => s.tap.replies > fed.s.tap.replies + 20, 4000);
+  await u.pace((s) => s.tap.replies > fed.s.tap.replies + 20, 4000);   // the page plays on for twenty more frames
   const c1 = JSON.parse(await u.p.ev(CLOCK));
   const quanta = c1.worklet.quanta - c0.worklet.quanta;
   const least = (c1.before - c0.after) * c0.rate / QUANTUM;       // the clock's quanta between the two readings,

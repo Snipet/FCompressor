@@ -27,7 +27,8 @@
 // accessibility list, Module.fcmpA11y(); a row is judged by what reached the engine (the values of the reply it sent
 // back, the worklet's counters, the editor's status) or by the Panel's own state, never by what the script meant to
 // do. Nothing waits a fixed time for an outcome: every wait is on a condition and has a bound, and the NOTE `time`
-// says how near the slowest outcome came to its bound on this machine.
+// names the outcome that came nearest its bound on this machine and where in the groups it was waited for (of the
+// waits bounded at 10 s or less; driver.mjs, u.slowest, says which waits those are and which are left out).
 //
 // The groups (Scripts/web/scenario/<group>.mjs; each file says what its rows are):
 //   start      START: the context runs, telemetry arrives, nothing is refused
@@ -43,12 +44,15 @@
 //   hidden     the tab hidden and shown again: the pulls stop and resume, the audio goes on; RESUME
 //   zoom       the zoom steps a window allows, and the preference after a reload
 //   pictures   (--png only) the PNGs
-//   errors     always last: no uncaught error and no error-level console line on the demo page, and every record the
-//              editor posted was taken by the engine, on every page of the run
+//   errors     always last: no uncaught error and no error-level console line on the demo page, and on every page of
+//              the run that was started, the demo still plays and every record the editor posted was taken by the
+//              engine
 // A group either starts on a page of its own (a new document, the origin's storage cleared, START pressed) or goes on
-// with the page the group before it left, when that group passed; so a failing row names its group, and the groups
-// after it are not judged on what it left behind. An error of the driver inside a group is that group's FAIL row
-// `driver`, and the group ends there.
+// with the page the group before it left, when that group passed and the demo there still plays; so a failing row
+// names its group, and the groups after it are not judged on what it left behind. A demo that stopped between two
+// groups (it played as the group before ended, and no longer does) is the next group's FAIL row `page`, and
+// errors.records' (its ledger is taken then, after the group it followed); that group then goes on with a new page.
+// An error of the driver inside a group is that group's FAIL row `driver`, and the group ends there.
 //
 // Output: PASS|FAIL|NOTE rows, then `scenario: N/M passed`. Exit 0 every row passed; 1 a row failed; 2 it could not
 // run (usage, no site, no browser or one that went away, no verdict in time). No dependency; node 22 or later.
@@ -104,13 +108,10 @@ for (const file of ['index.html', 'main.js', 'fcmp-ui.js', 'fcmp-ui.wasm', 'fcmp
 }
 
 // ---- the run --------------------------------------------------------------------------------------------------------
-// --chrome reaches the library as its option and as $CHROME, set before the library loads (it may read it then).
-if (opt.chrome) {
-  if (!existsSync(opt.chrome)) cannot(`there is no browser at ${opt.chrome}`);
-  process.env.CHROME = opt.chrome;
-}
+// --chrome reaches the library as its option `chrome`.
+if (opt.chrome && !existsSync(opt.chrome)) cannot(`there is no browser at ${opt.chrome}`);
 // Imported only now: the library starts nothing, but it takes the process's signals as it loads.
-const { launch, user } = await import('./scenario/driver.mjs');
+const { launch, user, OUTCOME_MS } = await import('./scenario/driver.mjs');
 let over = false;                                     // the run's last line is out: nothing is printed after it
 const say = (line) => {
   if (!over) console.log(line);
@@ -171,9 +172,23 @@ try {
   for (const [index, group] of groups.entries()) {
     if (!session.alive()) throw new Error(`the browser went away (before the group ${group.name})`);
     if (!await u.there()) throw new Error(`the browser took the page's tab away (before the group ${group.name})`);
+    // The page the group before left, for this group to go on with: the demo there must still play. One that played
+    // as that group ended and no longer does stopped between the two: its ledger is taken now, after the group it
+    // followed (errors.records judges it), and this group says so before it goes on with a new page.
+    const goesOn = group.page === 'continue' && passed && u.tapped();
+    const plays = goesOn && await running();
+    let stopped = null;
+    if (goesOn && !plays) {
+      await t.leave();
+      stopped = ledgers[ledgers.length - 1];
+    }
     report.enter(group.name);
     try {
-      if (group.page === 'new' || (group.page === 'continue' && !(passed && await running()))) {
+      if (stopped !== null) {
+        report.row(false, 'page', `after the group ${stopped.after} and before this one: `
+                                  + `${stopped.broken || 'a look at the page failed'}; this group goes on with a new page`);
+      }
+      if (group.page === 'new' || (group.page === 'continue' && !plays)) {
         const loaded = await u.load();
         const started = loaded.ok ? await u.start() : { ok: false, why: 'the page did not come up' };
         if (!started.ok) throw new Error(`no running page to act on: ${started.why}`);
@@ -190,8 +205,10 @@ try {
   report.enter('errors');
   await errors.run(t, ledgers);
   report.enter('');
-  report.note('time', `${((Date.now() - t0) / 1000).toFixed(1)} s for ${chosen.join(', ')}; the outcome that came `
-                      + `nearest to its bound took ${u.slowest.ms} ms of ${u.slowest.bound}`);
+  const near = u.slowest;
+  report.note('time', `${((Date.now() - t0) / 1000).toFixed(1)} s for ${chosen.join(', ')}; of the waits for an `
+                      + `outcome bounded at ${OUTCOME_MS / 1000} s or less, the one nearest its bound took ${near.ms} `
+                      + `ms of ${near.bound}${near.at ? ` (at ${near.at})` : ''}`);
   say(report.summary());
   code = report.failed === 0 ? 0 : 1;
 } catch (error) {

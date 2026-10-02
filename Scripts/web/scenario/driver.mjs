@@ -1,6 +1,7 @@
 // Scripts/web/scenario/driver.mjs: what the scripted user (Scripts/web/scenario.mjs) needs of a browser, over the
-// project's one DevTools library, Scripts/web/cdp.mjs. This is the only file of the scenario that imports that library:
-// what the scenario uses of it is named under "The library" below, and what it lacks is added here.
+// project's one DevTools library, Scripts/web/cdp.mjs (card L-R's). This is the only file of the scenario that imports
+// that library: what the scenario uses of it is named under "The library" below; the user's own presses, waits and
+// looks are made here.
 //
 // The rules every group relies on:
 // - Input is real: mouse, key, wheel and drag events through the browser's own input pipeline (Input.dispatch*). No
@@ -9,38 +10,38 @@
 //   list says it is. A group never knows a coordinate of the layout.
 // - Nothing waits a fixed time for an outcome. until() polls the page (one look: the list, Module.fcmpStatus(), the
 //   page's own state, the port tap) until a condition holds, and gives up after a bound; the row then fails with what
-//   was last seen. The sleeps left are the user's own pace (a button held for 40 ms, 16 ms between the moves of a
-//   drag), never a wait for the page.
+//   was last seen. Every wait on the page goes through one function, wait(), which keeps u.slowest: the outcome that
+//   came nearest its bound, and where in the groups it was waited for. The sleeps left are the user's own pace (a
+//   button held for 40 ms, 16 ms between the moves of a drag), never a wait for the page.
 // - What is not timing of the page is not left to timing of the driver: the two presses of a double click carry their
 //   own timestamps (90 ms apart), so the editor counts them as one however long the browser took to answer the first.
 //
-// The library (cdp.mjs, as the lead phase's base has it; card L-R keeps these names), and all the scenario uses of it:
+// The library (Scripts/web/cdp.mjs), and all the scenario uses of it:
 //   serve(dir) -> { base, kill() }          the site on 127.0.0.1
-//   chrome({ width, height, profile, extra }) -> { page(null), send(method, params), kill(), pid }
-//                                           headless and muted, the profile given; `extra` are further switches,
-//                                           after the library's own (of two that say the same, the last wins: the
-//                                           GPU flag is overridden so)
+//   chrome({ width, height, profile, extra, chrome }) -> { page(null), send(method, params), audioRuns(), close(),
+//                                           gone() }
+//                                           one headless Chrome, muted, an AudioContext allowed to run without a
+//                                           gesture; `profile` is the run's own (under --out); `chrome` the
+//                                           executable (--chrome; '' leaves it to the library: $CHROME, the macOS
+//                                           application, PATH); `extra` further switches after the library's own (of
+//                                           two that say the same, the last wins: --chrome-flag overrides the GPU
+//                                           flag so). audioRuns(): whether an AudioContext renders there; close(): the
+//                                           orderly end (asked to close, killed after 2 s); gone(): '' while it runs
+//   NULL_SINK                               the switch for Chrome's own null audio sink
 //   a page: s(method, params), ev(expression), consoleLines, targetId, metrics(w, h, 1), go(url, 0), at(x, y),
 //           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), and the port tap:
 //           tap(), tapRead() -> { n, last: { v, snap }, reply: { flags, publish, latency, frameLatency, rate,
 //           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies }
 //   sleep, cleanUp, PID
-//   where the library has them (the base's has not): a browser's gone(), '' while Chrome lives, and its close()
+// The library stops the Chrome and the server it started on every way out of the process (its end, SIGINT, SIGTERM,
+// SIGHUP, an uncaught error); the run's scratch directory goes after it (launch() below). Nothing is done as this
+// file loads.
 // The presses, the drags, the double click, START and the pictures are made here, not with the library's own: they
 // carry timestamps, wait on conditions and write where the scenario is told to.
-// Requests to that card (the handoff lists them): the Chrome to run comes from --chrome, which the base's library
-// cannot be told (it is passed as the option `chrome` and as $CHROME); the base's library makes a directory `png`
-// beside itself as it loads (taken away again below while it is empty).
-import { mkdirSync, mkdtempSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import * as cdp from '../cdp.mjs';
-
-if (typeof cdp.PNG === 'string') {
-  try {
-    rmdirSync(cdp.PNG);
-  } catch { /* not there, or it holds something: not the scenario's to remove */ }
-}
 
 export const sleep = cdp.sleep;
 export const PID = cdp.PID;                           // a Params record's values, by name (fcdsp/params/Pid.h)
@@ -65,7 +66,9 @@ const NEAR_PX = 10;                                   // two presses nearer than
 // How long until() looks for an outcome before the row fails, unless the caller says: far longer than any outcome
 // takes on a fast machine (tens of milliseconds), for a software renderer on a loaded one.
 const BOUND_MS = 6000;
-const OUTCOME_MS = 10000;                             // a wait with a bound up to this is a wait for an outcome
+// The waits with a bound up to this are the ones u.slowest compares: the longer ones, for a page to boot (30 s), for
+// a START to load (20 s) and for the Panel to come to rest (20 s), take seconds by design.
+export const OUTCOME_MS = 10000;
 
 // One look at the page, as a JSON text: evaluated in the page, so it must stand alone.
 const LOOK = `JSON.stringify((() => {
@@ -109,24 +112,23 @@ const boxOf = (id) => `JSON.stringify((() => {
   return { x: r.left, y: r.top, w: r.width, h: r.height };
 })())`;
 
-// Whether an AudioContext renders in this browser: one made on a blank page runs and its clock moves within 3 s.
-const RENDERS = `(async () => {
-  const context = new AudioContext();
-  const t0 = performance.now();
-  const renders = () => context.state === 'running' && context.currentTime > 0;
-  while (!renders() && performance.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 50));
-  const ok = renders();
-  await context.close().catch(() => {});
-  return ok;
-})()`;
-const NULL_SINK = '--disable-audio-output';
+// Where a wait was asked for, from the stack of `asked` (an Error made as the wait began): the first two places in a
+// group's file (`scenario/quality.mjs:34, scenario/quality.mjs:58`: a helper of the group, then its caller), or, for
+// a wait of the runner's own (a group's page loaded and started), its place in scenario.mjs.
+const where = (asked) => {
+  const at = String(asked.stack).split('\n').slice(1)
+    .map((line) => /\/Scripts\/web\/(scenario(?:\.mjs|\/(?!driver\.mjs)[^/:]+\.mjs):\d+)/.exec(line)).filter((m) => m)
+    .map((m) => m[1]);
+  const inGroups = at.filter((place) => place.startsWith('scenario/'));
+  return (inGroups.length > 0 ? inGroups.slice(0, 2) : at.slice(0, 1)).join(', ');
+};
 
 // The server, one Chrome with a throwaway profile, and the scripted user's page. `flags` are further switches for
 // Chrome (a software renderer, no audio device); `chromePath` is --chrome; `out` is --out.
 //
 // The rows need a context that renders. On a machine with no audio device (a CI runner) Chrome may give one that
-// never does: then that Chrome is given up and another started with the browser's own null sink (NULL_SINK), which
-// renders at the same pace into nothing, and `audio` says so. Chrome is muted either way.
+// never does: then that Chrome is given up and another started with the browser's own null sink (cdp.NULL_SINK),
+// which renders at the same pace into nothing, and `audio` says so. Chrome is muted either way.
 export async function launch({ dir, out, chromePath = '', flags = [], width = 1280, height = 800 }) {
   // One scratch directory, under --out and gone when the run ends: Chrome's profiles, and the files the user drops.
   mkdirSync(out, { recursive: true });
@@ -140,29 +142,8 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
   const server = await cdp.serve(dir);
   let browser = null;
   let audio = '';
-  // Whether that Chrome still runs: the library says so, or its process does.
-  const alive = () => {
-    if (typeof browser.gone === 'function') return browser.gone() === '';
-    try {
-      process.kill(browser.pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  // The orderly end of a Chrome: asked to close, it ends its own helper processes; killed if it has not within 2 s.
-  const end = async () => {
-    if (browser === null) return;
-    if (typeof browser.close === 'function') {
-      await browser.close();                          // the library's own orderly end, where it has one
-    } else {
-      browser.send('Browser.close').catch(() => {});
-      for (const t0 = Date.now(); alive() && Date.now() - t0 < 2000;) await sleep(50);
-      browser.kill();
-    }
-  };
   const close = async () => {
-    await end();
+    if (browser !== null) await browser.close();
     server.kill();
     cdp.cleanUp();
     removeScratch();
@@ -170,12 +151,10 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
   const start = async (name, extra) => {
     const profile = join(scratch, name);
     mkdirSync(profile);
-    browser = await cdp.chrome({ width, height, profile, extra, chrome: chromePath || undefined });
-    const probe = await browser.page(null);
-    const renders = await probe.ev(RENDERS);
-    await browser.send('Target.closeTarget', { targetId: probe.targetId }).catch(() => {});
-    return renders;
+    browser = await cdp.chrome({ width, height, profile, extra, chrome: chromePath });
+    return browser.audioRuns();
   };
+  const NULL_SINK = cdp.NULL_SINK;
   try {
     if (await start('profile', flags)) {
       audio = flags.includes(NULL_SINK) ? `a context renders into the browser's null sink (${NULL_SINK}, as asked)`
@@ -183,7 +162,7 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
     } else if (flags.includes(NULL_SINK)) {
       throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK}`);
     } else {
-      await end();
+      await browser.close();
       if (!await start('profile-null-sink', [...flags, NULL_SINK])) {
         throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK} or without`);
       }
@@ -194,7 +173,8 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
     await close();
     throw error;
   }
-  return { base: server.base, browser, scratch, audio, alive, close };
+  // alive(): whether that Chrome still runs.
+  return { base: server.base, browser, scratch, audio, alive: () => browser.gone() === '', close };
 }
 
 // The scripted user on one tab: the library's page, and what the groups ask of it.
@@ -209,27 +189,54 @@ export async function user(browser, base) {
     s.tap = tapped ? await p.tapRead() : null;
     return s;
   };
-  // Looks until `test(look)` holds or `ms` have passed: { ok, s (the last look), ms }. A look that cannot be taken (the
-  // page is between two documents) or a test that throws (the look has no such item yet) does not hold.
-  u.until = async (test, ms = BOUND_MS) => {
+  // The outcome that came nearest to its bound: how much room the bounds leave on this machine, and `at`, where in the
+  // groups that wait was asked for. Every wait on the page is one: until() and what is made of it (steady, item, load,
+  // start, the hiding in hide), untilOn() (a group's own look, as quality's), untilLedger(), menuOpen(), menuGone();
+  // whether a row judges its result or the next step needs it. Not counted: a wait whose bound is over OUTCOME_MS (a
+  // page booting, a START loading, the Panel coming to rest), a wait that ran out (that is a FAIL row, or hide's other
+  // way), pace() (the page let run on for a while: no outcome) and engine.mjs's holds() (it takes its whole time by
+  // design).
+  u.slowest = { ms: 0, bound: BOUND_MS, at: '' };
+  // Asks `next()` every 40 ms until `test(answer)` holds or `ms` have passed: { ok, v (the last answer), ms }. With
+  // `forgiving`, an answer that cannot be had or a test that throws does not hold; otherwise that error ends the wait.
+  const wait = async (next, test, ms, { forgiving = false, pace = false } = {}) => {
+    const asked = new Error('the wait');              // its stack is read only for a wait that becomes the slowest
     const t0 = Date.now();
-    let s = null;
+    let v = null;
     for (;;) {
+      let held = false;
       try {
-        s = await u.look();
-        if (test(s)) {
-          const took = Date.now() - t0;
-          if (ms <= OUTCOME_MS && took / ms > u.slowest.ms / u.slowest.bound) u.slowest = { ms: took, bound: ms };
-          return { ok: true, s, ms: took };
+        v = await next();
+        held = !!test(v);
+      } catch (error) {
+        if (!forgiving) throw error;
+      }
+      if (held) {
+        const took = Date.now() - t0;
+        if (!pace && ms <= OUTCOME_MS && took / ms > u.slowest.ms / u.slowest.bound) {
+          u.slowest = { ms: took, bound: ms, at: where(asked) };
         }
-      } catch { /* the next look */ }
-      if (Date.now() - t0 >= ms) return { ok: false, s, ms: Date.now() - t0 };
+        return { ok: true, v, ms: took };
+      }
+      if (Date.now() - t0 >= ms) return { ok: false, v, ms: Date.now() - t0 };
       await sleep(40);
     }
   };
-  // The outcome that came nearest to its bound, of those that came: how much room the bounds leave on this machine.
-  // Not counted: the longer waits, for a page to boot and for the Panel to come to rest, which take seconds by design.
-  u.slowest = { ms: 0, bound: BOUND_MS };
+  // Looks until `test(look)` holds or `ms` have passed: { ok, s (the last look), ms }. A look that cannot be taken (the
+  // page is between two documents) or a test that throws (the look has no such item yet) does not hold.
+  u.until = async (test, ms = BOUND_MS) => {
+    const r = await wait(u.look, test, ms, { forgiving: true });
+    return { ok: r.ok, s: r.v, ms: r.ms };
+  };
+  // As until(), for a wait that only lets the page run on (a number of frames before a measure): it waits for no
+  // outcome, and is not counted in u.slowest.
+  u.pace = async (test, ms = BOUND_MS) => {
+    const r = await wait(u.look, test, ms, { forgiving: true, pace: true });
+    return { ok: r.ok, s: r.v, ms: r.ms };
+  };
+  // Asks a group's own `next()` (a look of its own, read with the ledger) until `test` holds: { ok, v, ms }. An error
+  // of `next` or `test` ends the wait.
+  u.untilOn = (next, test, ms = BOUND_MS) => wait(next, test, ms);
   // As until(), and every item of the list lies where it lay in the look before: for a look whose items are then
   // pressed where it says they are (a screen that is opening lists them, then moves them).
   u.steady = (test, ms = BOUND_MS) => {
@@ -282,15 +289,11 @@ export async function user(browser, base) {
     if (l.stopped) throw new Error(l.stopped);
     return l;
   };
-  // The ledger, read until `test(ledger)` holds or `ms` have passed: { ok, l (the last one) }.
+  // The ledger, read until `test(ledger)` holds or `ms` have passed: { ok, l (the last one) }. A page that does not
+  // play ends the wait with its error.
   u.untilLedger = async (test, ms = BOUND_MS) => {
-    const t0 = Date.now();
-    for (;;) {
-      const l = await u.ledger();
-      if (test(l)) return { ok: true, l };
-      if (Date.now() - t0 >= ms) return { ok: false, l };
-      await sleep(40);
-    }
+    const r = await wait(u.ledger, test, ms);
+    return { ok: r.ok, l: r.v };
   };
 
   // ---- the pointer and the keys -------------------------------------------------------------------------------------
@@ -369,23 +372,12 @@ export async function user(browser, base) {
 
   // ---- FunkGui's DOM menu -------------------------------------------------------------------------------------------
   u.menu = () => p.menu();
+  // The menu once it is open (null when none opened within `ms`), and whether it has gone within `ms`.
   u.menuOpen = async (ms = BOUND_MS) => {
-    const t0 = Date.now();
-    for (;;) {
-      const m = await p.menu();
-      if (m !== null && m.items.length > 0) return m;
-      if (Date.now() - t0 >= ms) return null;
-      await sleep(40);
-    }
+    const r = await wait(p.menu, (m) => m !== null && m.items.length > 0, ms);
+    return r.ok ? r.v : null;
   };
-  u.menuGone = async (ms = BOUND_MS) => {
-    const t0 = Date.now();
-    for (;;) {
-      if (await p.menu() === null) return true;
-      if (Date.now() - t0 >= ms) return false;
-      await sleep(40);
-    }
-  };
+  u.menuGone = async (ms = BOUND_MS) => (await wait(p.menu, (m) => m === null, ms)).ok;
   u.menuTexts = (m) => m.items.filter((i) => i.role !== 'separator')
     .map((i) => `${i.text}${i.disabled ? ' (disabled)' : ''}`).join(' | ');
   u.menuPress = async (m, text) => {
