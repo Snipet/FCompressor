@@ -64,9 +64,13 @@ FCMP_PRINT_EXPORT(fcmp_print_attach) std::int32_t fcmp_print_attach(std::int32_t
 FCMP_PRINT_EXPORT(fcmp_print_pull) std::int32_t fcmp_print_pull(std::uint8_t* out) noexcept;
 
 // Reads the fixed part of a Reply (n bytes at reply, at least 320), as web.engine.tail reads it after a timed run:
-// 1 when it is a well-formed reply of a configured engine whose silence gate is open and which has published
-// `blocks` blocks since it was configured (it ran every block: the editor was attached), 0 when it is not, -1 when it
-// is no reply.
+// 1 when it is a well-formed reply of a configured engine with the editor attached, whose silence gate is open and
+// whose UiFrame::publishCount is exactly `blocks`; 0 when it is not, -1 when it is no reply. That count is every block
+// the engine has run with the editor attached since it was made: it is NOT reset by a reconfigure (EngineHost.cpp,
+// "UiFrame::publishCount survives a reconfigure"), whether a second fcmp_web_configure or a Params record that
+// changes QUALITY or the lookahead budget made it. So `blocks` is a row's own count of blocks only on an engine
+// configured once and attached from its first block, as fcmp-tail.js's main.cost runs one; an engine armed by
+// fcmp-live.js's two records, or one that ran earlier rows, needs the difference from a Pull taken when it was armed.
 FCMP_PRINT_EXPORT(fcmp_print_running)
 std::int32_t fcmp_print_running(const std::uint8_t* reply, std::int32_t n, std::int32_t blocks) noexcept;
 

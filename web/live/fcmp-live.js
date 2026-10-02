@@ -16,8 +16,9 @@
 // not a fresh engine: a Mode or kernel change in a snapped block still crossfades. So a row is armed with TWO
 // records, the first at another QUALITY and then the row's own: the second one changes the setup, the engine
 // reconfigures in the message handler (WebEngine.cpp, applyParams), and EngineHost::configure builds a new engine,
-// snapped and cleared at the row's values. Then the worklet's counters are asked for before the render goes on: a
-// record posted to a context that is rendering can land after the quanta it was meant for.
+// snapped and cleared at the row's values (its audio state: the telemetry's UiFrame::publishCount runs on from the
+// engine's earlier rows). Then the worklet's counters are asked for before the render goes on: a record posted to a
+// context that is rendering can land after the quanta it was meant for.
 //
 // Contexts. Where the browser has OfflineAudioContext.suspend, the rows of one group share a context: the material of
 // each lies end to end in one buffer, and at each row's first frame the context is suspended, the next row is armed
@@ -177,7 +178,8 @@ export async function printModule(bytes) {
     },
     attach: (attached) => small(x.fcmp_print_attach(attached ? 1 : 0, pSmall)),
     pull: () => small(x.fcmp_print_pull(pSmall)),
-    // Whether a reply's fixed part says a configured engine that is not gated and has published `blocks` blocks.
+    // Whether a reply's fixed part says a configured engine that is not gated and has published exactly `blocks`
+    // blocks since it was made (a reconfigure does not reset the count: see fcmp_print_running).
     running(reply, blocks) {
       u8.set(reply.subarray(0, REPLY_FIXED_BYTES), pSmall);
       return x.fcmp_print_running(pSmall, REPLY_FIXED_BYTES, blocks) === 1;

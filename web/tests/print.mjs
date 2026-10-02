@@ -40,11 +40,10 @@
 // --via plain posts one snapped record per row, the trap of the scout's report: 110 of the 112 rows then fail (with
 // --contexts row, a processor per row as a browser without OfflineAudioContext.suspend needs it, 108). A
 // demonstration that the rows can fail; the test never runs with it.
-// Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
+// Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage or stopped by a signal.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
@@ -94,17 +93,37 @@ if (!need.every((path) => existsSync(path))) {
   finish();
 }
 
-// The expectation tool runs beside the rows below: it has threads of its own.
-const expectDir = mkdtempSync(join(tmpdir(), 'fcmp-expect-'));
+// The expectation tool runs beside the rows below (it has threads of its own) and writes into a directory of the
+// build tree, one run at a time as the gate's <build>/web-live. However this test ends, the tool is stopped and the
+// directory removed: at its exit (the end, a row that stops it, an error thrown) and on SIGINT, SIGTERM or SIGHUP
+// (then exit 2), the tool killed and gone before its directory is. Only a SIGKILL (ctest's timeout) skips both: the
+// tool then ends by itself within seconds, and the next run removes what is left before it starts.
+const expectDir = join(build, 'web-worklet-print.expect');
+const removeExpectDir = () => rmSync(expectDir, { recursive: true, force: true });
+removeExpectDir();
+let toolProcess = null;
+const toolRunning = () => toolProcess !== null && toolProcess.exitCode === null && toolProcess.signalCode === null;
+process.on('exit', () => {
+  if (toolRunning()) toolProcess.kill('SIGKILL');
+  removeExpectDir();
+});
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    const end = () => {
+      removeExpectDir();
+      process.exit(2);
+    };
+    if (!toolRunning()) return end();
+    toolProcess.once('exit', end);
+    toolProcess.kill('SIGKILL');
+    setTimeout(end, 2000);
+  });
+}
 const toolStarted = performance.now();
 const toolRun = new Promise((done) => {
   const child = spawn(process.execPath, [tool, '--site', site, '--live', live, '--out', expectDir],
                       { stdio: ['ignore', 'pipe', 'pipe'] });
-  // However this test ends (a row that stops it, an error thrown): no tool left running, no directory left behind.
-  process.on('exit', () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill();
-    rmSync(expectDir, { recursive: true, force: true });
-  });
+  toolProcess = child;
   let said = '';
   child.stdout.on('data', (chunk) => { said += chunk; });
   child.stderr.on('data', (chunk) => { said += chunk; });
@@ -293,7 +312,7 @@ const read = (name) => {
 };
 const extra = read('fcmp-extra.json');
 const tail = read('fcmp-tail.json');
-rmSync(expectDir, { recursive: true, force: true });
+removeExpectDir();
 note(`${TEST} time: ${compared} rows in ${(rowsMs / 1000).toFixed(1)} s; the expectation tool `
      + `${(ran.ms / 1000).toFixed(1)} s beside them`);
 if (row(ran.code === 0 && extra !== null && tail !== null, 'expect.ran',
