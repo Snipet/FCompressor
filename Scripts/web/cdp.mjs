@@ -13,6 +13,8 @@
 //                                   over a pipe, not a port: a Chrome whose driver is gone ends by itself.
 //   browser.page(url)               a tab: evaluate, real input events (mouse, keys, wheel), a screenshot, the demo
 //                                   page's own state and the taps on the worklet's port.
+//   browser.renderer()              the WebGL renderer's name; browser.audioRuns(): whether an AudioContext renders
+//                                   (NULL_SINK is the flag for a machine where none does).
 //   Report, PID, sleep, pasteboardCount, HERE, PNG: what a scenario needs besides.
 //
 // Every Chrome and every server started here is stopped on every way out of the process: its end, SIGINT, SIGTERM,
@@ -169,6 +171,10 @@ export const chromePlaces = (path = '', env = process.env, platform = process.pl
   (path ? `--chrome ${path}` : env.CHROME ? `$CHROME (${env.CHROME})`
         : `${platform === 'darwin' ? `${MAC_CHROME}, then ` : ''}${PATH_NAMES.join(', ')} on PATH`);
 
+// Chrome's own null sink, as a flag for `extra`: every AudioContext renders into nothing, at the pace of a device.
+// For a machine with no audio device (a CI runner), where a context may say it runs and never render.
+export const NULL_SINK = '--disable-audio-output';
+
 // The GPU path: 'metal' (ANGLE on Metal), 'swiftshader' (the software renderer, as on a CI runner with no GPU), or
 // the flags themselves. Not given: by platform, Metal on macOS and SwiftShader elsewhere.
 export function gpuFlags(gpu = undefined, platform = process.platform) {
@@ -193,7 +199,7 @@ export function gpuFlags(gpu = undefined, platform = process.platform) {
 //                   $SCOUT_FLAGS
 //   png             where page.shot writes a relative name (PNG)
 //   answerMs        how long one DevTools command may take (60 s)
-// Answers { send, page, kill, close, version, renderer, profile, pid, path, flags, gone, said }.
+// Answers { send, page, kill, close, version, renderer, audioRuns, profile, pid, path, flags, gone, said }.
 export async function chrome({ width = 1280, height = 800, extra = [], profile = '', chrome: path = '',
                                gpu = undefined, flags = undefined, autoplay = true,
                                sandbox = process.env.FCMP_WEB_LIVE_NO_SANDBOX !== '1', png = PNG,
@@ -611,8 +617,27 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
       await p.close();
     }
   };
-  return { send, page, kill, close, renderer, version: product, profile, pid: browser.pid, path: exe, flags: all,
-           gone: () => gone, said: () => said };
+  // Whether an AudioContext renders here: one made on a blank page runs, and its clock moves, within `ms`. Only a
+  // Chrome started with `autoplay` can say yes. On a machine with no audio device it may say no: NULL_SINK as an
+  // `extra` flag then gives a Chrome whose contexts render into nothing, at the same pace.
+  const audioRuns = async (ms = 3000) => {
+    const p = await page(null);
+    try {
+      return await p.ev(`(async () => {
+        const context = new AudioContext();
+        const t0 = performance.now();
+        const runs = () => context.state === 'running' && context.currentTime > 0;
+        while (!runs() && performance.now() - t0 < ${Number(ms)}) await new Promise((r) => setTimeout(r, 50));
+        const ok = runs();
+        await context.close().catch(() => {});
+        return ok;
+      })()`);
+    } finally {
+      await p.close();
+    }
+  };
+  return { send, page, kill, close, renderer, audioRuns, version: product, profile, pid: browser.pid, path: exe,
+           flags: all, gone: () => gone, said: () => said };
 }
 
 // The system pasteboard's change count (no content is read); -1 where it cannot be asked (not macOS).

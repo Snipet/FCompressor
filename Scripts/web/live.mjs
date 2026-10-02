@@ -23,7 +23,9 @@
 //   4. In a second Chrome with --autoplay-policy=no-user-gesture-required (a running AudioContext, still muted):
 //      selftest.autoplay, which must have judged page.audio; then page.<name> for every *.html of <live>, by the
 //      live-page protocol (document.title RUNNING, then PASS or "FAIL: <row>"; rows in #funkgui-log). A page that
-//      gives no verdict within the timeout is a FAIL that names the timeout. No page there is a NOTE.
+//      gives no verdict within the timeout is a FAIL that names the timeout. No page there is a NOTE. Where no
+//      AudioContext renders in that Chrome (a machine with no audio device), it is started again with the
+//      browser's null sink (--disable-audio-output), and a NOTE says so.
 //   5. scenario: Scripts/web/scenario.mjs --dir <site> --out <out>/scenario --chrome <the browser> as a child
 //      process, when the file is there: its rows are copied, and it passes when it ends "scenario: N/N passed" with
 //      exit 0. A scenario that is not there is a NOTE; one that does not run by its contract is a FAIL.
@@ -51,7 +53,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
          appendFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chrome, chromePlaces, cleanUp, findChrome, gpuFlags, HERE, serve, sleep } from './cdp.mjs';
+import { chrome, chromePlaces, cleanUp, findChrome, gpuFlags, HERE, NULL_SINK, serve, sleep } from './cdp.mjs';
 
 export const VIEWS = ['panel', 'chars.sidechain', 'chars.colour', 'modebrowser', 'presetbrowser', 'settings'];
 export const THEMES = [0, 1];
@@ -364,9 +366,9 @@ async function rows(opt, exe, tally) {
   const built = readOr(join(opt.dir, 'built-from.txt'), 'no built-from.txt').trim();
   tally.say(`web-live: ${opt.dir} (${built}) at ${server.base}/, live ${opt.live}, expect ${opt.expect}`);
 
-  const launch = async (autoplay) => {
+  const launch = async (autoplay, extra = []) => {
     try {
-      return await chrome({ ...WINDOW, chrome: exe, autoplay, gpu: gpuFlags(opt.gpu), flags: [],
+      return await chrome({ ...WINDOW, chrome: exe, autoplay, gpu: gpuFlags(opt.gpu), flags: [], extra,
                             png: join(out, 'png') });
     } catch (e) {
       throw new NoVerdict(`${e.message}${/sandbox/i.test(e.message) && process.env.FCMP_WEB_LIVE_NO_SANDBOX !== '1'
@@ -582,7 +584,17 @@ async function rows(opt, exe, tally) {
   await browser.close();
 
   // ---- 4. with a running context: the self-test again, then the live pages ---------------------------------------
+  // On a machine with no audio device (a CI runner) Chrome may give a context that never renders: that Chrome is
+  // given up for one with the browser's own null sink, which renders into nothing at the same pace.
   browser = await launch(true);
+  if (!await browser.audioRuns().catch(() => false)) {
+    if (browser.gone() !== '') throw new NoVerdict(browser.gone());
+    await browser.close();
+    browser = await launch(true, [NULL_SINK]);
+    const runs = await browser.audioRuns().catch(() => false);
+    tally.note(`audio: no AudioContext renders in this Chrome (no audio device): it was started again with its null `
+               + `sink (${NULL_SINK}), where one ${runs ? 'renders' : 'does not render either'}`);
+  }
   await runPage('selftest.autoplay', `${server.base}/index.html?selftest=1`, 'selftest.autoplay.log',
                 (log) => (/^PASS +web\.selftest page\.audio:/m.test(log) ? ''
                   : 'the page did not judge page.audio: under the autoplay flag its context must run'));

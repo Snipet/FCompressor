@@ -21,7 +21,8 @@
 //   summary.*    the count, the last line and the exit code of a run
 //   chrome.*     how the library starts Chrome, seen by a stand-in executable that writes down its arguments and
 //                ends: always --mute-audio and --headless=new, a throwaway profile that is gone afterwards, the GPU
-//                flag by platform, the autoplay and sandbox switches only where asked, a missing browser said
+//                flag by platform, the autoplay, sandbox and null-sink switches only where asked, a missing
+//                browser said
 //   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch;
 //                what a run removes from its results directory
 //   script.*     what web-live.sh runs, seen by a stand-in for node: the twelve ui.dump calls of the contract with
@@ -431,6 +432,11 @@ try {
         && runs[4].args.includes('--no-sandbox') && byEnv.args.includes('--no-sandbox'), 'chrome.autoplay_and_sandbox',
         'the autoplay switch only where it is asked for; --no-sandbox only by the option or '
         + 'FCMP_WEB_LIVE_NO_SANDBOX=1');
+
+    const nullSink = await started({ extra: [cdp.NULL_SINK] });
+    row(cdp.NULL_SINK === '--disable-audio-output' && runs.every((r) => !r.args.includes(cdp.NULL_SINK))
+        && nullSink.args.includes(cdp.NULL_SINK) && nullSink.args.includes('--mute-audio'), 'chrome.null_sink',
+        `${cdp.NULL_SINK} only where it is asked for (a machine where no AudioContext renders), and muted there too`);
 
     const onPath = join(scratch, 'bin on PATH');
     mkdirSync(onPath);
