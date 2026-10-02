@@ -10,7 +10,8 @@
 // this test, and replace the table with the "measured now" lines it prints at the end.
 //
 // Measured at web Sprint D's merge (the three cards with their review fixes, FunkGui v0.14.0), Emscripten 6.0.3, on
-// arm64 macOS (another host's build of the same toolchain may differ by a little: the 20 % is also for that).
+// arm64 macOS (another host's build of the same toolchain may differ by a little: the 20 % is also for that). main.js
+// was measured again in the web lead phase (the self-test's pixel rule by renderer class, on a still frame).
 const MEASURED = {
   'built-from.txt': [73, 89],
   'demo.css': [3240, 1418],
@@ -24,7 +25,7 @@ const MEASURED = {
   'licences/JetBrainsMono-OFL.txt': [4399, 1969],
   'licences/THIRD-PARTY.txt': [62770, 9135],
   'loop.js': [7409, 2658],
-  'main.js': [39399, 12925],
+  'main.js': [42478, 13899],
 };
 const HEADROOM = 1.2;
 //
