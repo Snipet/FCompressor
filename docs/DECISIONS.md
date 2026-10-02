@@ -1114,7 +1114,9 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       frames byte for byte. **One difference from native, by rule:** a hard edge through device pixel centres in y is
       filled one row further down by WebGL. Only clips make such an edge, and with a browser's
       dpi = physical height / 640 whole logical px are not always device px, so a view snaps its clip edges with
-      `Canvas::snapY` (FCompressor has one, the preset list: Sprint C; at every native zoom the snap changes nothing).
+      `Canvas::snapY` (FCompressor has one, the preset list: Sprint C; where the dpi is a multiple of 0.25, which is
+      every macOS window and every integer Linux scale, the snap changes nothing; at a fractional Linux desktop scale
+      the list's edge can move by one device row, onto the row Vulkan and WebGL then agree on).
       The sink is not corrected instead: that would cost an off-screen pass per frame.
   - **Model code out of JUCE** (Sprint B, card E-1; no behaviour change, zero drift): `Source/plugin/portable/` (lint
     `plugin.portable`: no JUCE, no FunkGui but `ParamPort.h`) holds `EditHistory` and the new `FactoryData` (the factory
@@ -1128,8 +1130,40 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     menu rows that could not fail; a second sink on one canvas breaking the first's recovery; the page runner hanging
     when the browser died; a shader check with a prefix-match hole; an exception on the preview thread terminating the
     host; the no-thread fallback aborting under wasm; the fill rule undocumented).
-  - **Not done yet:** the editor in the browser (Sprints C and D: the views on the host services, the web facade, the
-    web host, the page); Safari and Firefox; hosting. Nothing is published until the user decides where.
+  - **The editor without JUCE** (Sprint C, cards E-2 and E-3). The four views that showed menus, choosers and the
+    clipboard through JUCE (`EditControls`, `PresetStrip`, `PresetBrowser`, `Settings`) ask `HostServices` instead;
+    `Panel`'s host proxy forwards the calls. The same items, anchors, themes and callbacks, so nothing a user sees
+    changes; `EditorHost` does with JUCE what the views did. Lint rule `editor.juce`: nothing under `Source/editor`
+    outside `gpu/` includes or names JUCE (`#if JUCE_MAC` would turn silently false there, so the command key is the
+    host's `commandKeyIsMeta()`). IMPORT and EXPORT are enabled only when the host reports a file chooser, and say so
+    when it does not (the browser host has none). The UI probes use `funkgui::HeadlessGuiScope`, and `HeadlessHost`'s
+    scripted replies let them test a menu, a chooser and the clipboard for the first time (`ui.edits`, `ui.presets`,
+    `ui.settings`: 55 new spec rows; two rows of `ui.settings` that asserted "a headless host copies nothing" are
+    replaced by name). The editor outside `gpu/` compiles as wasm32 (`fcmp_web_editor_check`).
+  - **The web facade** (Sprint C, card W-F; `Source/web/facade`, lint `web.facade`: no Emscripten header, no
+    `EngineHost`, the engine reached only through an `EngineLink` that moves `WebProtocol` bytes). `WebFacade` is a
+    `ProcessorFacade`: 30 values held as JUCE holds them (`HostValue` restates JUCE's two-value parameter model on
+    purpose, so the raw values are the processor's bit for bit, including a one-ulp drag step and Init after an
+    undo); nothing is posted while a batch is open, the outermost end posts one Params record with the snap, a write
+    outside a batch posts one record; an explicit `pull()` per frame fills a mirror `HistoryRing`; `WebPresets` is the
+    factory bank and the session's user presets with the processor's rules. **Proven natively:** `proc.webnull` runs a
+    `Processor` beside a `WebFacade` over the engine module (a loopback link, 128-frame quanta) through gestures,
+    batches, presets, undo, A/B, quality changes and a reset, for all 14 Modes: output, the 30 raw values, every
+    `UiFrame` and every history column are equal bit for bit. `proc.webpresets` and `ui.web` cover the presets and a
+    Panel over the facade. Not in the protocol yet: the DSP load figures (the settings screen shows a dash in the
+    browser) and an acknowledgement of a refused record.
+  - **FunkGui v0.13.0: the browser host** (Sprint C, cards G-D and G-E). `WebHost` is `EditorHost`'s counterpart on a
+    canvas: one `WebGlSink`, `EditorHost`'s frame order on `requestAnimationFrame` (60 Hz, 12 Hz idle, nothing while
+    hidden), the zoom fitted to the window, its own DOM listeners (pointer capture, JUCE's modifiers, click counts and
+    wheel units, `EditorHost`'s key table), `preventDefault` only for what the Panel consumed. `WebServices` is the
+    popup menu as DOM elements with the native menu's metrics and rules, and the clipboard; `WebPrefs` keeps
+    `UiPreferences` in localStorage. No file chooser, no IME, no accessibility mirror. The gallery is a web page
+    (`tools/GalleryWeb`); three pages run in headless Chrome under CTest (`fg.web.page`, `fg.web.host`,
+    `fg.web.services`), and the menu was opened by a real click in a real browser. **Known differences from the
+    plugin:** Chrome gives no scroll-direction flag, so under natural scrolling on a Mac a value control turns the
+    other way; a notched mouse wheel arrives in pixels and moves a stepped control about two detents.
+  - **Not done yet:** the editor in the browser (Sprint D: the editor module, the UI probes under node, the page);
+    Safari and Firefox; hosting. Nothing is published until the user decides where.
 
 ## HardwareReverb migration
 

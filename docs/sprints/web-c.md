@@ -91,7 +91,9 @@ DELIVERABLES
            Panel's undo chord pass host->commandKeyIsMeta(). No `#if JUCE_MAC` (it would turn silently false).
         5. PresetBrowser's list clip is pushed with its y edges on device pixels:
            top = c.snapY(kList.y), height = c.snapY(kList.bottom()) - top (ADR-93: WebGL fills a tie row
-           differently; at every native dpi the snap changes nothing, which the goldens prove).
+           differently; where the dpi is a multiple of 0.25, i.e. every macOS window and every integer Linux
+           scale, the snap changes nothing, which the goldens prove; the review noted that at a fractional
+           Linux desktop scale an edge can move by one device row, which the lead accepts).
         6. The four views and their headers include and name nothing of JUCE's and no funkgui/juce/MenuLook.h.
            `cmake -DFCMP_SOURCE_DIR="$WT" -DFCMP_LINT_EDITOR_JUCE=ON -P cmake/LintDeps.cmake` reports 0 violations.
         7. Probes ui_edits.cpp, ui_presets.cpp, ui_settings.cpp: funkgui::HeadlessGuiScope in place of JUCE's GUI
