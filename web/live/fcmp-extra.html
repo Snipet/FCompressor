@@ -13,10 +13,10 @@
 addEventListener('error', function (event) {
   if (globalThis.fcmpLive) return;
   document.getElementById('funkgui-log').textContent
-    += 'FAIL     web.live.print uncaught: ' + (event.message || 'a script did not load') + '\n';
+    += 'FAIL     web.live.extra uncaught: ' + (event.message || 'a script did not load') + '\n';
   document.title = 'FAIL: uncaught';
 }, true);
 </script>
-<script type="module" src="fcmp-print.js"></script>
+<script type="module" src="fcmp-extra.js"></script>
 </body>
 </html>
