@@ -24,9 +24,9 @@
 //                             since no frame of the call gets new telemetry; then a text: the line `hooks dpi <g>
 //                             clock <fixed|free> theme <n> dt <g> settle <n> drawn <0|1> idle <0|1>` (the dpi, clock,
 //                             theme and dt of the frame last recorded; the frames this call ran; whether the last of
-//                             them was drawn; whether the Panel is at rest after it, which on a page whose audio runs
-//                             is what that one frame left: never a rest the call made) and FrameText.h's lines for
-//                             that frame. Each of its frames is the host's own, as the clock runs them (the tick, the
+//                             them was drawn; whether the Panel is at rest after it: on a page whose audio runs, as
+//                             that one frame left it, never a rest the call ticked it into) and FrameText.h's lines
+//                             for that frame. Each of its frames is the host's own, as the clock runs them (the tick, the
 //                             draw), with one Pull for the call; a second call in a row runs one frame. Nothing in the
 //                             module or the page calls it. An empty text after the shutdown
 //   Module.fcmpA11y()         a JSON text, read and nothing changed: the Panel's state (screen, overlay, scTab: the
