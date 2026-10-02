@@ -1,4 +1,4 @@
-// Source/plugin/EditHistory.h — undo/redo of the editor's edits and the A/B compare (v1.2, ADR-91): the EditAccess the
+// Source/plugin/portable/EditHistory.h — undo/redo of the editor's edits and the A/B compare (v1.2, ADR-91): the EditAccess the
 // processor (and a probe's FakeFacade) hands the preset strip. Plain C++ over a small Host interface, so the real
 // processor and the probes run the same code.
 //

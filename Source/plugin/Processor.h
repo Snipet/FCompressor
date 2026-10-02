@@ -33,10 +33,10 @@
 // makePresetAccess (Presets.cpp), both with contexts this processor builds.
 #pragma once
 
-#include "plugin/EditHistory.h"
 #include "plugin/ProcessorFacade.h"
 #include "plugin/SetupWatcher.h"
 #include "plugin/State.h"
+#include "plugin/portable/EditHistory.h"
 
 #include "fcdsp/core/Rt.h"
 #include "fcdsp/engine/EngineHost.h"

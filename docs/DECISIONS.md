@@ -899,10 +899,11 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
 - **ADR-91 Undo/redo and an A/B compare (v1.2).** The last of the lead's pick. ADR-23 rejected JUCE's `UndoManager`
   because the APVTS pushes host automation into its transactions, so undo would revert automation. This history is
   the plugin's own and records only what the editor writes.
-  - **`plugin/EditHistory.h`**, plain C++ over a small Host interface, so the processor and `FakeFacade` run the same
-    code. The processor's ports (a `HistoryPort` wrapping `JuceParamPort`) report every gesture's begin and end, and
-    its batches report theirs (a preset, a Mode change, any multi-write). At the outermost begin the history reads the
-    tracked raw values and the preset's uuid; at the outermost end, whatever changed is ONE entry. A gesture-only
+  - **`plugin/portable/EditHistory.h`** (`plugin/EditHistory.h` until ADR-93's web Sprint B), plain C++ over a small
+    Host interface, so the processor and `FakeFacade` run the same code. The processor's ports (a `HistoryPort`
+    wrapping `JuceParamPort`) report every gesture's begin and end, and its batches report theirs (a preset, a Mode
+    change, any multi-write). At the outermost begin the history reads the tracked raw values and the preset's uuid;
+    at the outermost end, whatever changed is ONE entry. A gesture-only
     bracket keeps only the parameters it had a gesture on, so host automation meanwhile is neither recorded nor undone.
     Tracked: the 22 Mode-filtered parameters, `mode`, `extkey`, `output`; never `quality` or `labudget` (latency),
     `bypass` or the monitoring latches. Undo and redo are exact raw writes in one batch, each announced to the host as a
@@ -1097,12 +1098,38 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     run alone; `.tail` judges the worst pair of adjacent 1/3 s windows over three runs after a warm-up, at ×2 in the
     wasm build and with ADR-87's scale natively. Natively four of them run in every gate, so the wrapper cannot drift
     from the engine.
-  - **FunkGui** (card G-A, for v0.12.0): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core),
-    the committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a
-    storage backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
-  - **Not done yet:** the editor in the browser (Sprints B to D: host-neutral menus, file chooser and clipboard, the
-    WebGL2 sink, the web facade, the page); a browser run of anything (node stands in for V8 so far); hosting. Nothing
-    is published until the user decides where.
+  - **FunkGui v0.12.0** (Sprints A and B; additive, no golden row moves).
+    - *Core without JUCE* (G-A): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core), the
+      committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a storage
+      backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
+    - *Host services* (G-B): a popup menu, a file chooser and the clipboard are plain `HostServices` calls
+      (`services`, `showMenu`, `dismissMenus`, `chooseFiles`, `copyText`, `commandKeyIsMeta`), served by `EditorHost`
+      over JUCE exactly as FCompressor's four views do it today, and by `HeadlessHost` with scripted replies, so a
+      probe can test a menu for the first time. The views switch to them in Sprint C; until then nothing in the plugin
+      calls them.
+    - *The WebGL2 sink* (G-C): `FunkGui::web`'s `WebGlSink` mirrors `BgfxSink` (one draw call, one program, the R8
+      atlas) with shader text generated from the same `shaders/*.sc` by CMake alone and pinned by `fg.shader.web`.
+      **Run in a real browser** (Chromium, ANGLE Metal, this Mac; the first browser run of anything here): against
+      SoftRaster the frame differs by at most 1 per channel, and a forced context loss and restore gives the same
+      frames byte for byte. **One difference from native, by rule:** a hard edge through device pixel centres in y is
+      filled one row further down by WebGL. Only clips make such an edge, and with a browser's
+      dpi = physical height / 640 whole logical px are not always device px, so a view snaps its clip edges with
+      `Canvas::snapY` (FCompressor has one, the preset list: Sprint C; at every native zoom the snap changes nothing).
+      The sink is not corrected instead: that would cost an off-screen pass per frame.
+  - **Model code out of JUCE** (Sprint B, card E-1; no behaviour change, zero drift): `Source/plugin/portable/` (lint
+    `plugin.portable`: no JUCE, no FunkGui but `ParamPort.h`) holds `EditHistory` and the new `FactoryData` (the factory
+    bank's entry table and default filling as plain rows; `FactoryBank.cpp` converts them, and the bank and its
+    revision are byte-identical). `PreviewWorker` runs on `std::thread` with the computation in `PreviewCompute`
+    (no exception leaves the worker, as with `juce::Thread`; where threads cannot exist it computes inline).
+    `FakeFacade` reads `FactoryData` and has no JUCE in it. `RenderInfo::renderer` replaces the settings screen's
+    hard-coded "METAL", which was wrong on Linux.
+  - **Review** (Sprint B: six reviewers by area, two skeptics per finding): eight low-severity defects confirmed and
+    fixed, each with a check shown to fail on the old code (a separators-only menu that was taken but never opened; live
+    menu rows that could not fail; a second sink on one canvas breaking the first's recovery; the page runner hanging
+    when the browser died; a shader check with a prefix-match hole; an exception on the preview thread terminating the
+    host; the no-thread fallback aborting under wasm; the fill rule undocumented).
+  - **Not done yet:** the editor in the browser (Sprints C and D: the views on the host services, the web facade, the
+    web host, the page); Safari and Firefox; hosting. Nothing is published until the user decides where.
 
 ## HardwareReverb migration
 

@@ -28,6 +28,10 @@
 #                   include, no fcdsp/engine/EngineHost.h include, no EngineHost token
 #   editor.gpu      Source/editor/** outside gpu/ includes no funkgui/gpu/* or bgfx header
 #   plugin.editor   Source/plugin/** includes nothing under editor/, except CreateEditorGpu.cpp
+#   plugin.portable Source/plugin/portable/** is the plugin's model code with no JUCE in it (ADR-93: the browser demo's
+#                   facade builds from the same files): no JUCE header, no funkgui/* header except
+#                   funkgui/params/ParamPort.h (ProcessorFacade.h's own), and from plugin/ only plugin/portable/* and
+#                   plugin/ProcessorFacade.h
 #   product         Source/** never uses JucePlugin_* (product constants come from the generated FcmpProduct.h)
 #   web.juce        Source/web/** includes no JUCE header (ADR-93: the browser demo has no JUCE)
 #   web.engine      Source/web/engine/** is portable C++ over fcdsp alone: no Emscripten header, no funkgui/*, nothing
@@ -176,6 +180,7 @@ foreach(_f IN LISTS _files)
   set(_in_editor FALSE)
   set(_in_editor_gpu FALSE)
   set(_in_plugin FALSE)
+  set(_in_portable FALSE)
   set(_in_web FALSE)
   set(_in_web_engine FALSE)
   if(_rel MATCHES "^web/")
@@ -197,6 +202,9 @@ foreach(_f IN LISTS _files)
     endif()
   elseif(_rel MATCHES "^plugin/")
     set(_in_plugin TRUE)
+    if(_rel MATCHES "^plugin/portable/")
+      set(_in_portable TRUE)
+    endif()
   endif()
   get_filename_component(_base "${_f}" NAME)
 
@@ -247,6 +255,17 @@ foreach(_f IN LISTS _files)
     elseif(_in_plugin)
       if(_inc MATCHES "(^|/)editor/" AND NOT _base STREQUAL "CreateEditorGpu.cpp")
         _lint_fail("${_f}" ${_n} plugin.editor "plugin/ never includes editor/ (only CreateEditorGpu.cpp): ${_code}")
+      endif()
+      if(_in_portable)
+        if(_inc MATCHES "(^|/)(juce_[^/]*|JuceHeader\\.h)(/|$)")
+          _lint_fail("${_f}" ${_n} plugin.portable "plugin/portable is JUCE-free: ${_code}")
+        endif()
+        if(_inc MATCHES "(^|/)funkgui/" AND NOT _inc MATCHES "(^|/)funkgui/params/ParamPort\\.h$")
+          _lint_fail("${_f}" ${_n} plugin.portable "plugin/portable includes no FunkGui header but ParamPort.h: ${_code}")
+        endif()
+        if(_inc MATCHES "(^|/)plugin/" AND NOT _inc MATCHES "(^|/)plugin/(portable/[^/]+|ProcessorFacade\\.h)$")
+          _lint_fail("${_f}" ${_n} plugin.portable "plugin/portable includes only plugin/portable/* and plugin/ProcessorFacade.h: ${_code}")
+        endif()
       endif()
     endif()
     if(_in_web AND _inc MATCHES "(^|/)(juce_[^/]*|JuceHeader\\.h)(/|$)")

@@ -1,5 +1,5 @@
-// Source/plugin/EditHistory.cpp — undo/redo and the A/B compare (see EditHistory.h).
-#include "plugin/EditHistory.h"
+// Source/plugin/portable/EditHistory.cpp — undo/redo and the A/B compare (see EditHistory.h).
+#include "plugin/portable/EditHistory.h"
 
 #include "fcdsp/params/HostParams.h"
 

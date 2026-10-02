@@ -28,9 +28,9 @@
 //                    before, and 0.5 s later the level is 18 dB up; the same for switching to a slot 18 dB louder
 #include "ProbeRegistry.h"
 
-#include "plugin/EditHistory.h"
 #include "plugin/Processor.h"
 #include "plugin/ProcessorFacade.h"
+#include "plugin/portable/EditHistory.h"
 
 #include "fcdsp/params/HostParams.h"
 #include "fcdsp/params/Pid.h"
