@@ -1151,7 +1151,9 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     batches, presets, undo, A/B, quality changes and a reset, for all 14 Modes: output, the 30 raw values, every
     `UiFrame` and every history column are equal bit for bit. `proc.webpresets` and `ui.web` cover the presets and a
     Panel over the facade. Not in the protocol yet: the DSP load figures (the settings screen shows a dash in the
-    browser) and an acknowledgement of a refused record.
+    browser) and an acknowledgement of a refused record. For Sprint D's page: `pull()` before each `Panel::tick`,
+    `resync()` when the worklet's port connects, and `setEngineSetup` with the AudioContext's rate before the editor
+    opens (until a reply arrives the facade knows no rate of its own).
   - **FunkGui v0.13.0: the browser host** (Sprint C, cards G-D and G-E). `WebHost` is `EditorHost`'s counterpart on a
     canvas: one `WebGlSink`, `EditorHost`'s frame order on `requestAnimationFrame` (60 Hz, 12 Hz idle, nothing while
     hidden), the zoom fitted to the window, its own DOM listeners (pointer capture, JUCE's modifiers, click counts and

@@ -23,11 +23,10 @@
 #                         --export-dynamic, which would export the C++ runtime's default-visible symbols too.
 #   fcmp_web_facade_check web only (Sprint C): Source/plugin/portable and Source/web/facade compiled as wasm32 under
 #                         the warning list. Compile-only: a static library nothing links.
-#   fcmp_web_editor_check web only (Sprint C), not in `all`: the editor outside gpu/, the portable model code and
-#                         the facade over FunkGui's JUCE-free core, compiled as wasm32. Build it by name
-#                         (cmake --build build-web --target fcmp_web_editor_check). The module and the probes under
-#                         node are Sprint D.
-#   fcmp_web              web only: the engine, the checks and fcmp_web_facade_check (the `web` build preset's target).
+#   fcmp_web_editor_check web only (Sprint C): the editor outside gpu/, the portable model code and the facade over
+#                         FunkGui's JUCE-free core, compiled as wasm32 (the CI web job's proof that the editor is
+#                         JUCE-free and 32-bit clean). The module and the probes under node are Sprint D.
+#   fcmp_web              web only: the engine, the checks and the two compile checks (the `web` build preset's target).
 # Natively, fcmp_probe_plugin links fcmp_web_engine_lib and compiles Source/web/facade/*.cpp (Sprint C), so the
 # probes proc.webnull, proc.webpresets and ui.web hold the facade to the real processor.
 # None of them exists before its directory has a source, so the skeleton configures on its own.
@@ -119,7 +118,7 @@ if(FCOMPRESSOR_WEB)
   # The whole editor over FunkGui's JUCE-free core. FunkGui's own sources compile in this target (an INTERFACE
   # library's sources), so our warning list goes on our files only, as in fcmp_probe_plugin.
   set(_fcmp_web_editor_own ${FCMP_EDITOR_SOURCES} ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
-  add_library(fcmp_web_editor_check STATIC EXCLUDE_FROM_ALL ${_fcmp_web_editor_own})
+  add_library(fcmp_web_editor_check STATIC ${_fcmp_web_editor_own})
   fcmp_warn_sources(${_fcmp_web_editor_own})
   target_include_directories(fcmp_web_editor_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
   target_link_libraries(fcmp_web_editor_check PRIVATE fcdsp FunkGui::core)
@@ -129,7 +128,7 @@ endif()
 
 if(FCOMPRESSOR_WEB)
   add_custom_target(fcmp_web)
-  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_facade_check)
+  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_facade_check fcmp_web_editor_check)
     if(TARGET ${_t})
       add_dependencies(fcmp_web ${_t})
     endif()

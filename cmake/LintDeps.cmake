@@ -35,9 +35,9 @@
 #   product         Source/** never uses JucePlugin_* (product constants come from the generated FcmpProduct.h)
 #   editor.juce     Source/editor/** outside gpu/ is JUCE-free (ADR-93, web Sprint C): no JUCE header, no FunkGui
 #                   header that needs JUCE (funkgui/juce/*, funkgui/presets/*, JuceParamPort.h), and no juce::,
-#                   JUCE_* or jassert token (a `#if JUCE_MAC` would turn silently false once the include is gone).
-#                   Switched on by -DFCMP_LINT_EDITOR_JUCE=ON until the four views have left JUCE (card E-2); the lead
-#                   makes it permanent then.
+#                   JUCE_*, jassert, MenuLook or ownerComponent token (a `#if JUCE_MAC` would turn silently false
+#                   once the include is gone; a menu, a chooser and the clipboard are HostServices calls). The same
+#                   sources build for the browser.
 #   web.juce        Source/web/** includes no JUCE header (ADR-93: the browser demo has no JUCE)
 #   web.engine      Source/web/engine/** is portable C++ over fcdsp alone: no Emscripten header, no funkgui/*, nothing
 #                   under plugin/ or editor/ (the same sources build natively for the checks, and the module is
@@ -264,16 +264,15 @@ foreach(_f IN LISTS _files)
       if(NOT _in_editor_gpu AND _inc MATCHES "(^|/)(funkgui/gpu|bgfx|bx|bimg)/")
         _lint_fail("${_f}" ${_n} editor.gpu "GPU headers only under Source/editor/gpu/: ${_code}")
       endif()
-      if(FCMP_LINT_EDITOR_JUCE AND NOT _in_editor_gpu)
+      if(NOT _in_editor_gpu)
         if(_inc MATCHES "(^|/)(juce_[^/]*|JuceHeader\\.h)(/|$)")
           _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ is JUCE-free: ${_code}")
         endif()
         if(_inc MATCHES "(^|/)funkgui/(juce|presets)/" OR _inc MATCHES "(^|/)funkgui/params/JuceParamPort\\.h$")
           _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ includes no FunkGui header that needs JUCE: ${_code}")
         endif()
-        string(REGEX REPLACE "juce::Component[ \t]*\\*" "" _nojc "${_code}")
-        if(_nojc MATCHES "(^|[^A-Za-z0-9_])(juce::|namespace[ \t]+juce([^A-Za-z0-9_]|$)|JUCE_[A-Z0-9_]+|jassert)")
-          _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ names nothing of JUCE's (juce::, JUCE_*, jassert; juce::Component* excepted): ${_code}")
+        if(_code MATCHES "(^|[^A-Za-z0-9_])(juce::|namespace[ \t]+juce([^A-Za-z0-9_]|$)|JUCE_[A-Z0-9_]+|jassert|MenuLook|ownerComponent)")
+          _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ names nothing of JUCE's (juce::, JUCE_*, jassert, MenuLook, ownerComponent): ${_code}")
         endif()
       endif()
     elseif(_in_plugin)
