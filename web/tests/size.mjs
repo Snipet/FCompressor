@@ -10,7 +10,7 @@
 // this test, and replace the table with the "measured now" lines it prints at the end.
 //
 // Measured at web Sprint D's merge (the three cards with their review fixes, FunkGui v0.14.0), Emscripten 6.0.3, on
-// arm64 macOS. The modules' bytes are the same on every host (wasm32, one toolchain); built-from.txt is one line.
+// arm64 macOS (another host's build of the same toolchain may differ by a little: the 20 % is also for that).
 const MEASURED = {
   'built-from.txt': [73, 89],
   'demo.css': [3240, 1418],

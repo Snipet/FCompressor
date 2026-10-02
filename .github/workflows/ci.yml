@@ -163,7 +163,7 @@ jobs:
   web:
     name: Web engine (wasm)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45                         # the UI probes run as wasm32 under node here too (web Sprint D)
     env:
       FCMP_EMSCRIPTEN: 6.0.3                    # cmake/FcmpDeps.cmake's pin (the configure fails on any other)
     steps:

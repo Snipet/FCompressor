@@ -1164,8 +1164,77 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     `fg.web.services`), and the menu was opened by a real click in a real browser. **Known differences from the
     plugin:** Chrome gives no scroll-direction flag, so under natural scrolling on a Mac a value control turns the
     other way; a notched mouse wheel arrives in pixels and moves a stepped control about two detents.
-  - **Not done yet:** the editor in the browser (Sprint D: the editor module, the UI probes under node, the page);
-    Safari and Firefox; hosting. Nothing is published until the user decides where.
+  - **The UI probes as wasm32** (Sprint D, card W-N). The web tree builds `fcmp_probe_web` (the editor outside
+    `gpu/`, the model code, the facade, the engine archive and every `layer=ui` probe) and runs it under node against
+    the SAME goldens: 219 `ui.*` tests (all 14 Modes; `ui.font` too, since without JUCE the atlas is FunkGui's
+    committed macOS bake) pass with no drift and no overlay. A probe's first line takes `platform=` as a comma list
+    over `apple|linux|web`.
+  - **The preview without a thread** (Sprint D; the lead's decision). One step-response preview costs 22 to 72 ms
+    natively and 89 to 428 ms under node (`ui.previewcost`'s notes, per Mode: bus-g fastest, mu-67 slowest), far over a
+    frame. A browser's main thread has no thread to give it, so there an asynchronous `PreviewWorker` computes a
+    request inside `tick()` only once no newer request has replaced it for 0.15 s of tick time: a control that moves
+    stays smooth (a 30-frame drag runs 0 jobs; it ran 10), and the attack and release curves of the CHARACTERISTICS
+    screen follow 0.24 to 0.58 s after the control rests, with one held frame. With a thread (every native build)
+    nothing changes; the synchronous option still computes at once. `ui.previewcost` holds the rule natively too,
+    through a switch that refuses the thread (`previewWorkerRefuseThread`, never called by the product). **Follow-up,
+    not started:** the preview in a Worker, which would let the curves track a drag; it needs the user's go.
+  - **The editor module** (Sprint D, card U-1; `Source/web/ui`, lint `web.ui` and `web.emscripten`: the one place an
+    Emscripten header may appear). `fcmp-ui.js` + `fcmp-ui.wasm` (1,323,756 bytes; 447,506 gzip): the unchanged Panel
+    over a `WebFacade` on a `funkgui::WebHost` (the native editor's zoom steps, default and preference key; the fit
+    asks that the canvas fits the window), preferences in localStorage, ADR-85's new-instance QUALITY and LOOKAHEAD
+    applied on page load, the DISPLAY row saying WEBGL2 and the browser's name. `PortLink` is the `EngineLink` over the
+    worklet's `MessagePort`: a Pull travels in one recycled 16,704-byte `ArrayBuffer`, every other record in a buffer
+    of its own size, always transferred and never a view of the module's memory; a record from a replaced port or to a
+    destroyed link is ignored. The module pulls from FunkGui v0.14.0's `WebHostConfig::beforeTick`, so a pull follows
+    the host's cadence (60 Hz, 12 Hz idle, none while hidden). `Module.fcmpSelftest()` draws one frame through the sink
+    and reads it back in the same call against SoftRaster (the largest difference 1 of 255 at the ratios a display
+    gives; below about 0.8 device px per logical px, a browser zoomed far out, a few tens of samples differ and the
+    row says so).
+  - **The page** (Sprint D, card U-2; `web/`, plain ES modules, no framework, nothing from another origin, every URL
+    relative). START creates the AudioContext in the click, loads `fcmp-worklet.js` (the engine instantiated with an
+    empty import object; `process()` copies in, calls `fcmp_web_process` and copies out with no allocation, no message
+    and no throw, for any frame count and any input shape) and connects the module's port. The source is a loop
+    synthesised in the page (drums, bass and a pad; peaks at -3 dBFS, about -14.7 dBFS RMS; no audio file is in the
+    repository) or a file the user drops or opens, which never leaves the browser. The page says what it cannot do
+    before START (no WebAssembly, an insecure context, no AudioWorklet, no WebGL2, `file:`), shows RESUME when the
+    browser pauses audio, and lists what differs from the plugin. The seam between the module and the page (the
+    names on `Module`, the wire rule, who pulls) is written down in `docs/sprints/web-d.md`.
+  - **The site** (`cmake --build --preset web` makes `build-web/site`; `cmake/FcmpWebSite.cmake`): 13 files,
+    2,096,442 bytes (643,434 gzip): the page, the two modules, the licences (GPL-3.0, the typeface's OFL, and the
+    toolchain's own texts for musl, libc++, libc++abi, compiler-rt and Emscripten in `THIRD-PARTY.txt`) and
+    `built-from.txt`, which says `clean` only when FCompressor's tree is clean AND the FunkGui in the modules is the
+    pinned commit itself, so the footer never links a commit that is not the source. The gate's stamp in the web tree
+    covers the modules and the site. **Nothing publishes it.**
+  - **Tests** (Sprint D). Under node, beside the 219 probes: `web.ui.port` (PortLink and a facade as wasm over a real
+    MessageChannel to the shipped engine: the wire rule, one carrier for 60 pulls judged by buffer identity, the
+    patience rule, a replaced port, a destroyed and a displaced link), `web.worklet` (the shipped script over the
+    shipped engine: bit-equal to the module driven directly, every input shape and a source that stops, the reply in
+    the buffer the Pull came in, 0 bytes allocated over 35,000 `process()` calls), `web.loop`, `web.size` (exactly the
+    expected files, each within 20 % of its measured size, no absolute or cross-origin URL written), `web.page` and
+    `web.site`: 232 tests in the web tree. In a browser (`?selftest=1`, FunkGui's page runner on headless Chrome;
+    by hand, not in CI): the engine's self-check hash in a real AudioWorklet and on the main thread, 10 s rendered
+    through the worklet with 0 of 480,000 frames differing from the engine driven directly (about 100x real time),
+    silence costing no more than signal, the atlas hash, the pixel row, frames drawn and replies arriving; an
+    uncaught error is a FAIL that no PASS replaces. In a real browser the lead pressed START, dragged THRESHOLD
+    (the gain reduction and the curve followed) and opened CHARACTERISTICS.
+  - **Review** (Sprint D: ten reviewers by area, two skeptics per finding): 20 low-severity findings confirmed and
+    fixed, each with a row shown to fail on the old code; the preview worker, FunkGui's hook and the joints between
+    the cards came back clean. Most were rows that could not fail (a stale preview result in four Modes, the carrier
+    judged by the link's own counter, a worklet fed its stale input); the rest were edges: an editor failure that is
+    not an `abort()` never reached the page, a fault during START was dropped, the browser's name came from the brand
+    list's placeholder entry, an out-of-range new-instance preference was applied, the self-test compared at a
+    non-proportional buffer, the zoom's fit reserved the header twice.
+  - **Known differences from the plugin** (the page lists them): no preset import or export, and user presets last
+    until the page is closed; no side-chain key input; the DSP load shows a dash; with no input the engine idles and
+    the meters stop; a QUALITY or LOOKAHEAD change rebuilds the engine on the audio thread and may click; the wheel
+    under reversed scrolling and a notched wheel (above); typed values take plain keys only; no host parameter menu;
+    the CHARACTERISTICS curves follow a control once it rests; desktop browsers with WebGL2 only, nothing for a screen
+    reader inside the editor.
+  - **Not done:** the plan's lead phase (a browser gate in CI, `Scripts/web-live.sh`, uploading the site, the final
+    documents) and hosting: not authorised yet, and nothing is published until the user decides where. Safari and
+    Firefox have not been run (the page is written to the specifications; Chrome only was measured). Sound was
+    checked by numbers, never by ear, by the lead. The zoom's fit is measured once, so a page loaded in a narrow
+    window keeps a slightly large margin when widened.
 
 ## HardwareReverb migration
 
