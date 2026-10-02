@@ -720,9 +720,16 @@ namespace fcmp::ui
                         else
                             l.add(sel != nullptr ? "FACTORY PRESETS CANNOT BE DELETED" : "SELECT ONE OF YOUR PRESETS");
                         break;
-                    case Action::importFiles: l.add("IMPORT .FCMPPRESET FILES   OR DROP THEM ON THE PLUGIN"); break;
+                    // Without a chooser the two cells are disabled (actionEnabled) and their lines say so, selection or
+                    // not; IMPORT's promises no drop either (no service bit says whether such a host takes files).
+                    case Action::importFiles:
+                        l.add(hasChooser(ctx_) ? "IMPORT .FCMPPRESET FILES   OR DROP THEM ON THE PLUGIN"
+                                               : "IMPORTING PRESET FILES IS NOT AVAILABLE HERE");
+                        break;
                     case Action::exportFile:
-                        if (sel != nullptr)
+                        if (!hasChooser(ctx_))
+                            l.add("EXPORTING PRESET FILES IS NOT AVAILABLE HERE");
+                        else if (sel != nullptr)
                         {
                             l.add("EXPORT '");
                             l.add(sel->shownName);

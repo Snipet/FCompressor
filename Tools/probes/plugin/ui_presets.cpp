@@ -69,7 +69,9 @@
 //               open: the answers reach nobody, and nothing was dismissed from a destructor.
 //   import.no_chooser*   a host that reports no file chooser: IMPORT and EXPORT are disabled in a11y, out of the Tab
 //               order and show no hand; pressing them asks no host for anything; the row menu still opens, with
-//               Export... and Import... off.
+//               Export... and Import... off. The footer line under the hand says each is not available here, EXPORT's
+//               with or without a selection, and fits the footer's line; with the chooser (import.chooser_hand) the
+//               lines are what they were.
 //   a11y.*      ids non-zero and unique with the browser open and editing; press / focus on a row; the filter radios.
 //   draw.*      every BROWSER_* primitive inside the browser's ground, the strip's inside its rectangle, no missing
 //               glyph in any state drawn here.
@@ -106,12 +108,14 @@
 #include <funkgui/canvas/Tags.h>
 #include <funkgui/core/Col.h>
 #include <funkgui/core/Theme.h>
+#include <funkgui/core/TypeScale.h>
 #include <funkgui/panel/HeadlessGuiScope.h>
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/params/GestureController.h>
 #include <funkgui/text/FontService.h>
+#include <funkgui/text/TextFit.h>
 
 #include <algorithm>
 #include <array>
@@ -1040,7 +1044,8 @@ namespace
             r.panel->filesDropped({ "/tmp/Snare Room.fcmppreset", "/tmp/readme.txt" });
             r.settle();
             const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::importFile);
-            const funkgui::A11yItem* row = rowNamed(rows(r), "Snare Room");
+            const std::vector<funkgui::A11yItem> shown = rows(r);    // kept: `row` points into it
+            const funkgui::A11yItem* row = rowNamed(shown, "Snare Room");
             P.eq("import.one_call_per_file", b(calls.size() == 1 && calls[0].text == "/tmp/Snare Room.fcmppreset"), 1);
             P.eq("import.opens_and_loads", b(r.open() && row != nullptr && row->checked && r.presets().applies() == 1
                                              && r.presets().current() == 15
@@ -1625,6 +1630,48 @@ namespace
         P.eq("import.no_chooser_drop", r.presets().count(Call::importFile), 1);
     }
 
+    // The footer line under the hand over IMPORT and EXPORT, with the chooser and without it.
+    void chooserHands(Probe& P)
+    {
+        // The hand's line over IMPORT, over EXPORT with a user row selected, and over EXPORT with nothing selected (the
+        // FACTORY filter does not show that row).
+        const auto lines = [](Rig& r) {
+            const auto over = [&r](uint32_t id) {
+                const funkgui::Rect cell = bounds(r, id);
+                r.host->move(cell.centreX(), cell.centreY());
+                r.host->tick(1, kDt);
+                return std::string(r.ctx().hand.spec);
+            };
+            openBrowser(r);
+            selectRow(r, kUserFirst);
+            std::array<std::string, 3> l;
+            l[0] = over(browserId(PB::kImportLocal));
+            l[1] = over(browserId(PB::kExportLocal));
+            r.a11y(browserId(PB::kFilterLocal0 + 1), funkgui::A11yAction::press);
+            l[2] = over(browserId(PB::kExportLocal));
+            return l;
+        };
+        const auto fits = [](const Rig& r, const std::string& line) {
+            return funkgui::text::fits(r.ctx().atlas, line.c_str(), funkgui::type::kLabel, L::footer::kSpecLineW);
+        };
+        {
+            Rig r;
+            const std::array<std::string, 3> l = lines(r);
+            P.eq("import.chooser_hand", b(l[0] == "IMPORT .FCMPPRESET FILES   OR DROP THEM ON THE PLUGIN"
+                                          && l[1] == "EXPORT 'KICK ROOM' TO A FILE"
+                                          && l[2] == "SELECT A PRESET TO EXPORT"), 1);
+        }
+        {
+            Rig r;
+            LesserHost lesser(*r.panel, *r.host, funkgui::hostservice::fileChooser);
+            const std::array<std::string, 3> l = lines(r);
+            P.eq("import.no_chooser_import_hand",
+                 b(l[0] == "IMPORTING PRESET FILES IS NOT AVAILABLE HERE" && fits(r, l[0])), 1);
+            P.eq("import.no_chooser_export_hand",
+                 b(l[1] == "EXPORTING PRESET FILES IS NOT AVAILABLE HERE" && l[2] == l[1] && fits(r, l[1])), 1);
+        }
+    }
+
     // ---- a11y, drawing, writes ------------------------------------------------------------------------------------------
 
     void a11yAndDraw(Probe& P, const std::string& pictures)
@@ -1961,5 +2008,6 @@ FCMP_PROBE(ui, presets)
     choosers(P);
     viewsGone(P);
     noChooser(P);
+    chooserHands(P);
     return P.finish();
 }
