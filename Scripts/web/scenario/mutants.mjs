@@ -139,6 +139,65 @@ const MUTANTS = [
     edits: [{ file: 'fcmp-ui.js', find: '', put: 'Storage.prototype.setItem = function () {};\n' }],
     groups: ['zoom'],
     red: ['zoom.steps', 'zoom.reload', 'zoom.refit'] },
+  { name: 'stored-zoom',
+    what: 'every page load finds a zoom of 100 % stored',
+    edits: [{ file: 'fcmp-ui.js', find: '',
+              put: "try { localStorage.setItem('FCompressor.uiZoom', '100'); } catch (e) { /* no storage */ }\n" }],
+    groups: ['zoom'],
+    red: ['zoom.default', 'zoom.reload'] },
+  { name: 'stays-asleep',
+    what: 'once its tab was hidden, the editor takes it for hidden ever after',
+    edits: [{ file: 'fcmp-ui.js', find: '',
+              put: '{ let slept = false;\n'
+                   + "  document.addEventListener('visibilitychange', () => {\n"
+                   + "    if (document.visibilityState === 'hidden') slept = true;\n  }, true);\n"
+                   + "  Object.defineProperty(Document.prototype, 'hidden', "
+                   + "{ get() { return slept || this.visibilityState === 'hidden'; } });\n}\n" }],
+    groups: ['hidden'],
+    red: ['hidden.shown'] },
+  { name: 'dead-resume',
+    what: 'a press on RESUME does nothing',
+    edits: [{ file: 'main.js', find: "else if (state === 'running') context.resume().catch(() => {});", put: '' }],
+    groups: ['context', 'hidden'],
+    red: ['context.restored.still', 'hidden.resume'] },
+  { name: 'draws-nothing',
+    what: 'no draw call reaches WebGL: the canvas stays empty',
+    edits: [{ file: 'fcmp-ui.js', find: '',
+              put: "for (const name of ['drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced']) "
+                   + '{\n  WebGL2RenderingContext.prototype[name] = function () {};\n}\n' }],
+    groups: ['context', 'pictures'],
+    red: ['context.still', 'context.still.restored', 'context.restored.still', 'pictures.bus-g', 'pictures.clean'] },
+  { name: 'double-quanta',
+    what: 'the worklet counts every render quantum twice',
+    edits: [{ file: 'fcmp-worklet.js', find: '    this.quanta += 1;\n', put: '    this.quanta += 2;\n' }],
+    groups: ['start'],
+    red: ['start.audio'] },
+  { name: 'stray-records',
+    what: 'the page posts a record of its own to the worklet every 20 ms: a Params record by its size and kind, '
+          + 'and nothing the engine takes',
+    edits: [{ file: 'main.js', find: '',
+              put: 'setInterval(() => {\n'
+                   + '  const node = globalThis.fcmpPage && globalThis.fcmpPage.node();\n'
+                   + '  if (!node) return;\n'
+                   + '  const record = new ArrayBuffer(140);\n'
+                   + '  new Uint16Array(record, 6, 1)[0] = 1;\n'
+                   + '  node.port.postMessage(record, [record]);\n'
+                   + '}, 20);\n' }],
+    groups: ['start', 'screens'],
+    red: ['screens.nothing-edited', 'errors.records'] },
+  { name: 'no-menu',
+    what: 'a menu is taken away as soon as it is shown',
+    edits: [{ file: 'fcmp-ui.js', find: '',
+              put: 'new MutationObserver(() => {\n'
+                   + "  for (const menu of document.querySelectorAll('[data-funkgui-menu]')) menu.remove();\n"
+                   + '}).observe(document.documentElement, { childList: true, subtree: true });\n' }],
+    groups: ['edits', 'presets'],
+    red: ['edits.ab.menu', 'presets.menu.save'] },
+  { name: 'deaf-letters',
+    what: 'no letter key reaches the editor',
+    edits: [{ file: 'fcmp-ui.js', find: '', put: deaf('keydown', '/^[a-z]$/i.test(e.key)') }],
+    groups: ['presets'],
+    red: ['presets.save-as'] },
   { name: 'console-error',
     what: 'the page logs one error-level line, two seconds after it loads',
     edits: [{ file: 'main.js', find: '',

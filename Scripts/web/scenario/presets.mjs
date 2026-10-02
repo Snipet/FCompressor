@@ -194,7 +194,7 @@ export async function run({ u, row }) {
                                      && /^TAKEN/.test(u.value(s, 'Status')));
   await u.key('Escape');
   const kept = await u.until((s) => browser(s) && field(s) === null);
-  const mine = (s) => u.find(s, 'User', { parent: 'Show' }).description;
+  const mine = (s) => (u.find(s, 'User', { parent: 'Show' }) || { description: 'not listed' }).description;
   row(escaped && untouched.ok && away && unstepped.ok && saveMenu !== null
       && u.menuTexts(saveMenu) === 'Save | Save As...' && again.ok && free.ok && taken.ok && kept.ok
       && mine(kept.s) === '1 preset', 'menu.save',
