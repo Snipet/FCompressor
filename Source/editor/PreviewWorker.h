@@ -10,6 +10,9 @@
 // - With synchronous (PanelOptions::syncPreview) the job runs inside tick() on the calling thread, so no drawn state
 //   depends on another thread's completion time; pending() stays true while a job is queued or running, so the Panel's
 //   wantsFullRate() holds and HeadlessHost::settle() waits for it.
+// - Where an asynchronous worker has no thread (Emscripten without pthreads; a system that refuses one) a request is
+//   computed inside tick() too, but only once no newer request has replaced it for 0.15 s of tick time (the sum of
+//   tick()'s dt), so the Panel stays smooth while a control moves and the plots follow when it rests (web Sprint D).
 // - stop() joins the worker thread; it is the first step of Panel::shutdown(), before the gestures close. Requests
 //   after stop() are dropped.
 //
