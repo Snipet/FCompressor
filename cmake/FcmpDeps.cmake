@@ -28,8 +28,8 @@ set(FCMP_BGFX_SUB_SHAS bgfx=c7684e20da1e385edc439ef39cdb42b8c661016f
 # Harness v2 and placeholder core/gpu/presets targets and placeholder funkgui_* functions (SPRINTS §7 D1, D19).
 # FCMP_FUNKGUI_SHA is the tagged COMMIT (`git rev-parse v0.1.0^{commit}`); the annotated tag object's SHA (what a bare
 # `git rev-parse v0.1.0` prints) is accepted too and peeled to its commit by every check below (R-B0 #10).
-set(FCMP_FUNKGUI_TAG     f2641a901841a9d7932a6c87b11946a7e3723ad1)
-set(FCMP_FUNKGUI_SHA     f2641a901841a9d7932a6c87b11946a7e3723ad1)
+set(FCMP_FUNKGUI_TAG     v0.12.0)
+set(FCMP_FUNKGUI_SHA     f1d3b3c74c6c0bebe62d3ca9c7b134656c334c31)
 set(FCMP_FUNKGUI_VERSION 0.12.0)
 
 # ---- helpers -------------------------------------------------------------------------------------------------------
