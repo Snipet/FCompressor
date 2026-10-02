@@ -111,20 +111,27 @@ if (opt.chrome) {
 }
 // Imported only now: the library starts nothing, but it takes the process's signals as it loads.
 const { launch, user } = await import('./scenario/driver.mjs');
-const report = new Report();
+let over = false;                                     // the run's last line is out: nothing is printed after it
+const say = (line) => {
+  if (!over) console.log(line);
+};
+const report = new Report(say);
 const chosen = NAMES.filter((name) => (only ? only.includes(name) : name !== 'pictures' || opt.png));
 const groups = [];
 for (const name of chosen) groups.push({ name, ...(await import(`./scenario/${name}.mjs`)) });
 const errors = await import('./scenario/errors.mjs');
 
 let session = null;
-// The exit waits for what was printed: a pipe to a runner may still hold the last rows.
-const finish = (code) => {
-  if (session !== null) session.close();
+// The end, once: the browser is closed, and the exit waits for what was printed (a pipe to a runner may still hold
+// the last rows).
+const finish = async (code) => {
+  if (over) return;
+  over = true;
+  if (session !== null) await session.close();
   process.stdout.write('', () => process.exit(code));
 };
 const watchdog = setTimeout(() => {
-  console.log(`scenario: no verdict within ${opt.timeoutS} s (in the group ${report.group || 'none'})`);
+  say(`scenario: no verdict within ${opt.timeoutS} s (in the group ${report.group || 'none'})`);
   finish(2);
 }, opt.timeoutS * 1000);
 
@@ -184,10 +191,10 @@ try {
   report.enter('');
   report.note('time', `${((Date.now() - t0) / 1000).toFixed(1)} s for ${chosen.join(', ')}; the outcome that came `
                       + `nearest to its bound took ${u.slowest.ms} ms of ${u.slowest.bound}`);
-  console.log(report.summary());
+  say(report.summary());
   code = report.failed === 0 ? 0 : 1;
 } catch (error) {
-  console.log(`scenario: it could not run (${trace(error)})`);
+  say(`scenario: it could not run (${trace(error)})`);
 }
 clearTimeout(watchdog);
-finish(code);
+await finish(code);

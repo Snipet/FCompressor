@@ -16,15 +16,16 @@
 //
 // The library (cdp.mjs, as the lead phase's base has it; card L-R keeps these names), and all the scenario uses of it:
 //   serve(dir) -> { base, kill() }          the site on 127.0.0.1
-//   chrome({ width, height, profile, extra }) -> { page(null), send(method, params), kill() }
+//   chrome({ width, height, profile, extra }) -> { page(null), send(method, params), kill(), pid }
 //                                           headless and muted, the profile given; `extra` are further switches,
-//                                           after the library's own (of two that say the same, the last wins)
+//                                           after the library's own (of two that say the same, the last wins: the
+//                                           GPU flag is overridden so)
 //   a page: s(method, params), ev(expression), consoleLines, targetId, metrics(w, h, 1), go(url, 0), at(x, y),
 //           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), and the port tap:
 //           tap(), tapRead() -> { n, last: { v, snap }, reply: { flags, publish, latency, frameLatency, rate,
 //           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies }
 //   sleep, cleanUp, PID
-//   where the library has them (the base's has not): a browser's gone(), '' while Chrome lives
+//   where the library has them (the base's has not): a browser's gone(), '' while Chrome lives, and its close()
 // The presses, the drags, the double click, START and the pictures are made here, not with the library's own: they
 // carry timestamps, wait on conditions and write where the scenario is told to.
 // Requests to that card (the handoff lists them): the Chrome to run comes from --chrome, which the base's library
@@ -138,8 +139,29 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
   const server = await cdp.serve(dir);
   let browser = null;
   let audio = '';
-  const close = () => {
-    if (browser !== null) browser.kill();
+  // Whether that Chrome still runs: the library says so, or its process does.
+  const alive = () => {
+    if (typeof browser.gone === 'function') return browser.gone() === '';
+    try {
+      process.kill(browser.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // The orderly end of a Chrome: asked to close, it ends its own helper processes; killed if it has not within 2 s.
+  const end = async () => {
+    if (browser === null) return;
+    if (typeof browser.close === 'function') {
+      await browser.close();                          // the library's own orderly end, where it has one
+    } else {
+      browser.send('Browser.close').catch(() => {});
+      for (const t0 = Date.now(); alive() && Date.now() - t0 < 2000;) await sleep(50);
+      browser.kill();
+    }
+  };
+  const close = async () => {
+    await end();
     server.kill();
     cdp.cleanUp();
     removeScratch();
@@ -159,26 +181,16 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
     } else if (flags.includes(NULL_SINK)) {
       throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK}`);
     } else {
-      browser.kill();
+      await end();
       if (!await start('profile-null-sink', [...flags, NULL_SINK])) {
         throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK} or without`);
       }
       audio = `the browser's null sink (${NULL_SINK}): no context rendered through an audio device of the machine`;
     }
   } catch (error) {
-    close();
+    await close();
     throw error;
   }
-  // Whether that Chrome still runs: the library says so, or its process does.
-  const alive = () => {
-    if (typeof browser.gone === 'function') return browser.gone() === '';
-    try {
-      process.kill(browser.pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
   return { base: server.base, browser, scratch, audio, alive, close };
 }
 
