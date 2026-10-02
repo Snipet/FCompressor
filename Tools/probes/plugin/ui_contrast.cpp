@@ -42,7 +42,7 @@
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <array>
 #include <cmath>
@@ -292,7 +292,7 @@ namespace
 
 FCMP_PROBE(ui, contrast)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     P.eq("contrast.font.ok", funkgui::FontService::get().atlas().baked() ? 1 : 0, 1);
     palette(P);
     modeColours(P);

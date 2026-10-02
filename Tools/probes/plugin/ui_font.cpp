@@ -38,7 +38,7 @@
 #include <funkgui/text/TextFit.h>
 #include <funkgui/widgets/ValueModel.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -232,7 +232,7 @@ FCMP_PROBE(ui, font)
 
 int fcmp::probe::uiFont(funkgui::test::Probe& P)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     funkgui::FontService& fonts = funkgui::FontService::get();
     const funkgui::FontAtlasSdf& atlas = fonts.atlas();
     P.eq("font.ok", atlas.baked() && fonts.ok() ? 1 : 0, 1);

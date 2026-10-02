@@ -38,7 +38,7 @@
 #include <funkgui/text/FontService.h>
 #include <funkgui/widgets/ValueModel.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <cmath>
 #include <cstddef>
@@ -242,7 +242,7 @@ namespace
 
 FCMP_PROBE(ui, a11y)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const fcdsp::ModeEntry* entry = fcdsp::byKey(C.key);
     if (entry == nullptr || entry->desc == nullptr)
     {

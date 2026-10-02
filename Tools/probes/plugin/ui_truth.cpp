@@ -100,7 +100,7 @@
 #include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 
 #include <algorithm>
@@ -495,7 +495,10 @@ namespace
         const auto inputPeak = [&](uint64_t a, uint64_t b) {
             float m = 0.0f;
             for (uint64_t n = a * 48; n < b * 48 && n <= last; ++n)
-                m = std::max(m, std::max(std::fabs(facade.input(0)[n]), std::fabs(facade.input(1)[n])));
+            {
+                const auto i = static_cast<std::size_t>(n);       // wasm32: size_t is 32 bits
+                m = std::max(m, std::max(std::fabs(facade.input(0)[i]), std::fabs(facade.input(1)[i])));
+            }
             return static_cast<float>(probe::measure::dbFromAmplitude(static_cast<double>(m)));
         };
         if (count > 0)
@@ -857,7 +860,7 @@ namespace
 
 FCMP_PROBE(ui, truth)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const char* prefsDir = std::getenv("FCMP_PREFS_DIR");
     if (prefsDir == nullptr || *prefsDir == '\0')
     {

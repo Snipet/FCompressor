@@ -50,7 +50,7 @@
 #include <funkgui/widgets/RuleSlider.h>
 #include <funkgui/widgets/ValueModel.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <algorithm>
 #include <array>
@@ -585,7 +585,7 @@ namespace
 
 FCMP_PROBE(ui, textfit)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const fcdsp::ModeEntry* entry = fcdsp::byKey(C.key);
     if (entry == nullptr || entry->desc == nullptr)
     {

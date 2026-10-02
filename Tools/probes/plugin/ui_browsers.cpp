@@ -53,7 +53,7 @@
 #include <funkgui/params/GestureController.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 
 #include <algorithm>
@@ -611,7 +611,7 @@ namespace
 
 FCMP_PROBE(ui, browsers)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     P.eq("font.ok", b(funkgui::FontService::get().atlas().baked() && funkgui::FontService::get().ok()), 1);
     if (globalOrder().empty())
     {

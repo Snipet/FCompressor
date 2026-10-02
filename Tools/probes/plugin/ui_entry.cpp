@@ -40,7 +40,7 @@
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/panel/Input.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <cmath>
 #include <cstdint>
@@ -349,7 +349,7 @@ namespace
 FCMP_PROBE(ui, entry)
 {
     (void) C;
-    const juce::ScopedJuceInitialiser_GUI juceInit;              // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                         // FontService bakes the atlas through JUCE's fonts
     slotRows(P);
     outputRows(P);
     guardRows(P);
