@@ -1138,7 +1138,7 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     host's `commandKeyIsMeta()`). IMPORT and EXPORT are enabled only when the host reports a file chooser, and say so
     when it does not (the browser host has none). The UI probes use `funkgui::HeadlessGuiScope`, and `HeadlessHost`'s
     scripted replies let them test a menu, a chooser and the clipboard for the first time (`ui.edits`, `ui.presets`,
-    `ui.settings`: 55 new spec rows; two rows of `ui.settings` that asserted "a headless host copies nothing" are
+    `ui.settings`: 61 new spec rows; two rows of `ui.settings` that asserted "a headless host copies nothing" are
     replaced by name). The editor outside `gpu/` compiles as wasm32 (`fcmp_web_editor_check`).
   - **The web facade** (Sprint C, card W-F; `Source/web/facade`, lint `web.facade`: no Emscripten header, no
     `EngineHost`, the engine reached only through an `EngineLink` that moves `WebProtocol` bytes). `WebFacade` is a
