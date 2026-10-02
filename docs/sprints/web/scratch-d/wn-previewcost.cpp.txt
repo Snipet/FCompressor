@@ -1,0 +1,48 @@
+// scratch: the wall time of one synchronous PreviewWorker request (computePreview inline), per Mode.
+#include "editor/PreviewWorker.h"
+#include "fcdsp/modes/Registry.h"
+#include "fcdsp/params/HostParams.h"
+#include "fcdsp/params/Pid.h"
+#include "fcdsp/params/Resolve.h"
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+int main(int argc, char** argv)
+{
+    const float fs = argc > 1 ? static_cast<float>(std::atof(argv[1])) : 48000.0f;
+    const int reps = argc > 2 ? std::atoi(argv[2]) : 9;
+    double worstMed = 0.0;
+    for (const fcdsp::ModeSlot& slot : fcdsp::modeSlots())
+    {
+        if (slot.entry == nullptr) continue;
+        fcdsp::RawParams raw;
+        for (std::size_t i = 0; i < fcdsp::kNumModeParams; ++i)
+            raw.v[i] = fcdsp::kHostParams[i].def;
+        raw.modeSlot = static_cast<uint8_t>(fcdsp::slotOf(*slot.entry));
+        fcmp::ui::PreviewWorker w(true);
+        w.setActive(true);
+        std::vector<double> ms;
+        for (int r = 0; r < reps; ++r)
+        {
+            raw.v[static_cast<std::size_t>(fcdsp::Pid::thr)] = fcdsp::kHostParams[static_cast<std::size_t>(fcdsp::Pid::thr)].def - 0.5f * static_cast<float>(r);
+            fcdsp::Resolution res;
+            fcdsp::resolve(*slot.entry, raw, res);
+            w.request(*slot.entry, res.eng, fs, static_cast<uint64_t>(100 + r));
+            const auto t0 = std::chrono::steady_clock::now();
+            w.tick(1.0f);                                  // past the 20 Hz limiter: the job runs inside this call
+            const auto t1 = std::chrono::steady_clock::now();
+            if (w.pending() || w.result().key != static_cast<uint64_t>(100 + r)) { std::printf("NOT COMPUTED\n"); return 1; }
+            ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+        }
+        std::sort(ms.begin(), ms.end());
+        const double med = ms[ms.size() / 2];
+        worstMed = std::max(worstMed, med);
+        std::printf("%-14s fs %6.0f  min %7.2f  median %7.2f  max %7.2f ms  (n=%d)\n", std::string(slot.key).c_str(),
+                    static_cast<double>(fs), ms.front(), med, ms.back(), reps);
+    }
+    std::printf("worst median %.2f ms\n", worstMed);
+    return 0;
+}

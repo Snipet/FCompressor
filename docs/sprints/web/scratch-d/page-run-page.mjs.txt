@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+// SCOUT SCRATCH runner: like FunkGui's check-page.mjs, plus a URL with a query, a trusted click when the title asks for
+// one, and optional visibility emulation.  node run-page.mjs <dir> <path?query> [--flag <chrome flag>]... [--timeout s] [--log <element id>]
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+const args = process.argv.slice(2);
+const dir = resolve(args[0]); const path = args[1];
+const flags = []; let timeoutS = 60; let logId = 'funkgui-log'; let hide = false; let click = false, until = '', shot = '', evals = [], settle = 0;
+for (let i = 2; i < args.length; i += 1) {
+  if (args[i] === '--flag') flags.push(args[++i]);
+  else if (args[i] === '--timeout') timeoutS = Number(args[++i]);
+  else if (args[i] === '--log') logId = args[++i];
+  else if (args[i] === '--hide') hide = true;
+  else if (args[i] === '--click') click = true;
+  else if (args[i] === '--until') until = args[++i];
+  else if (args[i] === '--shot') shot = args[++i];
+  else if (args[i] === '--eval') evals.push(args[++i]);
+  else if (args[i] === '--settle') settle = Number(args[++i]);
+}
+const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const children = []; let profile = '';
+const finish = (code) => { for (const c of children) { try { c.kill('SIGKILL'); } catch {} } if (profile) { try { rmSync(profile, { recursive: true, force: true, maxRetries: 5 }); } catch {} } process.exit(code); };
+const lineFrom = (child, pattern) => new Promise((done) => { let seen = ''; const look = (c) => { seen += c; const m = seen.match(pattern); if (m) done(m); }; child.stdout.on('data', look); child.stderr.on('data', look); child.on('exit', () => done(null)); setTimeout(() => done(null), 20000); });
+const server = spawn('python3', ['-u', '-m', 'http.server', '0', '--bind', '127.0.0.1', '--directory', dir], { stdio: ['ignore', 'pipe', 'pipe'] });
+children.push(server);
+const serving = await lineFrom(server, /Serving HTTP on 127\.0\.0\.1 port (\d+)/);
+if (!serving) { console.error('no server'); finish(2); }
+const url = `http://${process.env.PAGE_HOST || "127.0.0.1"}:${serving[1]}/${path}`;
+profile = mkdtempSync(join(dir, '..', 'profile-'));
+const browser = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--use-angle=metal', '--mute-audio', '--window-size=1200,900', ...flags, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
+children.push(browser);
+const listening = await lineFrom(browser, /DevTools listening on (ws:\/\/[^\s]+)/);
+if (!listening) { console.error('no chrome'); finish(2); }
+const socket = new WebSocket(listening[1]);
+await new Promise((open) => socket.addEventListener('open', open, { once: true }));
+let nextId = 0; const waiting = new Map(); const consoleLines = [];
+socket.addEventListener('message', (event) => {
+  const m = JSON.parse(event.data);
+  if (m.id !== undefined && waiting.has(m.id)) { const w = waiting.get(m.id); waiting.delete(m.id); m.error ? w.reject(new Error(m.error.message)) : w.answer(m.result); }
+  else if (m.method === 'Runtime.exceptionThrown') consoleLines.push('EXCEPTION ' + JSON.stringify(m.params.exceptionDetails.exception && m.params.exceptionDetails.exception.description || m.params.exceptionDetails.text));
+  else if (m.method === 'Log.entryAdded') consoleLines.push('LOG ' + m.params.entry.level + ' ' + m.params.entry.text + ' ' + (m.params.entry.url || ''));
+});
+const send = (method, params = {}, sessionId) => new Promise((answer, reject) => { const id = ++nextId; waiting.set(id, { answer, reject }); socket.send(JSON.stringify({ id, method, params, sessionId })); });
+const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
+const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
+await send('Runtime.enable', {}, sessionId); await send('Log.enable', {}, sessionId); await send('Page.enable', {}, sessionId);
+await send('Page.navigate', { url }, sessionId);
+const evaluate = async (expression) => { try { return (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result.value; } catch (e) { return null; } };
+console.log(`run-page: ${url} (${flags.join(' ')})`);
+const deadline = Date.now() + timeoutS * 1000;
+let title = '', log = '', clicked = false, hidden = false;
+while (Date.now() < deadline) {
+  const read = await evaluate(`[document.title, (document.getElementById('${logId}') || {}).textContent || '']`);
+  if (Array.isArray(read)) [title, log] = read.map(String);
+  if (title === 'PASS' || title.startsWith('FAIL')) break;
+  if (until && await evaluate(until)) break;
+  if (click && !clicked && await evaluate("!!document.querySelector('[data-click]')")) title = 'NEEDS-CLICK';
+  if (title.startsWith('NEEDS-CLICK') && !clicked) {
+    clicked = true;
+    const at = await evaluate(`(() => { const e = document.querySelector('[data-click]') || document.body; const r = e.getBoundingClientRect(); return [r.left + Math.min(r.width, 200) / 2, r.top + Math.min(r.height, 40) / 2]; })()`) || [50, 50];
+    for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }, sessionId);
+    console.log(`run-page: clicked at ${at}`);
+  }
+  if (title.startsWith('NEEDS-HIDE') && hide && !hidden) {
+    hidden = true;
+    await send('Emulation.setFocusEmulationEnabled', { enabled: false }, sessionId).catch(() => {});
+    await send('Page.setWebLifecycleState', { state: 'frozen' }, sessionId).catch((e) => console.log('lifecycle: ' + e.message));
+    await sleep(1500);
+    await send('Page.setWebLifecycleState', { state: 'active' }, sessionId).catch(() => {});
+    console.log('run-page: froze the page for 1.5 s');
+  }
+  await sleep(100);
+}
+if (settle) await sleep(settle);
+for (const e of evals) { let v; try { const r = await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }, sessionId); v = r.exceptionDetails ? 'EXC ' + JSON.stringify(r.exceptionDetails.exception && r.exceptionDetails.exception.description) : r.result.value; } catch (x) { v = 'ERR ' + x.message; } console.log(`eval ${e} => ${JSON.stringify(v)}`); }
+if (shot) { const { data } = await send('Page.captureScreenshot', { format: 'png' }, sessionId); (await import('node:fs')).writeFileSync(shot, Buffer.from(data, 'base64')); console.log('shot ' + shot); }
+{ const r = await evaluate(`[document.title, (document.getElementById('${logId}') || {}).textContent || '']`); if (Array.isArray(r)) [title, log] = r.map(String); }
+process.stdout.write(log);
+for (const l of consoleLines.slice(0, 30)) console.log(l);
+console.log(`run-page: title '${title}'`);
+finish(title === 'PASS' ? 0 : title.startsWith('FAIL') ? 1 : 2);

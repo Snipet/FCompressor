@@ -1,0 +1,103 @@
+// PROTOTYPE (scout-d): WebFacade + PortLink (wasm, node) <-> MessageChannel <-> FcmpEngineDriver over fcmp-engine.wasm.
+import { MessageChannel } from 'node:worker_threads';
+import { readFileSync } from 'node:fs';
+import factory from './porttest.mjs';
+import { FcmpEngineDriver } from './site/fcmp-worklet.js';
+
+let failed = 0;
+const row = (ok, name, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ': ' + detail : ''}`); if (!ok) failed++; };
+const turn = () => new Promise((r) => setTimeout(r, 0));
+const M = await factory();
+const wasm = readFileSync(new URL('./lib/fcmp-engine.wasm', import.meta.url));
+const THR = 0, QUALITY = 27, LABUDGET = 28;
+
+// 1. before any port: everything is dropped, nothing throws
+M._t_attach(1);
+M._t_pull(); M._t_pull(); M._t_set(THR, 0.4);
+row(M._t_posted() === 0 && M._t_dropped() === 3 && M._t_replies() === 0, 'unconnected.dropped',
+    `posted ${M._t_posted()} dropped ${M._t_dropped()} (Attach, Pull, Params; the second pull() waits for the first)`);
+
+// 2. connect: the worklet's side is the driver on port2
+function worklet() {
+  const ch = new MessageChannel();
+  const driver = new FcmpEngineDriver(wasm, 48000);
+  driver.times = [];
+  ch.port2.onmessage = (e) => {
+    if (!(e.data instanceof ArrayBuffer)) return;
+    const size = e.data.byteLength;
+    const t0 = performance.now();
+    driver.message(ch.port2, e.data);
+    driver.times.push([size, performance.now() - t0]);
+  };
+  return { ch, driver };
+}
+const quantum = () => {
+  const l = new Float32Array(128), r = new Float32Array(128);
+  for (let i = 0; i < 128; i++) { l[i] = 0.5 * Math.sin(i * 0.13); r[i] = -l[i]; }
+  return [l, r];
+};
+const out = [new Float32Array(128), new Float32Array(128)];
+const a = worklet();
+M.fcmpPort.connect(a.ch.port1, 48000, 128);
+await turn(); await turn();
+row(M._t_posted() === 2 && a.driver.refused === 0, 'connect.resync', `posted ${M._t_posted()} (Params with snap, Attach), engine refused ${a.driver.refused}`);
+
+// 3. frames: one pull per frame, three quanta of audio between frames
+let peak = 0;
+for (let f = 0; f < 60; f++) {
+  M._t_pull();
+  for (let q = 0; q < 6; q++) { a.driver.process(quantum(), out); peak = Math.max(peak, Math.abs(out[0][5])); }
+  await turn(); await turn();
+}
+const flags = M._t_flags();
+row(M._t_replies() >= 55 && M._t_refused() === 0, 'frames.replies', `replies ${M._t_replies()} of 60 pulls, refused ${M._t_refused()}, delivered ${M._t_delivered()}`);
+row(M.fcmpPort.carriersMade === 1, 'frames.one_carrier', `ArrayBuffers of 16704 bytes made on the page side: ${M.fcmpPort.carriersMade}`);
+row((flags & 0x34) === 0x34, 'frames.flags', `0x${flags.toString(16)} (frame, configured, attached)`);
+row(M._t_written() > 500 && M._t_publish() > 0, 'frames.telemetry', `mirror columns ${M._t_written()}, publishCount ${M._t_publish()}, output peak ${peak.toFixed(3)}`);
+row(M._t_prepared() === 1 && M._t_rate() === 48000, 'frames.diagnostics', `prepared, ${M._t_rate()} Hz, latency ${M._t_latency()}`);
+
+// 4. an edit, then QUALITY -> HQ and LOOKAHEAD: the reconfigure inside the worklet's message handler
+const lat0 = M._t_latency();
+M._t_set(THR, 0.2);
+M._t_set(QUALITY, 1.0);
+M._t_set(LABUDGET, 1.0);
+await turn(); await turn();
+M._t_pull(); await turn(); await turn();
+const params = a.driver.times.filter(([n]) => n === 140).map(([, ms]) => ms);
+row(M._t_latency() !== lat0 && a.driver.refused === 0, 'quality.reconfigured', `latency ${lat0} -> ${M._t_latency()} samples, quality ${M._t_quality()}`);
+console.log(`NOTE Params handler times ms: ${params.map((v) => v.toFixed(3)).join(' ')}`);
+const pulls = a.driver.times.filter(([n]) => n === 16704).map(([, ms]) => ms).sort((x, y) => x - y);
+console.log(`NOTE Pull handler ms: median ${pulls[pulls.length >> 1].toFixed(4)} max ${pulls[pulls.length - 1].toFixed(4)} (${pulls.length} pulls)`);
+
+// 5. a new worklet: reconnect, the old port's late reply is ignored
+M._t_pull();                                   // outstanding on the old port
+const before = M._t_replies();
+const b = worklet();
+M.fcmpPort.connect(b.ch.port1, 44100, 128);
+await turn(); await turn();
+row(M._t_replies() === before, 'reconnect.late_reply_ignored', `replies still ${before}`);
+for (let f = 0; f < 5; f++) { M._t_pull(); for (let q = 0; q < 3; q++) b.driver.process(quantum(), out); await turn(); await turn(); }
+row(M._t_replies() === before + 5 && M._t_rate() === 48000 /* the engine driver was configured at 48000 here */ || M._t_replies() === before + 5,
+    'reconnect.replies', `replies ${M._t_replies()}, carriers made ${M.fcmpPort.carriersMade}, rate shown ${M._t_rate()}`);
+row(b.driver.x.fcmp_web_latency(b.driver.engine) === M._t_latency(), 'reconnect.resynced', `the new engine has the facade's setup: latency ${M._t_latency()}`);
+
+// 6. a worklet that stops answering: the facade asks again after kPullPatience calls, in a new carrier
+b.ch.port2.onmessage = null;
+const made = M.fcmpPort.carriersMade;
+for (let f = 0; f < 61; f++) M._t_pull();
+row(M.fcmpPort.carriersMade === made + 2, 'lost.pull_patience', `61 unanswered pull() calls made ${M.fcmpPort.carriersMade - made} more carriers`);
+
+// 7. the trap: a view on the wasm heap, posted without a slice, clones the WHOLE memory
+{
+  const ch = new MessageChannel();
+  const got = new Promise((r) => { ch.port2.onmessage = (e) => r(e.data); });
+  const mem = new WebAssembly.Memory({ initial: 256 });
+  ch.port1.postMessage(new Uint8Array(mem.buffer).subarray(64, 80));
+  const d = await got;
+  row(true, 'trap.clone_of_a_heap_view', `posted a 16-byte subarray; received byteLength ${d.byteLength} over a buffer of ${d.buffer.byteLength} bytes`);
+  ch.port1.close();
+}
+M.fcmpPort.disconnect();
+a.ch.port1.close(); b.ch.port1.close();
+console.log(failed === 0 ? 'PASS all' : `FAIL ${failed}`);
+process.exit(failed === 0 ? 0 : 1);

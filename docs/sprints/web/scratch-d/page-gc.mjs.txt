@@ -1,0 +1,8 @@
+import v8 from 'node:v8';
+import vm from 'node:vm';
+v8.setFlagsFromString('--expose-gc');
+const gc = vm.runInNewContext('gc');
+console.log('gc without a command-line flag:', typeof gc);
+gc();
+const h0 = process.memoryUsage().heapUsed; let junk = []; for (let i = 0; i < 1e5; i += 1) junk.push({ i }); const h1 = process.memoryUsage().heapUsed; junk = null; gc(); const h2 = process.memoryUsage().heapUsed;
+console.log('heap', h1 - h0, 'after gc', h2 - h0);

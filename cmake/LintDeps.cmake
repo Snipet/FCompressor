@@ -42,6 +42,12 @@
 #   web.engine      Source/web/engine/** is portable C++ over fcdsp alone: no Emscripten header, no funkgui/*, nothing
 #                   under plugin/ or editor/ (the same sources build natively for the checks, and the module is
 #                   standalone wasm with no JavaScript glue)
+#   web.emscripten  an Emscripten header (<emscripten/...>, <emscripten.h>) is included only under Source/web/ui: every
+#                   other source of ours builds natively too (the engine wrapper and the facade for their checks)
+#   web.ui          Source/web/ui/** is the editor module's glue (ADR-93, web Sprint D): of the engine it shares only
+#                   web/engine/WebProtocol.h (WebEngine.h's functions carry export_name: including it would export
+#                   the engine's ABI from the editor module), from plugin/ only plugin/portable/* and
+#                   plugin/ProcessorFacade.h, nothing of the GPU editor or of FunkGui's JUCE parts, no EngineHost
 #   web.facade      Source/web/facade/** is the browser's ProcessorFacade, portable C++: no Emscripten header, nothing
 #                   under editor/, from plugin/ only plugin/portable/* and plugin/ProcessorFacade.h, from funkgui/ only
 #                   funkgui/params/ParamPort.h, from web/engine/ only WebProtocol.h (the engine is reached through an
@@ -193,12 +199,15 @@ foreach(_f IN LISTS _files)
   set(_in_web FALSE)
   set(_in_web_engine FALSE)
   set(_in_web_facade FALSE)
+  set(_in_web_ui FALSE)
   if(_rel MATCHES "^web/")
     set(_in_web TRUE)
     if(_rel MATCHES "^web/engine/")
       set(_in_web_engine TRUE)
     elseif(_rel MATCHES "^web/facade/")
       set(_in_web_facade TRUE)
+    elseif(_rel MATCHES "^web/ui/")
+      set(_in_web_ui TRUE)
     endif()
   endif()
   if(_rel MATCHES "^fcdsp/")
@@ -293,6 +302,23 @@ foreach(_f IN LISTS _files)
     endif()
     if(_in_web AND _inc MATCHES "(^|/)(juce_[^/]*|JuceHeader\\.h)(/|$)")
       _lint_fail("${_f}" ${_n} web.juce "Source/web is JUCE-free: ${_code}")
+    endif()
+    if(NOT _in_web_ui AND (_inc MATCHES "(^|/)emscripten(/|\\.h$)" OR _inc MATCHES "^emscripten"))
+      _lint_fail("${_f}" ${_n} web.emscripten "an Emscripten header is included only under Source/web/ui: ${_code}")
+    endif()
+    if(_in_web_ui)
+      if(_inc MATCHES "(^|/)web/engine/" AND NOT _inc MATCHES "(^|/)web/engine/WebProtocol\\.h$")
+        _lint_fail("${_f}" ${_n} web.ui "Source/web/ui shares only web/engine/WebProtocol.h with the engine (WebEngine.h's functions carry export_name): ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)plugin/" AND NOT _inc MATCHES "(^|/)plugin/(portable/[^/]+|ProcessorFacade\\.h)$")
+        _lint_fail("${_f}" ${_n} web.ui "Source/web/ui includes only plugin/portable/* and plugin/ProcessorFacade.h from plugin/: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)editor/gpu/" OR _inc MATCHES "(^|/)funkgui/(gpu|juce|presets)/")
+        _lint_fail("${_f}" ${_n} web.ui "Source/web/ui includes nothing of the GPU editor or of FunkGui's JUCE parts: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)fcdsp/engine/EngineHost\\.h$" OR _code MATCHES "(^|[^A-Za-z0-9_])EngineHost([^A-Za-z0-9_]|$)")
+        _lint_fail("${_f}" ${_n} web.ui "Source/web/ui reaches the engine only through the port, never fcdsp::EngineHost: ${_code}")
+      endif()
     endif()
     if(_in_web_engine)
       if(_inc MATCHES "(^|/)emscripten(/|\\.h$)" OR _inc MATCHES "^(wasm_simd128|emscripten)")

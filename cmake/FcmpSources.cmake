@@ -109,6 +109,10 @@ file(GLOB FCMP_WEB_TOOL_SOURCES     CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/web/*.c
 # plugin.portable).
 file(GLOB FCMP_WEB_FACADE_SOURCES   CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/web/facade/*.cpp)
 file(GLOB FCMP_PLUGIN_PORTABLE_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/plugin/portable/*.cpp)
+# The editor module's glue (ADR-93, Sprint D): WebMain and PortLink, the only sources that include an Emscripten header
+# (lint web.emscripten, web.ui). They build for the web only. Tools/web/port holds the node check of PortLink.
+file(GLOB FCMP_WEB_UI_SOURCES       CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/web/ui/*.cpp)
+file(GLOB FCMP_WEB_PORT_SOURCES     CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/web/port/*.cpp)
 
 # ---- editor choice (SPRINTS §7 D22): exactly one CreateEditor*.cpp per target, chosen here, never by #if ------------
 set(FCMP_CREATE_EDITOR_GENERIC ${FCMP_SOURCE_ROOT}/plugin/CreateEditorGeneric.cpp)

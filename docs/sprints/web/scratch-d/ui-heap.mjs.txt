@@ -1,0 +1,40 @@
+// PROTOTYPE (scout-d): fcmp-engine.wasm's fixed 16 MiB memory against reconfigures.
+import { readFileSync } from 'node:fs';
+import { FcmpEngineDriver } from './fcmp-engine-driver.js';
+const wasm = readFileSync(new URL('./lib/fcmp-engine.wasm', import.meta.url));
+const QUALITY = 27, LABUDGET = 28, MODE = 22;
+function freeMiB(x, step = 65536) {            // how much one more allocation run can still get, in 64 KiB blocks
+  const got = [];
+  for (;;) { const p = x.malloc(step); if (!p) break; got.push(p); }
+  for (const p of got) x.free(p);
+  return (got.length * step / 1048576).toFixed(2);
+}
+for (const fs of [44100, 48000, 96000, 192000]) {
+  const d = new FcmpEngineDriver(wasm, fs);
+  const x = d.x;
+  const msg = x.malloc(140);
+  const dv = new DataView(x.memory.buffer);
+  // a Params record of the host defaults: read them back by a Pull? Simpler: build from the engine's defaults via zero
+  // values is wrong, so drive only quality/labudget/mode on top of a record of NaNs (a NaN is the parameter's default).
+  const post = (q, b, mode) => {
+    dv.setUint32(msg, 0x50574346, true); dv.setUint16(msg + 4, 1, true); dv.setUint16(msg + 6, 1, true);
+    dv.setUint32(msg + 8, 140, true); dv.setUint32(msg + 12, 0, true);
+    for (let i = 0; i < 30; i++) dv.setFloat32(msg + 16 + 4 * i, NaN, true);
+    dv.setFloat32(msg + 16 + 4 * QUALITY, q, true);
+    dv.setFloat32(msg + 16 + 4 * LABUDGET, b, true);
+    dv.setFloat32(msg + 16 + 4 * MODE, mode, true);
+    dv.setUint32(msg + 136, 1, true);
+    const t0 = performance.now();
+    const r = x.fcmp_web_post(d.engine, msg, 140);
+    return [r, performance.now() - t0];
+  };
+  let worst = 0, fails = 0, n = 0, minFree = 1e9;
+  const first = freeMiB(x);
+  for (let round = 0; round < 40; round++)
+    for (const q of [0, 1, 2]) for (const b of [0, 1, 2]) {
+      const [r, ms] = post(q, b, (round * 5 + q) % 14);
+      n++; if (r < 0) fails++; if (round > 0) worst = Math.max(worst, ms);
+      if (round % 10 === 0) minFree = Math.min(minFree, Number(freeMiB(x)));
+    }
+  console.log(`${fs} Hz: latency at STD ${d.latency}; ${n} Params records (${fails} refused); free after configure ${first} MiB, least seen ${minFree} MiB of 16; slowest reconfigure after warm-up ${worst.toFixed(3)} ms; latency HQ+10ms now ${x.fcmp_web_latency(d.engine)}`);
+}

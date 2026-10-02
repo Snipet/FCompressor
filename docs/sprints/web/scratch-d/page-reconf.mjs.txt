@@ -1,0 +1,28 @@
+import { readFileSync } from 'node:fs';
+const wasm = readFileSync(process.argv[2]);
+const recs = JSON.parse(readFileSync(process.argv[3], 'utf8'));
+const f32of = (r) => Array.from(new Float32Array(new Uint8Array(r).buffer, 16, 30));
+console.log('record 0 plain[22..29] (mode, extkey, listen, delta, bypass, quality, labudget, output):', f32of(recs[0]).slice(22), 'snap', new Uint32Array(new Uint8Array(recs[0]).buffer, 136, 1)[0]);
+console.log('record 1 plain[22..29]:', f32of(recs[1]).slice(22));
+const mod = new WebAssembly.Module(wasm);
+const std = recs[0].slice(); new Float32Array(new Uint8Array(std).buffer); // placeholder
+function run(label, steps) {
+  const x = new WebAssembly.Instance(mod, {}).exports; x._initialize();
+  const e = x.fcmp_web_create(); const b = x.malloc(4 * 128 * 4); const m = x.malloc(140);
+  x.fcmp_web_configure(e, 48000, 128);
+  const f = new Float32Array(x.memory.buffer), u8 = new Uint8Array(x.memory.buffer);
+  const quanta = (n) => { const t = performance.now(); for (let q = 0; q < n; q += 1) { for (let i = 0; i < 128; i += 1) { const v = 0.4 * Math.sin(0.03 * (q * 128 + i)); f[b / 4 + i] = v; f[b / 4 + 128 + i] = v; } x.fcmp_web_process(e, b, b + 512, b + 1024, b + 1536, 128); } return (performance.now() - t) / n; };
+  quanta(2000);
+  const out = [`${label}: default ${(quanta(4000) * 1000).toFixed(1)} us/quantum`];
+  for (const [name, rec] of steps) {
+    u8.set(rec, m);
+    const t = performance.now(); const r = x.fcmp_web_post(e, m, 140); const ms = performance.now() - t;
+    const first = quanta(1) * 1000;
+    quanta(2000);
+    out.push(`${name}: post ${ms.toFixed(3)} ms (returns ${r}), latency ${x.fcmp_web_latency(e)}, first quantum after ${first.toFixed(0)} us, then ${(quanta(4000) * 1000).toFixed(1)} us/quantum`);
+  }
+  console.log(out.join('\n   '));
+}
+// the same record with quality put back to 1 (STD) and budget 0, built from record 0
+const back = (() => { const a = new Uint8Array(recs[0]); const v = new DataView(a.buffer); v.setFloat32(16 + 27 * 4, 1, true); v.setFloat32(16 + 28 * 4, 0, true); return Array.from(a); })();
+for (let i = 0; i < 3; i += 1) run('run ' + i, [['HQ', recs[0]], ['HQ + lookahead 20 ms', recs[1]], ['back to STD, no lookahead', back], ['HQ again', recs[0]]]);

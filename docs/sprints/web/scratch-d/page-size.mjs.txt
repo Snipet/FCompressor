@@ -1,0 +1,36 @@
+// SCOUT SCRATCH. FCMP_WEB_TEST name=web.size timeout=60 args={build}/site
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { gzipSync } from 'node:zlib';
+const TEST = 'web.size';
+const site = process.argv[2];
+// file -> [raw budget, gzip budget] in bytes; the site holds exactly these files
+const BUDGET = {
+  'index.html': [8e3, 4e3], 'demo.css': [6e3, 3e3], 'main.js': [40e3, 12e3], 'loop.js': [12e3, 5e3], 'fcmp-worklet.js': [16e3, 6e3],
+  'fcmp-engine.wasm': [600e3, 160e3], 'fcmp-ui.wasm': [1600e3, 540e3], 'fcmp-ui.js': [80e3, 24e3],
+  'licences/GPL-3.0.txt': [36e3, 13e3], 'licences/JetBrainsMono-OFL.txt': [5e3, 3e3], 'built-from.txt': [200, 200],
+};
+const TOTAL = [2400e3, 760e3];
+let failed = 0;
+const row = (ok, name, detail) => { console.log(`${ok ? 'PASS' : 'FAIL'}     ${TEST} ${name}: ${detail}`); if (!ok) failed += 1; };
+const walk = (d) => readdirSync(d).flatMap((n) => statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]);
+const files = walk(site).map((f) => relative(site, f)).sort();
+const extra = files.filter((f) => !(f in BUDGET)), missing = Object.keys(BUDGET).filter((f) => !files.includes(f));
+row(extra.length === 0 && missing.length === 0, 'files', extra.length || missing.length ? `unexpected [${extra}] missing [${missing}]` : `${files.length} files`);
+let raw = 0, gz = 0;
+for (const f of files.filter((n) => n in BUDGET)) {
+  const bytes = readFileSync(join(site, f));
+  const z = gzipSync(bytes, { level: 9 }).length;
+  raw += bytes.length; gz += z;
+  row(bytes.length > 0 && bytes.length <= BUDGET[f][0] && z <= BUDGET[f][1], f, `${bytes.length} bytes (budget ${BUDGET[f][0]}), gzip ${z} (budget ${BUDGET[f][1]})`);
+}
+row(raw <= TOTAL[0] && gz <= TOTAL[1], 'total', `${raw} bytes (budget ${TOTAL[0]}), gzip ${gz} (budget ${TOTAL[1]})`);
+// what a static host must not need: an absolute path, another origin, a source map
+for (const f of files.filter((n) => /\.(html|js|css)$/.test(n) && n !== 'fcmp-ui.js')) {
+  const text = readFileSync(join(site, f), 'utf8');
+  const abs = text.match(/(?:src|href)=["']\/[^"']*|fetch\(["']\/[^"']*|addModule\(["']\/[^"']*/g) || [];
+  const other = (text.match(/(?:src)=["']https?:[^"']*|@import[^;]*|url\(["']?https?:[^)]*/g) || []);
+  row(abs.length === 0 && other.length === 0, `relative.${f}`, abs.length || other.length ? `${[...abs, ...other]}` : 'every URL it loads is relative');
+}
+console.log(`${failed === 0 ? 'PASS' : 'FAIL'}     ${TEST}: ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);

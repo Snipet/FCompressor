@@ -1,0 +1,180 @@
+// SCOUT SCRATCH: the worklet script under node with a fake AudioWorkletGlobalScope.
+//   node worklet.mjs <fcmp-worklet.js> <fcmp-engine.wasm> <loop.js>
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+import { MessageChannel } from 'node:worker_threads';
+
+const [workletPath, enginePath, loopPath] = process.argv.slice(2);
+const SELF = '5a96ce217d29ca6f';
+let failed = 0;
+const row = (ok, name, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}     web.worklet ${name}${detail ? ': ' + detail : ''}`); if (!ok) failed += 1; };
+
+// ---- the fake scope --------------------------------------------------------------------------------------------------
+function makeScope(rate) {
+  const registered = {};
+  const sent = [];
+  class AudioWorkletProcessor {
+    constructor() {
+      // The port: what the processor posts is recorded; onmessage is called by the test.
+      this.port = { onmessage: null, postMessage: (m, transfer) => sent.push({ m, transfer }) };
+    }
+  }
+  const scope = {
+    AudioWorkletProcessor, sampleRate: rate, currentFrame: 0, currentTime: 0,
+    registerProcessor: (name, ctor) => { registered[name] = ctor; },
+    WebAssembly, Date, Math, Uint8Array, Uint32Array, Float32Array, Object, String, Error,
+  };
+  scope.globalThis = scope;
+  vm.createContext(scope);
+  vm.runInContext(readFileSync(workletPath, 'utf8'), scope, { filename: workletPath });
+  return { scope, registered, sent };
+}
+
+const wasm = readFileSync(enginePath);
+const wasmBuffer = wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
+
+const { registered, sent } = makeScope(48000);
+row(typeof registered['fcmp-engine'] === 'function', 'registers', Object.keys(registered).join(','));
+const P = registered['fcmp-engine'];
+const p = new P({ processorOptions: { wasm: wasmBuffer } });
+row(sent.length === 1 && sent[0].m.fcmp === 'ready', 'ready', JSON.stringify(sent[0] && sent[0].m));
+row(wasmBuffer.byteLength === wasm.byteLength, 'bytes.kept', 'the constructor does not detach the bytes');
+
+// ---- selfcheck through the port ----------------------------------------------------------------------------------------
+sent.length = 0;
+p.port.onmessage({ data: { fcmp: 'selfcheck' } });
+row(sent.length === 1 && sent[0].m.hash === SELF, 'selfcheck', JSON.stringify(sent[0] && sent[0].m));
+
+// ---- records -----------------------------------------------------------------------------------------------------------
+const MAGIC = 0x50574346;
+const header = (kind, bytes, tag) => {
+  const b = new ArrayBuffer(Math.max(bytes, 16));
+  const v = new DataView(b);
+  v.setUint32(0, MAGIC, true); v.setUint16(4, 1, true); v.setUint16(6, kind, true); v.setUint32(8, bytes, true); v.setUint32(12, tag, true);
+  return b;
+};
+// Attach
+sent.length = 0;
+{
+  const b = header(2, 20, 7);
+  const big = new ArrayBuffer(20); new Uint8Array(big).set(new Uint8Array(b)); new DataView(big).setUint32(16, 1, true);
+  p.port.onmessage({ data: big });
+  row(sent.length === 0, 'attach.no_reply');
+}
+// Pull in a reply-sized buffer
+const REPLY_MAX = 320 + 32 * 512;
+const pull = (tag) => {
+  const big = new ArrayBuffer(REPLY_MAX);
+  new Uint8Array(big).set(new Uint8Array(header(4, 16, tag)));
+  sent.length = 0;
+  p.port.onmessage({ data: big });
+  return sent[0];
+};
+{
+  const r = pull(42);
+  const v = r && r.m.byteLength ? new DataView(r.m) : null; if (r) r.m = { b: r.m, n: v ? v.getUint32(8, true) : 0 };
+  row(!!v && r.m.n >= 320 && v.getUint32(0, true) === MAGIC && v.getUint16(6, true) === 0x8000 && v.getUint32(8, true) === r.m.n
+      && v.getUint32(12, true) === 42 && r.transfer && r.transfer[0] === r.m.b, 'pull.reply',
+      v ? `n ${r.m.n}, flags 0x${v.getUint32(16, true).toString(16)}, latency ${v.getUint32(20, true)}, columns ${v.getUint32(24, true)}` : 'no reply');
+}
+// refused: bad magic, and a Pull in a buffer too small for its reply: nothing comes back, the count says so
+sent.length = 0;
+p.port.onmessage({ data: new ArrayBuffer(16) });
+p.port.onmessage({ data: header(4, 16, 1) });
+p.port.onmessage({ data: { fcmp: 'stats' } });
+row(sent.length === 1 && sent[0].m.refused === 2 && sent[0].m.lastRefusal === -5, 'refused.counted', JSON.stringify(sent[0] && { refused: sent[0].m.refused, last: sent[0].m.lastRefusal }));
+// the audio thread posts nothing by itself
+sent.length = 0;
+
+// ---- process: against the module driven directly ----------------------------------------------------------------------
+const { fcmpSynthLoop } = createRequire(import.meta.url)(loopPath);
+const loop = fcmpSynthLoop(48000);
+const x = new WebAssembly.Instance(new WebAssembly.Module(wasm), {}).exports;
+x._initialize();
+const ref = x.fcmp_web_create();
+const buf = x.malloc(4 * 128 * 4);
+x.fcmp_web_configure(ref, 48000, 128);
+const f32 = new Float32Array(x.memory.buffer);
+const Q = 128;
+const quanta = 3000;                                         // 8 s
+const outL = new Float32Array(Q), outR = new Float32Array(Q);
+const inputs = [[new Float32Array(Q), new Float32Array(Q)]];
+const outputs = [[outL, outR]];
+let mismatches = 0, peak = 0;
+for (let q = 0; q < quanta; q += 1) {
+  const at = (q * Q) % (loop.frames - Q);
+  inputs[0][0].set(loop.left.subarray(at, at + Q));
+  inputs[0][1].set(loop.right.subarray(at, at + Q));
+  f32.set(inputs[0][0], buf / 4);
+  f32.set(inputs[0][1], buf / 4 + Q);
+  x.fcmp_web_process(ref, buf, buf + Q * 4, buf + 2 * Q * 4, buf + 3 * Q * 4, Q);
+  outL.fill(0); outR.fill(0);
+  p.process(inputs, outputs, {});
+  for (let i = 0; i < Q; i += 1) {
+    if (!Object.is(outL[i], f32[buf / 4 + 2 * Q + i]) || !Object.is(outR[i], f32[buf / 4 + 3 * Q + i])) mismatches += 1;
+    peak = Math.max(peak, Math.abs(outL[i]));
+  }
+}
+row(sent.length === 0, 'process.posts_nothing', `${sent.length} messages over ${quanta} quanta`);
+row(mismatches === 0 && peak > 0.05, 'process.equals_module', `${quanta} quanta, ${mismatches} mismatches, peak ${peak.toFixed(3)}`);
+
+// ---- odd quanta: 256 frames in one call equals two of 128; disconnected input; mono; mono output ------------------------
+{
+  const a = new P({ processorOptions: { wasm: wasmBuffer } });
+  const b = new P({ processorOptions: { wasm: wasmBuffer } });
+  let bad = 0;
+  for (let q = 0; q < 200; q += 1) {
+    const at = q * 256;
+    const i256 = [[loop.left.slice(at, at + 256), loop.right.slice(at, at + 256)]];
+    const o256 = [[new Float32Array(256), new Float32Array(256)]];
+    a.process(i256, o256, {});
+    for (let h = 0; h < 2; h += 1) {
+      const i128 = [[loop.left.slice(at + h * 128, at + h * 128 + 128), loop.right.slice(at + h * 128, at + h * 128 + 128)]];
+      const o128 = [[new Float32Array(128), new Float32Array(128)]];
+      b.process(i128, o128, {});
+      for (let i = 0; i < 128; i += 1) if (!Object.is(o128[0][0][i], o256[0][0][h * 128 + i])) bad += 1;
+    }
+  }
+  row(bad === 0, 'process.any_frame_count', `256-frame quanta against 128: ${bad} mismatches`);
+  const o = [[new Float32Array(128), new Float32Array(128)]];
+  let threw = '';
+  try { a.process([[]], o, {}); a.process([], o, {}); a.process([[loop.left.slice(0, 128)]], o, {}); a.process([[loop.left.slice(0, 128)]], [[new Float32Array(128)]], {}); a.process([[]], [[]], {}); }
+  catch (e) { threw = String(e); }
+  row(threw === '', 'process.shapes', threw || 'no input, an empty input, mono in, mono out, no output channel');
+}
+
+// ---- cost ------------------------------------------------------------------------------------------------------------
+{
+  const reps = 20000;
+  const t0 = performance.now();
+  for (let q = 0; q < reps; q += 1) {
+    const at = (q * Q) % (loop.frames - Q);
+    inputs[0][0].set(loop.left.subarray(at, at + Q));
+    inputs[0][1].set(loop.right.subarray(at, at + Q));
+    p.process(inputs, outputs, {});
+  }
+  const t1 = performance.now();
+  for (let q = 0; q < reps; q += 1) {
+    const at = (q * Q) % (loop.frames - Q);
+    f32.set(loop.left.subarray(at, at + Q), buf / 4);
+    f32.set(loop.right.subarray(at, at + Q), buf / 4 + Q);
+    x.fcmp_web_process(ref, buf, buf + Q * 4, buf + 2 * Q * 4, buf + 3 * Q * 4, Q);
+  }
+  const t2 = performance.now();
+  const per = (t1 - t0) / reps, raw = (t2 - t1) / reps;
+  console.log(`NOTE     process(): ${(per * 1000).toFixed(1)} us per quantum through the script, ${(raw * 1000).toFixed(1)} us module alone `
+            + `(default Mode, STD, the loop); a quantum is 2667 us: ${(100 * per / (128 / 48)).toFixed(2)} % of real time`);
+  // garbage: heap growth over the run
+  {
+    const v8 = await import('node:v8'); v8.setFlagsFromString('--expose-gc'); const gc = vm.runInNewContext('gc'); const params = {};
+    gc();
+    const h0 = process.memoryUsage().heapUsed;
+    for (let q = 0; q < 50000; q += 1) p.process(inputs, outputs, params);
+    const h1 = process.memoryUsage().heapUsed;
+    console.log(`NOTE     heap growth over 50000 quanta without a collection: ${h1 - h0} bytes`);
+    row(h1 - h0 < 64 * 1024, 'process.no_garbage', `${h1 - h0} bytes over 50000 quanta`);
+  }
+}
+console.log(`${failed === 0 ? 'PASS' : 'FAIL'}     web.worklet: ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);

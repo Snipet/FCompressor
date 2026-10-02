@@ -1,0 +1,77 @@
+// scratch only (scout W-N): the frame rate of a THRESHOLD drag on CHARACTERISTICS with the synchronous preview, each
+// tick's dt being the previous tick's measured wall time (as a browser frame's is). No FCMP_PROBE first line.
+#include "ProbeRegistry.h"
+
+#include "FakeFacade.h"
+
+#include "editor/Panel.h"
+#include "editor/PreviewWorker.h"
+#include "editor/SubView.h"
+
+#include "fcdsp/params/Pid.h"
+
+#include <funkgui/panel/HeadlessGuiScope.h>
+#include <funkgui/panel/HeadlessHost.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+FCMP_PROBE(ui, dragcost)
+{
+    namespace ui = fcmp::ui;
+    const funkgui::HeadlessGuiScope gui;
+    fcmp::probe::FakeFacade facade(C.key);
+    ui::Panel panel(facade, ui::PanelOptions{ true, true, false });
+    funkgui::HeadlessHost host(panel, 0, 2.0f);
+    host.settle(600, 1.0f / 60.0f);
+    panel.setView({ nullptr, ui::Screen::characteristics, fcmp::ScTab::sidechain, ui::Overlay::none }, true);
+    const auto t0 = std::chrono::steady_clock::now();
+    host.settle(600, 1.0f / 60.0f);
+    host.draw();
+    const double openMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("OPEN serial after settle %u pending %d screen %d\n", panel.context().preview.result().serial, panel.context().preview.pending() ? 1 : 0, static_cast<int>(panel.screen()));
+    for (int k = 0; k < 4; ++k)
+    {
+        const auto a = std::chrono::steady_clock::now();
+        host.tick(1, 1.0f / 60.0f);
+        std::printf("OPEN idle tick %d: %.1f ms, serial %u\n", k, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count(), panel.context().preview.result().serial);
+    }
+    const uint32_t serial0 = panel.context().preview.result().serial;
+
+    fcmp::probe::FakePort& thr = facade.fakePort(fcdsp::Pid::thr);
+    // (a) fixed dt = 1/60 for 60 frames: the 20 Hz limiter in UI time
+    for (int i = 0; i < 60; ++i)
+    {
+        thr.script01(0.2f + 0.005f * static_cast<float>(i));
+        host.tick(1, 1.0f / 60.0f);
+    }
+    const uint32_t serial1 = panel.context().preview.result().serial;
+    // (b) dt = the previous frame's wall time, until 3 s of wall time have passed
+    std::vector<double> frameMs;
+    float dt = 1.0f / 60.0f;
+    double wall = 0.0;
+    int i = 0;
+    while (wall < 3000.0)
+    {
+        thr.script01(0.55f + 0.0005f * static_cast<float>(i++ % 800));
+        const auto a = std::chrono::steady_clock::now();
+        host.tick(1, dt);
+        host.draw();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
+        frameMs.push_back(ms);
+        wall += std::max(ms, 1000.0 / 60.0);                         // a frame never comes faster than 60 Hz
+        dt = static_cast<float>(std::max(ms, 1000.0 / 60.0) / 1000.0);
+    }
+    const uint32_t serial2 = panel.context().preview.result().serial;
+    std::sort(frameMs.begin(), frameMs.end());
+    std::printf("DRAGCOST %-13s open(settle+draw) %7.1f ms, jobs at open %u | 60 frames at dt 1/60: %u jobs | 3 s of wall: "
+                "%zu frames (%.1f fps), %u jobs, frame median %.1f ms, max %.1f ms\n",
+                std::string(C.key).c_str(), openMs, serial0, serial1 - serial0, frameMs.size(),
+                static_cast<double>(frameMs.size()) / (wall / 1000.0), serial2 - serial1, frameMs[frameMs.size() / 2], frameMs.back());
+    panel.shutdown();
+    P.eq("dragcost.ran", 1, 1);
+    return P.finish();
+}
