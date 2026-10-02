@@ -147,15 +147,40 @@ endif()
 
 if(FCOMPRESSOR_WEB AND TARGET fcmp_web_engine AND TARGET fcmp_web_ui)
   # build-web/site: what a static server serves (cmake/FcmpWebSite.cmake). Nothing publishes it.
+  # Its inputs go through a file (<build>/site-args.cmake), so that web/tests/site.mjs can run the same script with
+  # the same inputs into a scratch directory.
+  if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)
+    set(_fcmp_site_override 1)
+  else()
+    set(_fcmp_site_override 0)
+  endif()
+  set(_fcmp_site_args "# site-args.cmake (cmake/FcmpWeb.cmake): the inputs of cmake/FcmpWebSite.cmake for this build.\n")
+  foreach(_kv "FCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}" "FCMP_SITE_DIR=${CMAKE_BINARY_DIR}/site"
+              "FCMP_ENGINE_WASM=$<TARGET_FILE:fcmp_web_engine>" "FCMP_UI_JS=$<TARGET_FILE:fcmp_web_ui>"
+              "FCMP_FUNKGUI_DIR=${FCMP_FUNKGUI_DIR}" "FCMP_FUNKGUI_SHA=${FCMP_FUNKGUI_SHA}"
+              "FCMP_FUNKGUI_OVERRIDE=${_fcmp_site_override}" "FCMP_EMSCRIPTEN_ROOT=${EMSCRIPTEN_ROOT_PATH}"
+              "FCMP_EMSCRIPTEN_VERSION=${EMSCRIPTEN_VERSION}" "GIT_EXECUTABLE=${GIT_EXECUTABLE}")
+    string(REGEX MATCH "^[^=]+" _k "${_kv}")
+    string(REGEX REPLACE "^[^=]+=" "" _v "${_kv}")
+    string(APPEND _fcmp_site_args "if(NOT DEFINED ${_k})\n  set(${_k} [==[${_v}]==])\nendif()\n")
+  endforeach()
+  file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/site-args.cmake CONTENT "${_fcmp_site_args}")
   add_custom_target(fcmp_web_site
-      COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR} -DFCMP_SITE_DIR=${CMAKE_BINARY_DIR}/site
-              -DFCMP_ENGINE_WASM=$<TARGET_FILE:fcmp_web_engine> -DFCMP_UI_JS=$<TARGET_FILE:fcmp_web_ui>
-              -DFCMP_FUNKGUI_DIR=${FCMP_FUNKGUI_DIR} -DFCMP_EMSCRIPTEN_ROOT=${EMSCRIPTEN_ROOT_PATH}
-              -DFCMP_EMSCRIPTEN_VERSION=${EMSCRIPTEN_VERSION} -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+      COMMAND ${CMAKE_COMMAND} -DFCMP_SITE_ARGS=${CMAKE_BINARY_DIR}/site-args.cmake
               -P ${PROJECT_SOURCE_DIR}/cmake/FcmpWebSite.cmake
       VERBATIM)
   add_dependencies(fcmp_web_site fcmp_web_engine fcmp_web_ui)
 endif()
+
+# What the gate's stamp covers. fcmp_probes writes built-from-probes.txt, which Scripts/verify.sh reads before it
+# stamps a pass: it must be written only after everything a `verify` test runs has been built from the same tree. The
+# web tests run fcmp_web_check (every configuration), and in the web tree the engine, the editor module, the port
+# check and the site.
+foreach(_t fcmp_web_check fcmp_web_engine fcmp_web_ui fcmp_web_port_check fcmp_web_site)
+  if(TARGET ${_t} AND TARGET fcmp_probes)
+    add_dependencies(fcmp_probes ${_t})
+  endif()
+endforeach()
 
 if(FCOMPRESSOR_WEB)
   add_custom_target(fcmp_web)
