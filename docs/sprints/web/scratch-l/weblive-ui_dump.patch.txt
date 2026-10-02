@@ -1,0 +1,129 @@
+--- /Users/seanfunk/audio/plugins/FCompressor/Tools/probes/plugin/ui_dump.cpp	2026-10-01 22:30:14
++++ probe/ui_dump.cpp	2026-10-02 11:11:11
+@@ -34,6 +34,10 @@
+ #include "editor/Layout.h"
+ #include "editor/Panel.h"
+ #include "plugin/portable/FactoryData.h"
++#include "web/facade/EngineLink.h"
++#include "web/facade/WebFacade.h"
++#include <funkgui/canvas/Fingerprint.h>
++#include <funkgui/canvas/Tags.h>
+ 
+ #include "fcdsp/modes/ModeDescriptor.h"
+ #include "fcdsp/modes/Registry.h"
+@@ -78,6 +82,10 @@
+         float       liveSeconds = 0.0f;                          // --live: seconds of the groove through the engine
+         std::string focus;                                       // --focus <view>:<local>
+         std::string keys;                                        // --keys <HeadlessHost::keys spec>
++        std::string facade = "fake";                             // --facade fake|web (PROTOTYPE)
++        std::string host;                                        // --host <the browser name> (PROTOTYPE)
++        std::string fp;                                          // --fp <x.fp>: the fingerprint lines (PROTOTYPE)
++        bool        nolive = false;                              // --nolive 1 (PROTOTYPE)
+         std::string error;                                       // non-empty: a usage error
+     };
+ 
+@@ -107,7 +115,7 @@
+             const std::string value = hasValue ? argv[i + 1] : "";
+             if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme"
+                 || flag == "--wheel" || flag == "--preset" || flag == "--live" || flag == "--focus"
+-                || flag == "--keys")
++                || flag == "--keys" || flag == "--facade" || flag == "--host" || flag == "--fp" || flag == "--nolive")
+             {
+                 if (!hasValue || value.empty() || value.starts_with("--"))
+                 {
+@@ -115,7 +123,15 @@
+                     return a;
+                 }
+                 ++i;
+-                if (flag == "--view")
++                if (flag == "--facade")
++                    a.facade = value;
++                else if (flag == "--host")
++                    a.host = value;
++                else if (flag == "--fp")
++                    a.fp = value;
++                else if (flag == "--nolive")
++                    a.nolive = value == "1";
++                else if (flag == "--view")
+                     a.view = value;
+                 else if (flag == "--out")
+                     a.out = value;
+@@ -150,6 +166,37 @@
+         return a;
+     }
+ 
++    // PROTOTYPE: the page before START has no port: every record is dropped, no reply ever comes.
++    struct NullLink final : fcmp::web::EngineLink
++    {
++        void post(std::span<const std::uint8_t>) override {}
++        void setSink(fcmp::web::ReplySink*) override {}
++    };
++
++    bool writeFingerprint(const std::string& path, const funkgui::PrimList& l)
++    {
++        std::FILE* f = std::fopen(path.c_str(), "w");
++        if (f == nullptr)
++            return false;
++        const funkgui::Fingerprint fp = funkgui::fingerprint(l);
++        std::fprintf(f, "geometry %016llx\ntext %016llx\nstatics %d\nlive %d\ntexts %d\nrrects %d\nsegments %d\n"
++                     "areas %d\nmax_x %.9g\nmax_y %.9g\n", static_cast<unsigned long long>(fp.geometry),
++                     static_cast<unsigned long long>(fp.text), fp.statics, fp.live, fp.texts, fp.rrects, fp.segments,
++                     fp.areas, static_cast<double>(fp.maxX), static_cast<double>(fp.maxY));
++        for (const auto& [tag, count] : fp.tagCounts)
++        {
++            std::string name;
++            if (const char* n = funkgui::tagName(tag))
++                for (const char* c = n; *c != 0; ++c)
++                    name += (*c >= 'A' && *c <= 'Z') ? static_cast<char>(*c - 'A' + 'a') : *c;
++            else
++                name = std::to_string(static_cast<unsigned>(tag));
++            std::fprintf(f, "tag.%s %d\n", name.c_str(), count);
++        }
++        std::fprintf(f, "view_w %d\nview_h %d\nglyphs_missing %u\n", l.info.logicalW, l.info.logicalH, l.missingGlyphs);
++        return std::fclose(f) == 0;
++    }
++
+     bool makeParent(const std::string& path)
+     {
+         const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+@@ -218,18 +265,26 @@
+         const funkgui::HeadlessGuiScope gui;                     // FontService bakes the atlas through JUCE's fonts
+         std::unique_ptr<fcmp::probe::FakeFacade> fake;
+         std::unique_ptr<fcmp::probe::EngineFacade> engine;
+-        if (a.liveSeconds > 0.0f)
++        NullLink nullLink;
++        std::unique_ptr<fcmp::web::WebFacade> web;
++        if (a.facade == "web")
++        {
++            web = std::make_unique<fcmp::web::WebFacade>(nullLink);
++            web->setEnvironment("WEB", a.host);
++        }
++        else if (a.liveSeconds > 0.0f)
+             engine = std::make_unique<fcmp::probe::EngineFacade>(a.mode, 1);
+         else
+             fake = std::make_unique<fcmp::probe::FakeFacade>(a.mode);
+-        fcmp::ProcessorFacade& facade = engine ? static_cast<fcmp::ProcessorFacade&>(*engine) : *fake;
+-        fcmp::probe::FakeFacade& ports = engine ? engine->params() : *fake;
+-        if (!a.preset.empty() && !applyPreset(ports, a.mode, a.preset))
++        fcmp::ProcessorFacade& facade = web ? static_cast<fcmp::ProcessorFacade&>(*web)
++                                      : engine ? static_cast<fcmp::ProcessorFacade&>(*engine) : *fake;
++        fcmp::probe::FakeFacade* ports = web ? nullptr : engine ? &engine->params() : fake.get();
++        if (!a.preset.empty() && (ports == nullptr || !applyPreset(*ports, a.mode, a.preset)))
+         {
+             std::fprintf(stderr, "ui.dump: Mode '%s' has no factory preset '%s'\n", a.mode.c_str(), a.preset.c_str());
+             return 1;
+         }
+-        ui::Panel panel(facade, { true, true, false });
++        ui::Panel panel(facade, { true, true, a.nolive });
+         funkgui::HeadlessHost host(panel, a.theme, a.dpi);
+         panel.setView(*view, true);
+         if (a.wheelPoints != 0.0f && std::isfinite(a.wheelPoints))
+@@ -283,6 +338,8 @@
+             std::fprintf(stderr, "ui.dump: cannot write %s\n", a.out.c_str());
+             return 1;
+         }
++        if (!a.fp.empty() && !writeFingerprint(a.fp, pl))
++            return 1;
+         std::printf("ui.dump: %s  view %s  mode %s  dpi %g  theme %d  %s %d frames  %zu prims  %u missing glyphs\n",
+                     a.out.c_str(), view->id, a.mode.c_str(), static_cast<double>(a.dpi), a.theme,
+                     engine ? "live for" : "settled in", frames, pl.prims.size(), pl.missingGlyphs);

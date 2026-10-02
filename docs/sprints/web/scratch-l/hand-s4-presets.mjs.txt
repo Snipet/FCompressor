@@ -1,0 +1,154 @@
+// Item 4: presets. Next/previous, the browser, MODIFIED, SAVE AS and the name entry, rename, delete, IMPORT/EXPORT.
+import { serve, chrome, sleep, Report, HERE, cleanUp, PID } from './lib.mjs';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  await p.start(); await sleep(1000); await p.tap(); await sleep(400);
+  const preset = async () => { const it = await p.need('Preset'); return `${it.value} [${it.description}]`; };
+  const last = async () => { const t = await p.tapRead(); return t.last ? { n: t.n, snap: t.last.snap, thr: t.last.v[PID.thr], ratio: t.last.v[PID.ratio], mode: t.last.v[PID.mode] } : { n: 0 }; };
+  const overlay = async () => (await p.a11y()).overlay;
+
+  // a. next / previous
+  const p0 = await preset();
+  await p.clickItem('Next preset'); await sleep(400);
+  const p1 = await preset(); const l1 = await last();
+  await p.clickItem('Next preset'); await sleep(400);
+  const p2 = await preset();
+  await p.clickItem('Previous preset'); await sleep(400);
+  const p3 = await preset();
+  await p.clickItem('Previous preset'); await sleep(400);
+  const p4 = await preset();
+  await p.clickItem('Previous preset'); await sleep(400);
+  const p5 = await preset();
+  R.row(p0.startsWith('Init') && p1.startsWith('Gentle Glue') && p3 === p1 && p4 === p0 && l1.snap === 1 && !p5.startsWith('Init'), '4.step.next-previous',
+        { start: p0, next: p1, nextAgain: p2, previous: p3, previousAgain: p4, previousWraps: p5, firstRecord: l1 });
+  await p.clickItem('Next preset'); await sleep(300);              // back on Init
+
+  // b. the browser: a click loads and keeps it open; a double-click loads and closes
+  await p.clickItem('Preset'); await sleep(500);
+  const open = await overlay();
+  const row = await p.need('Mix Bus Glue');
+  await p.click(row.x + 100, row.y + row.h / 2); await sleep(500);
+  const pb = await preset(); const lb = await last(); const a1 = await p.a11y();
+  const shotB = await p.shot('4-presetbrowser-mix-bus-glue.png');
+  R.row(open === 2 && pb.startsWith('Mix Bus Glue') && lb.mode === 1 && lb.snap === 1 && a1.overlay === 2 && (await p.need('Mode')).value === 'BUS G', '4.browser.click-loads',
+        { overlayOpen: open, preset: pb, record: lb, modeLatch: (await p.need('Mode')).value, stillOpen: a1.overlay === 2, png: shotB });
+  const row2 = await p.need('Vocal Leveler');
+  await p.doubleClick(row2.x + 100, row2.y + row2.h / 2); await sleep(600);
+  R.row((await overlay()) === 0 && (await preset()).startsWith('Vocal Leveler') && (await last()).mode === 0, '4.browser.doubleclick-loads-and-closes', { overlay: await overlay(), preset: await preset(), record: await last() });
+  // keys in the browser: arrows move and load, Return closes
+  await p.clickItem('Preset'); await sleep(400);
+  await p.key('ArrowDown'); await sleep(300); const k1 = await preset();
+  await p.key('ArrowDown'); await sleep(300); const k2 = await preset();
+  await p.key('Enter'); await sleep(500);
+  R.row(k1.startsWith('Drum Punch') && k2.startsWith('Parallel Smash') && (await overlay()) === 0, '4.browser.keys', { down1: k1, down2: k2, overlayAfterReturn: await overlay() });
+  // the list scrolls with the wheel
+  await p.clickItem('Preset'); await sleep(400);
+  const before = (await p.a11y()).items.filter((i) => i.role === 6).map((i) => i.title);
+  await p.wheel(500, 200, 240); await sleep(700);
+  const after = (await p.a11y()).items.filter((i) => i.role === 6).map((i) => i.title);
+  R.row(before[0] !== after[0], '4.browser.wheel-scrolls-list', { firstRowBefore: before[0], firstRowAfter: after[0], pageScrollY: await p.ev('scrollY') });
+  await p.key('Escape'); await sleep(300);
+
+  // c. MODIFIED
+  const slot = await p.need('THRESHOLD');
+  await p.drag(slot.x + slot.w / 2, slot.y + 44, -30, 0); await sleep(300);
+  const pm = await preset();
+  const shotM = await p.shot('4-modified.png');
+  R.row(/modified/i.test(pm), '4.modified-mark', { preset: pm, png: shotM });
+
+  // d. SAVE with a factory preset current = save as: the browser opens with the name field; plain keys type the name
+  await p.clickItem('Save preset'); await sleep(600);
+  const a2 = await p.a11y();
+  const field0 = a2.items.find((i) => /New preset name/i.test(i.title));
+  const shotS0 = await p.shot('4-saveas-field.png');
+  await p.type('Scout One'); await sleep(200);
+  const field1 = (await p.a11y()).items.find((i) => /New preset name/i.test(i.title));
+  const status1 = await p.value('Status');
+  const shotS1 = await p.shot('4-saveas-typed.png');
+  await p.key('Enter'); await sleep(700);
+  const ps = await preset(); const ovS = await overlay();
+  R.row(a2.overlay === 2 && !!field0 && field1 && /scout one/i.test(field1.value) && /Scout One/i.test(ps) && /user/i.test(ps) && !/modified/i.test(ps), '4.save-as.name-typed',
+        { fieldAtOpen: field0 && field0.value, fieldTyped: field1 && field1.value, statusWhileTyping: status1, presetAfter: ps, overlayAfter: ovS, pngs: [shotS0, shotS1] });
+  // the settings screen counts it
+  await p.clickItem('Settings'); await sleep(500);
+  const counts = await p.value('Presets');
+  await p.key('Escape'); await sleep(300);
+  R.row(/1 USER/.test(counts), '4.save-as.counted', counts);
+
+  // e. SAVE over the user preset: one click, SAVED; SAVE's context menu (a DOM menu)
+  await p.drag(slot.x + slot.w / 2, slot.y + 44, 20, 0); await sleep(300);
+  const pe0 = await preset();
+  await p.clickItem('Save preset'); await sleep(400);
+  const pe1 = await preset(); const shotE = await p.shot('4-saved.png');
+  R.row(/modified/i.test(pe0) && !/modified/i.test(pe1) && (await overlay()) === 0, '4.save-over-user', { before: pe0, after: pe1, footer: await p.footer(), png: shotE });
+  const save = await p.need('Save preset');
+  await p.rightClick(save.x + save.w / 2, save.y + save.h / 2); await sleep(400);
+  const m1 = await p.menu();
+  const shotMenu = await p.shot('4-save-menu.png', { canvasOnly: false });
+  R.row(!!m1 && m1.items.map((i) => i.text).join('|') === 'Save|Save As...' , '4.save-menu.opens', { menu: m1 && { box: m1.box, focused: m1.focused, items: m1.items.map((i) => `${i.text}${i.disabled ? ' (disabled)' : ''}`) }, png: shotMenu });
+  await p.menuChoose('Save As...'); await sleep(500);
+  const a3 = await p.a11y();
+  const field3 = a3.items.find((i) => /New preset name/i.test(i.title));
+  R.row((await p.menu()) === null && a3.overlay === 2 && !!field3, '4.save-menu.choice-acts', { menuGone: (await p.menu()) === null, overlay: a3.overlay, field: field3 && field3.value });
+  // the name field: select-all is replaced by typing; Backspace; the taken-name note; Escape cancels and keeps the browser
+  await p.type('Scout One'); await sleep(200);
+  const taken = await p.value('Status');
+  await p.key('Backspace'); await p.key('Backspace'); await p.key('Backspace'); await p.type('Two'); await sleep(200);
+  const field4 = (await p.a11y()).items.find((i) => /New preset name/i.test(i.title));
+  await p.key('Escape'); await sleep(300);
+  const a4 = await p.a11y();
+  R.row(/TAKEN/.test(taken) && /scout two/i.test(field4.value) && a4.overlay === 2 && !a4.items.some((i) => /New preset name/i.test(i.title)), '4.name-entry.keys',
+        { takenNote: taken, afterBackspaces: field4.value, escapeKeepsBrowser: a4.overlay === 2 });
+
+  // f. rename and delete on the user row; the row menu
+  await p.clickItem('User', { parent: 'Show' }); await sleep(300);
+  const userRows = (await p.a11y()).items.filter((i) => i.role === 6).map((i) => i.title);
+  const urow = await p.need('Scout One', { role: 6 });
+  await p.rightClick(urow.x + 100, urow.y + urow.h / 2); await sleep(400);
+  const m2 = await p.menu();
+  const shotRowMenu = await p.shot('4-row-menu.png', { canvasOnly: false });
+  R.row(!!m2 && m2.items.filter((i) => i.role !== 'separator').length >= 5, '4.row-menu.opens', { items: m2 && m2.items.map((i) => i.role === 'separator' ? '---' : `${i.text}${i.disabled ? ' (disabled)' : ''}`), png: shotRowMenu });
+  // an outside press dismisses, and does not reach the canvas (the preset is not stepped by a press on the next arrow)
+  const pBefore = await preset();
+  const nx = await p.need('Next preset');
+  await p.click(nx.x + nx.w / 2, nx.y + nx.h / 2); await sleep(300);
+  R.row((await p.menu()) === null && (await preset()) === pBefore, '4.row-menu.outside-press-dismisses', { menuGone: (await p.menu()) === null, presetUnchanged: (await preset()) === pBefore });
+  const rn = await p.need('Rename');
+  R.note('4.rename.enabled-on-user-row', { rename: rn.enabled, delete: (await p.need('Delete')).enabled, import: (await p.need('Import')).enabled, export: (await p.need('Export')).enabled });
+  await p.clickItem('Rename'); await sleep(300);
+  await p.type('Scout Renamed'); await p.key('Enter'); await sleep(500);
+  const rows2 = (await p.a11y()).items.filter((i) => i.role === 6).map((i) => i.title);
+  R.row(rows2.includes('Scout Renamed') && !rows2.includes('Scout One'), '4.rename', { userRowsBefore: userRows, after: rows2, status: await p.value('Status') });
+  await p.clickItem('Delete'); await sleep(300);
+  const armed = await p.value('Status'); const shotDel = await p.shot('4-delete-armed.png');
+  await sleep(500);
+  await p.clickItem(/Delete|Confirm/); await sleep(500);
+  const rows3 = (await p.a11y()).items.filter((i) => i.role === 6).map((i) => i.title);
+  R.row(/AGAIN/.test(armed) && rows3.length === 0, '4.delete', { armed, userRowsAfter: rows3, status: await p.value('Status'), png: shotDel });
+
+  // g. IMPORT and EXPORT: not available, and they say so
+  await p.clickItem('All', { parent: 'Show' }); await sleep(300);
+  const imp = await p.need('Import'), exp = await p.need('Export');
+  await p.move(imp.x + imp.w / 2, imp.y + imp.h / 2); await sleep(400);
+  const fImp = await p.footer();
+  await p.move(exp.x + exp.w / 2, exp.y + exp.h / 2); await sleep(400);
+  const fExp = await p.footer();
+  const st0 = await p.value('Status');
+  await p.click(imp.x + imp.w / 2, imp.y + imp.h / 2); await sleep(300);
+  const st1 = await p.value('Status');
+  const shotImp = await p.shot('4-import-export.png');
+  R.row(imp.enabled === 0 && exp.enabled === 0 && /NOT AVAILABLE|BROWSER|NO FILE/i.test(`${fImp} ${fExp} ${st1}`), '4.import-export.say-not-available',
+        { importEnabled: imp.enabled, exportEnabled: exp.enabled, footerOverImport: fImp, footerOverExport: fExp, statusBefore: st0, statusAfterClick: st1, importDescription: imp.description, png: shotImp });
+  await p.key('Escape');
+  R.row(p.consoleLines.length === 0, '4.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+  const st = await p.status(); const ws = await p.stats();
+  R.row(st.refused === 0 && ws.refused === 0 && ws.ok, '4.engine-took-every-record', { posted: st.posted, records: ws.records, refused: ws.refused });
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

@@ -1,0 +1,18 @@
+// The pixel row on LIVE frames at several THRESHOLD values: how often, how large, where.
+import { serve, chrome, sleep, HERE, cleanUp } from './lib.mjs';
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 900 });
+const p = await b.page(null);
+await p.metrics(1280, 800, 1);
+await p.go(`${server.base}/`, 1500);
+await p.start(); await sleep(1500);
+const slot = await p.need('THRESHOLD');
+for (const v of ['-18', '-24', '-30.5', '-40']) {
+  await p.click(slot.x + slot.w / 2, slot.y + 44); await p.type(v); await p.key('Enter'); await p.move(300, 630); await sleep(1500);
+  const live = JSON.parse(await p.ev(`new Promise((done) => { let n = 0, over = 0, largest = 0; const where = {}; const t = setInterval(() => { const r = JSON.parse(Module.fcmpSelftest()); const s = r.pixels; n += 1; if (s.over2 > 0) { over += 1; const seen = new Set(); for (const o of (r.offenders || [])) { const k = o[0] + ',' + o[1]; if (!seen.has(k)) { seen.add(k); where[k] = (where[k] || 0) + 1; } } } largest = Math.max(largest, s.largest); if (n === 150) { clearInterval(t); done(JSON.stringify({ runs: n, over, largest, where })); } }, 40); })`));
+  const spots = Object.entries(live.where).sort((a, c) => c[1] - a[1]);
+  const xs = spots.map(([k]) => Number(k.split(',')[0])), ys = spots.map(([k]) => Number(k.split(',')[1]));
+  console.log(`THRESHOLD ${v.padEnd(6)} ${String(live.over).padStart(3)} of ${live.runs} live frames over tolerance, largest ${live.largest}; ${spots.length} distinct pixels, x ${Math.min(...xs)}..${Math.max(...xs)}, y ${Math.min(...ys)}..${Math.max(...ys)}; most frequent: ${spots.slice(0, 5).map(([k, n]) => `(${k})x${n}`).join(' ')}`);
+}
+const shot = await p.shot('t-pixels4-threshold-40.png'); console.log(shot);
+b.kill(); server.kill(); cleanUp(); process.exit(0);

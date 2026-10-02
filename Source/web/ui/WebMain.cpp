@@ -55,7 +55,9 @@
 
 #include "fcdsp/params/Pid.h"
 
+#include <funkgui/canvas/Fingerprint.h>
 #include <funkgui/canvas/SoftRaster.h>
+#include <funkgui/canvas/Tags.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
@@ -65,6 +67,11 @@
 #include <emscripten/em_js.h>
 #include <emscripten/em_macros.h>
 #include <emscripten/html5.h>
+
+// LEAD-PHASE BASE (docs/sprints/web-lead.md): the scouts' prototypes of Module.fcmpFrame() and Module.fcmpA11y(),
+// working as they stand. Card L-M brings them to the manifest and removes these two switches.
+#define PROTO_FP 1
+#define PROTO_DUMP 0
 
 #include <algorithm>
 #include <climits>
@@ -77,6 +84,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 using FcmpUiTextFn = const char* (*)(void);
 using FcmpUiVoidFn = void (*)(void);
@@ -125,8 +133,11 @@ EM_JS(int, fcmp_ui_margin, (const char* selector, int vertical), {
 
 // The page-facing names, the pagehide rule, and last the page's own signal.
 EM_JS(void, fcmp_ui_ready,
-      (FcmpUiTextFn status, FcmpUiTextFn selftest, FcmpUiVoidFn resetEngine, FcmpUiVoidFn shutdown),
+      (FcmpUiTextFn status, FcmpUiTextFn selftest, FcmpUiVoidFn resetEngine, FcmpUiVoidFn shutdown,
+       FcmpUiTextFn frame, FcmpUiTextFn dump),
 {
+    if (frame) { const frameText = getWasmTableEntry(frame); Module['fcmpFrame'] = () => UTF8ToString(frameText()); }
+    if (dump) { const dumpText = getWasmTableEntry(dump); Module['fcmpDump'] = () => UTF8ToString(dumpText()); }
     const statusText = getWasmTableEntry(status);
     const selftestText = getWasmTableEntry(selftest);
     const reset = getWasmTableEntry(resetEngine);
@@ -137,6 +148,13 @@ EM_JS(void, fcmp_ui_ready,
     Module['fcmpShutdown'] = () => { shutDown(); };
     window.addEventListener("pagehide", (event) => { if (!event.persisted) shutDown(); });
     if (Module['fcmpReady']) Module['fcmpReady']();
+})
+
+// PROTOTYPE (lead-phase base; card L-M): Module.fcmpA11y(), the Panel's accessibility items and its state as a JSON text.
+EM_JS(void, fcmp_ui_debug, (FcmpUiTextFn a11y),
+{
+    const a11yText = getWasmTableEntry(a11y);
+    Module['fcmpA11y'] = () => UTF8ToString(a11yText());
 })
 
 namespace
@@ -317,6 +335,136 @@ namespace
         return text->c_str();
     }
 
+    // PROTOTYPE (scout-l): settle the host under the pinned clock, then the settled frame.
+#if PROTO_FP || PROTO_DUMP
+    struct Settled { int frames = 0; bool drawn = false, idle = false; };
+    Settled settle(funkgui::WebHost& host)
+    {
+        Settled s;
+        while (s.frames <= 600)
+        {
+            const funkgui::WebHost::FrameResult r = host.frame(emscripten_performance_now());
+            ++s.frames;
+            s.drawn = r.submitted;
+            s.idle = !r.wantsFullRate;
+            if (!s.drawn || s.idle)
+                break;
+        }
+        return s;
+    }
+    void appendHooks(std::string& out, const funkgui::PrimList& l, const Settled& s)
+    {
+        char line[200];
+        std::snprintf(line, sizeof line, "hooks dpi %.9g clock %s theme %d dt %.9g settle %d drawn %d idle %d\n",
+                      static_cast<double>(l.info.dpi), l.info.fixedClock ? "fixed" : "free", l.info.theme,
+                      static_cast<double>(l.info.dt), s.frames, s.drawn ? 1 : 0, s.idle ? 1 : 0);
+        out += line;
+    }
+#endif
+#if PROTO_FP
+    const char* frameText()
+    {
+        std::string& out = *text;
+        out.clear();
+        if (app == nullptr)
+            return out.c_str();
+        const Settled s = settle(*app->host);
+        const funkgui::PrimList& l = app->host->lastFrame();
+        const funkgui::Fingerprint fp = funkgui::fingerprint(l);
+        char line[200];
+        appendHooks(out, l, s);
+        std::snprintf(line, sizeof line, "geometry %016llx\ntext %016llx\nstatics %d\nlive %d\ntexts %d\nrrects %d\n"
+                      "segments %d\nareas %d\nmax_x %.9g\nmax_y %.9g\n",
+                      static_cast<unsigned long long>(fp.geometry), static_cast<unsigned long long>(fp.text),
+                      fp.statics, fp.live, fp.texts, fp.rrects, fp.segments, fp.areas,
+                      static_cast<double>(fp.maxX), static_cast<double>(fp.maxY));
+        out += line;
+        for (const auto& [tag, count] : fp.tagCounts)
+        {
+            std::string name;
+            if (const char* n = funkgui::tagName(tag))
+                for (const char* c = n; *c != 0; ++c)
+                    name += (*c >= 'A' && *c <= 'Z') ? static_cast<char>(*c - 'A' + 'a') : *c;
+            else
+                name = std::to_string(static_cast<unsigned>(tag));
+            out += "tag." + name + " " + std::to_string(count) + "\n";
+        }
+        std::snprintf(line, sizeof line, "view_w %d\nview_h %d\nglyphs_missing %u\n", l.info.logicalW,
+                      l.info.logicalH, l.missingGlyphs);
+        out += line;
+        return out.c_str();
+    }
+#endif
+#if PROTO_DUMP
+    const char* dumpText()
+    {
+        std::string& out = *text;
+        out.clear();
+        if (app == nullptr)
+            return out.c_str();
+        const Settled s = settle(*app->host);
+        const funkgui::PrimList& l = app->host->lastFrame();
+        appendHooks(out, l, s);
+        char* buffer = nullptr;
+        std::size_t size = 0;
+        if (std::FILE* f = open_memstream(&buffer, &size))
+        {
+            const bool ok = l.writeText(f);
+            std::fclose(f);
+            if (ok && buffer != nullptr)
+                out.append(buffer, size);
+        }
+        std::free(buffer);
+        return out.c_str();
+    }
+#endif
+
+    // PROTOTYPE (lead-phase base; card L-M): the Panel's accessibility items and its state, as a JSON text.
+    const char* a11yText()
+    {
+        std::string& out = *text;
+        out = "{";
+        if (app == nullptr)
+        {
+            out += "\"items\":[]}";
+            return out.c_str();
+        }
+        char numbers[256];
+        std::snprintf(numbers, sizeof numbers, "\"screen\":%d,\"overlay\":%d,\"scTab\":%d,\"revision\":%u,\"mode\":%.0f,"
+                      "\"fullRate\":%d,\"focus\":%u,\"focusVisible\":%d,\"textEntry\":%d,\"items\":[",
+                      static_cast<int>(app->panel->screen()), static_cast<int>(app->panel->overlay()),
+                      static_cast<int>(app->panel->scTab()), app->panel->a11yRevision(),
+                      static_cast<double>(app->facade.port(fcdsp::Pid::mode).value01()) * 13.0,
+                      app->panel->wantsFullRate() ? 1 : 0, app->panel->context().focus,
+                      app->panel->context().focusVisible ? 1 : 0, app->panel->context().textEntry);
+        out += numbers;
+        std::vector<funkgui::A11yItem> items;
+        app->panel->accessibility(items);
+        bool first = true;
+        for (const funkgui::A11yItem& it : items)
+        {
+            if (!it.visible)
+                continue;
+            if (!first)
+                out += ',';
+            first = false;
+            std::snprintf(numbers, sizeof numbers, "{\"id\":%u,\"parent\":%u,\"role\":%d,\"x\":%.2f,\"y\":%.2f,\"w\":%.2f,"
+                          "\"h\":%.2f,\"enabled\":%d,\"checked\":%d,\"v\":%.6g,\"title\":",
+                          it.id, it.parent, static_cast<int>(it.role), static_cast<double>(it.bounds.x),
+                          static_cast<double>(it.bounds.y), static_cast<double>(it.bounds.w),
+                          static_cast<double>(it.bounds.h), it.enabled ? 1 : 0, it.checked ? 1 : 0, it.v);
+            out += numbers;
+            appendJson(out, it.title);
+            out += ",\"value\":";
+            appendJson(out, it.value);
+            out += ",\"description\":";
+            appendJson(out, it.description);
+            out += '}';
+        }
+        out += "]}";
+        return out.c_str();
+    }
+
     void resetEngine()
     {
         if (app != nullptr)
@@ -356,7 +504,11 @@ int main()
             app->facade.port(pid).setValue01(static_cast<float>(v) / 2.0f);
 
     fcmp::ui::PanelOptions options;
-    options.syncPreview = false;                         // no thread: a request is computed once it has rested
+    char flag[8];
+    const bool dtPinned = numberParam("dt", 1.0e-6, 1.0, 0.0) > 0.0;
+    options.syncPreview = dtPinned;                      // PROTOTYPE: as gpu/Editor.cpp under FCMP_UI_FIXED_DT
+    options.skipHint = fcmp_ui_param("nohint", flag, static_cast<int>(sizeof flag)) != 0 && flag[0] == '1';
+    options.ignoreLive = fcmp_ui_param("nolive", flag, static_cast<int>(sizeof flag)) != 0 && flag[0] == '1';
     app->panel = std::make_unique<fcmp::ui::Panel>(app->facade, options);
     char view[32];
     if (fcmp_ui_param("view", view, static_cast<int>(sizeof view)) != 0)
@@ -394,6 +546,17 @@ int main()
         return r;
     });
     app->host->start();
-    fcmp_ui_ready(&statusText, &selftestText, &resetEngine, &shutdown);
+#if PROTO_FP
+    const FcmpUiTextFn frameFn = &frameText;
+#else
+    const FcmpUiTextFn frameFn = nullptr;
+#endif
+#if PROTO_DUMP
+    const FcmpUiTextFn dumpFn = &dumpText;
+#else
+    const FcmpUiTextFn dumpFn = nullptr;
+#endif
+    fcmp_ui_debug(&a11yText);
+    fcmp_ui_ready(&statusText, &selftestText, &resetEngine, &shutdown, frameFn, dumpFn);
     return 0;
 }

@@ -1,0 +1,65 @@
+// Scratch prototype (scout-l/audio): rows the goldens do not hold, through the SHIPPED worklet: a tail into the gate
+// (the source ends), a floor at the denormal boundary, other context rates. Against the native value and against the
+// shipped engine driven directly under node.
+const say = (line) => { document.getElementById('funkgui-log').textContent += `${line}\n`; };
+const within = (ms, what, promise) => { let t = 0; const late = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${what}: no answer in ${ms} ms`)), ms); }); return Promise.race([promise, late]).finally(() => clearTimeout(t)); };
+const makeNode = (ctx, wasm) => within(10000, 'the audio processor', new Promise((made, bad) => {
+  const n = new AudioWorkletNode(ctx, 'fcmp-engine', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers', processorOptions: { wasm } });
+  const hear = (event) => { const m = event.data; if (!m || (m.fcmp !== 'ready' && m.fcmp !== 'error')) return; n.port.removeEventListener('message', hear); if (m.fcmp === 'ready') made({ node: n, ready: m }); else bad(new Error(m.error)); };
+  n.port.addEventListener('message', hear); n.port.start();
+}));
+const ask = (n, what) => within(10000, what, new Promise((answered) => { const hear = (event) => { if (!event.data || event.data.fcmp !== what) return; n.port.removeEventListener('message', hear); answered(event.data); }; n.port.addEventListener('message', hear); n.port.postMessage({ fcmp: what }); }));
+const hex8 = (v) => v.toString(16).padStart(8, '0');
+async function main() {
+  say(`NOTE     ${navigator.userAgent}`);
+  const native = await (await fetch('fcmp-extra-native.json')).json();
+  const node = await (await fetch('fcmp-extra-node.json')).json();
+  const engineBytes = await (await fetch('fcmp-engine.wasm')).arrayBuffer();
+  const p = (await WebAssembly.instantiate(await (await fetch('fcmp-extra.wasm')).arrayBuffer(), {})).instance.exports;
+  p._initialize();
+  const n = p.fcmp_print_frames(), half = n / 2;
+  const pL = p.malloc(n * 4), pR = p.malloc(n * 4), pRec = p.malloc(140), pHash = p.malloc(8);
+  const pf = new Float32Array(p.memory.buffer), pu8 = new Uint8Array(p.memory.buffer), pu32 = new Uint32Array(p.memory.buffer);
+  p.fcmp_print_program(pL, pR);
+  const progL = pf.slice(pL / 4, pL / 4 + n), progR = pf.slice(pR / 4, pR / 4 + n);
+  const flL = progL.slice(), flR = progR.slice();
+  for (let i = half; i < n; i += 1) { const v = (i % 96 < 48 ? 1 : -1) * 2 ** -120; flL[i] = v; flR[i] = -v; }
+  const cstr = (at) => { let s = ''; for (let i = at; pu8[i] !== 0; i += 1) s += String.fromCharCode(pu8[i]); return s; };
+  const hash = (a) => { pf.set(a, pL / 4); p.fcmp_print_hash(pL, a.length, pHash); return hex8(pu32[pHash / 4 + 1]) + hex8(pu32[pHash / 4]); };
+  const record = (m, q) => { p.fcmp_print_record(m, 0, q, 0, -1, 1, pRec); return pu8.slice(pRec, pRec + 140).buffer; };
+  const kinds = [['tail', 48000, 1, 1], ['floor', 48000, 1, 2], ['std@44100', 44100, 1, 0], ['std@96000', 96000, 1, 0], ['hq@44100', 44100, 2, 0]];
+  const tally = {};
+  const t0 = performance.now();
+  for (let m = 0; m < p.fcmp_print_modes(); m += 1) {
+    const key = cstr(p.fcmp_print_key(m));
+    for (const [name, fs, q, input] of kinds) {
+      const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: n, sampleRate: fs });
+      await ctx.audioWorklet.addModule('fcmp-worklet.js');
+      const made = await makeNode(ctx, engineBytes);
+      made.node.port.postMessage(record(m, q === 1 ? 2 : 1));
+      made.node.port.postMessage(record(m, q));
+      const armed = await ask(made.node, 'stats');
+      const len = input === 1 ? half : n;
+      const buffer = ctx.createBuffer(2, len, fs);                 // at the context's rate: the samples go through as they are
+      buffer.copyToChannel((input === 2 ? flL : progL).subarray(0, len), 0);
+      buffer.copyToChannel((input === 2 ? flR : progR).subarray(0, len), 1);
+      const source = ctx.createBufferSource(); source.buffer = buffer; source.connect(made.node).connect(ctx.destination); source.start();
+      const out = await ctx.startRendering();
+      const after = await ask(made.node, 'stats');
+      const l = out.getChannelData(0), r = out.getChannelData(1);
+      const got = { l: hash(l), r: hash(r) };
+      let lastNonZero = -1; for (let i = n - 1; i >= 0; i -= 1) if (l[i] !== 0) { lastNonZero = i; break; }
+      const id = `${key} ${name}`;
+      const eqNative = got.l === native[id].l && got.r === native[id].r, eqNode = got.l === node[id].l && got.r === node[id].r;
+      const ran = armed.records === 2 && armed.refused === 0 && armed.latency === native[id].latency && after.quanta === n / 128 && after.oddQuanta === 0 && made.ready.sampleRate === fs;
+      tally[name] ??= { n: 0, native: 0, node: 0, ran: 0, notNative: [], notNode: [] };
+      const t = tally[name]; t.n += 1; t.ran += ran ? 1 : 0; t.native += eqNative ? 1 : 0; t.node += eqNode ? 1 : 0;
+      if (!eqNative) t.notNative.push(key); if (!eqNode) t.notNode.push(key);
+      if (name === 'tail') say(`NOTE     ${id}: last non-zero output frame ${lastNonZero} (node ${node[id].lastNonZero}, native ${native[id].lastNonZero}); in channels at the end ${after.inChannels}`);
+    }
+  }
+  for (const [name, t] of Object.entries(tally))
+    say(`${t.ran === t.n && t.node === t.n ? 'PASS' : 'FAIL'}     web.live.extra ${name}: ${t.n} Modes, ${t.ran} ran as asked, ${t.node} equal to the engine under node${t.notNode.length ? ' (not: ' + t.notNode.join(' ') + ')' : ''}, ${t.native} equal to native arm64${t.notNative.length ? ' (not: ' + t.notNative.join(' ') + ')' : ''}`);
+  say(`NOTE     ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+}
+main().catch((e) => say(`FAIL     ${e && e.stack || e}`)).then(() => { document.title = document.getElementById('funkgui-log').textContent.includes('FAIL ') ? 'FAIL: extra' : 'PASS'; });

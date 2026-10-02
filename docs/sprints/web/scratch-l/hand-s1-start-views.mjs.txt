@@ -1,0 +1,93 @@
+// Items 1 and 2: START and telemetry; every screen by real clicks and by ?view=; PNGs at device scale 1 and 2.
+import { serve, chrome, sleep, Report, HERE, cleanUp } from './lib.mjs';
+const site = process.argv[2] || 'site-hook';
+const R = new Report();
+const server = await serve(`${HERE}/${site}`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  R.note('1.idle', { status: await p.ev("document.getElementById('fcmp-status').textContent"), ctx: await p.ev('String(fcmpPage.context())'), ua: await p.ev('navigator.userAgent'),
+                     platform: await p.ev('navigator.userAgentData ? navigator.userAgentData.platform : navigator.platform') });
+  const ms = await p.start();
+  await sleep(1200);
+  await p.tap();
+  await sleep(800);
+  const st = await p.status(), ws = await p.stats(), tp = await p.tapRead();
+  const ctx = JSON.parse(await p.ev('JSON.stringify({state: fcmpPage.context().state, rate: fcmpPage.context().sampleRate, base: fcmpPage.context().baseLatency, out: fcmpPage.context().outputLatency})'));
+  R.row(await p.ev('fcmpPage.state()') === 'running' && ctx.state === 'running', '1.start', { clickToRunningMs: ms, ctx, pageSays: await p.ev("document.getElementById('fcmp-status').textContent") });
+  R.row(st.ok === 1 && st.replies > 0 && st.refused === 0 && (st.flags & 0x30) === 0x30 && (st.flags & 8) === 0 && ws.ok && ws.refused === 0, '1.telemetry',
+        { status: st, worklet: ws, lastReply: tp.reply });
+  const q0 = (await p.stats()).quanta; await sleep(500); const q1 = (await p.stats()).quanta;
+  R.row(q1 - q0 > 150 && q1 - q0 < 230, '1.audio-runs', `${q1 - q0} quanta in 0.5 s (187.5 expected at 48 kHz)`);
+  R.row(p.consoleLines.length === 0, '1.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+
+  // ---- 2. every screen by real clicks, with the a11y hook's state as the evidence when the module has it ----
+  const hook = (await p.a11y()) !== null;
+  R.note('2.hook', hook ? 'Module.fcmpA11y present (the scout hook)' : 'no hook: judged by pictures only');
+  const state = async () => { const a = await p.a11y(); return a ? { screen: a.screen, overlay: a.overlay, scTab: a.scTab, items: a.items.length } : null; };
+  const expect = async (id, want, shotName) => {
+    await sleep(500);
+    const s = await state();
+    const f = await p.shot(shotName);
+    R.row(!hook || (s.screen === want.screen && s.overlay === want.overlay && (want.scTab === undefined || s.scTab === want.scTab)), id, { state: s, png: f });
+  };
+  await expect('2.click.panel', { screen: 0, overlay: 0 }, 'click-panel-dsf1.png');
+  await p.click(854, 90);                                           // CHARACTERISTICS {788,72,132,36}
+  await expect('2.click.characteristics', { screen: 1, overlay: 0, scTab: 0 }, 'click-chars-sidechain-dsf1.png');
+  await p.click(822, 412);                                          // COLOUR tab {800,404,44,16}
+  await expect('2.click.chars.colour', { screen: 1, overlay: 0, scTab: 1 }, 'click-chars-colour-dsf1.png');
+  await p.click(763, 412);                                          // SIDECHAIN tab {732,404,62,16}
+  await expect('2.click.chars.sidechain-again', { screen: 1, overlay: 0, scTab: 0 }, 'click-chars-sidechain2-dsf1.png');
+  await p.key('Escape');                                            // leaves the screen (no ring, no overlay)
+  await expect('2.key.escape-leaves-characteristics', { screen: 0, overlay: 0 }, 'click-panel-after-esc-dsf1.png');
+  await p.click(208, 24);                                           // the gear {196,12,24,24}
+  await expect('2.click.settings', { screen: 0, overlay: 3 }, 'click-settings-dsf1.png');
+  await p.key('Escape');
+  await expect('2.key.escape-closes-settings', { screen: 0, overlay: 0 }, 'click-panel-after-settings-dsf1.png');
+  await p.click(788, 30);                                           // the Mode name {680,14,216,32}
+  await expect('2.click.modebrowser', { screen: 0, overlay: 1 }, 'click-modebrowser-dsf1.png');
+  await p.key('Escape');
+  await expect('2.key.escape-closes-modebrowser', { screen: 0, overlay: 0 }, 'click-panel-after-modebrowser-dsf1.png');
+  await p.click(390, 30);                                           // the preset name {252,14,276,32}
+  await expect('2.click.presetbrowser', { screen: 0, overlay: 2 }, 'click-presetbrowser-dsf1.png');
+  await p.click(120, 620);                                          // outside the overlay (the footer's spec line): closes
+  await expect('2.click.outside-closes-presetbrowser', { screen: 0, overlay: 0 }, 'click-panel-after-presetbrowser-dsf1.png');
+  await p.click(208, 24);
+  await expect('2.click.settings-again', { screen: 0, overlay: 3 }, 'click-settings2-dsf1.png');
+  await p.click(208, 24);                                           // the gear again (in the header, outside kArea): closes
+  await expect('2.click.gear-closes-settings', { screen: 0, overlay: 0 }, 'click-panel-after-gear-dsf1.png');
+  R.row(p.consoleLines.length === 0, '2.console-after-clicks', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+
+  // ---- 2b. the six ViewSpec ids through ?view=, at device scale 1 and 2 (no START: the editor draws behind the overlay,
+  //          so the overlay is hidden for the picture by the driver; with START where the view needs telemetry) ----
+  const want = { 'panel': { screen: 0, overlay: 0 }, 'chars.sidechain': { screen: 1, overlay: 0, scTab: 0 }, 'chars.colour': { screen: 1, overlay: 0, scTab: 1 },
+                 'modebrowser': { screen: 0, overlay: 1 }, 'presetbrowser': { screen: 0, overlay: 2 }, 'settings': { screen: 0, overlay: 3 } };
+  for (const dsf of [1, 2]) {
+    // device scale 2 is Chrome's own (--force-device-scale-factor): under Emulation.setDeviceMetricsOverride the
+    // ResizeObserver's device-pixel-content-box stays at the CSS size and the host draws a 1x buffer (a trap).
+    const b2 = dsf === 1 ? b : await chrome({ width: 1280, height: 900, extra: ['--force-device-scale-factor=2'] });
+    const q = dsf === 1 ? p : await b2.page(null);
+    if (dsf === 1) await q.metrics(1280, 800, 1);
+    for (const id of Object.keys(want)) {
+      q.consoleLines.length = 0;
+      await q.go(`${server.base}/?view=${id}`, 1200);
+      await q.start();
+      await sleep(1500);
+      const a = await q.a11y(); const s = a ? { screen: a.screen, overlay: a.overlay, scTab: a.scTab, items: a.items.length } : null;
+      const st2 = await q.status(), c = await q.canvas();
+      const self = JSON.parse(await q.ev('Module.fcmpSelftest()'));
+      const f = await q.shot(`view-${id}-dsf${dsf}.png`);
+      const w = want[id];
+      R.row(st2.ok === 1 && self.pixels.frames === 1 && self.pixels.over2 === 0 && q.consoleLines.length === 0
+            && (!hook || (s.screen === w.screen && s.overlay === w.overlay && (w.scTab === undefined || s.scTab === w.scTab)))
+            && c.bw === Math.round(c.w * dsf) && c.bh === Math.round(c.h * dsf) && c.dpr === dsf, `2.view.${id}.dsf${dsf}`,
+            { state: s, zoom: st2.zoom, inner: [c.iw, c.ih], canvasCss: [c.w, c.h], buffer: [c.bw, c.bh], pixels: self.pixels, png: f, console: q.consoleLines.slice(0, 3) });
+    }
+    if (dsf !== 1) b2.kill();
+  }
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

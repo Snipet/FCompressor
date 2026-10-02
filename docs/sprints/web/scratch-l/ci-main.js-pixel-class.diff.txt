@@ -1,0 +1,25 @@
+--- /dev/fd/12	2026-10-02 12:07:05
++++ /private/tmp/claude-501/-Users-seanfunk-audio-plugins-FCompressor/1e18d990-0133-428b-8995-1664ebc8733a/scratchpad/scout-l/ci/site-class/main.js	2026-10-02 11:21:16
+@@ -650,9 +650,20 @@
+       if (self !== null) {
+         const pixels = self.pixels || {};
+         row(self.atlasHash === ATLAS_HASH, 'editor.atlas', `${self.atlasHash} (want ${ATLAS_HASH})`);
+-        row(pixels.frames >= 1 && pixels.samples > 0 && pixels.over2 === 0, 'editor.pixels',
++        // A GPU is within 2 of 255 everywhere. A software renderer filters the atlas more coarsely (SwiftShader: up to
++        // 8 on text): there the rule is FunkGui's for its own sink page (test/web/page.cpp: no sample over 16, at most
++        // 10 per mille over 2). Software is what the renderer's name says it is; any other name is judged as a GPU.
++        const probe = document.createElement('canvas').getContext('webgl2');
++        const info = probe && probe.getExtension('WEBGL_debug_renderer_info');
++        const renderer = probe ? String(probe.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : probe.RENDERER)) : '';
++        const software = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(renderer);
++        const share = pixels.samples > 0 ? 1000 * pixels.over2 / pixels.samples : Infinity;
++        note(`renderer: ${renderer} (${software ? 'software' : 'a GPU'})`);
++        row(pixels.frames >= 1 && pixels.samples > 0
++            && (software ? pixels.largest <= 16 && share <= 10 : pixels.over2 === 0), 'editor.pixels',
+             `${pixels.frames} frame(s) read back through the sink: ${pixels.samples} samples against SoftRaster, the `
+-            + `largest difference ${pixels.largest} of 255, ${pixels.over2} over 2`);
++            + `largest difference ${pixels.largest} of 255, ${pixels.over2} over 2 (${share.toFixed(2)} per mille; `
++            + (software ? 'software: at most 16, and 10 per mille over 2)' : 'a GPU: none over 2)'));
+       }
+     }
+     // Watched for 0.6 s, and for up to 3 s until both counts have moved.

@@ -29,6 +29,14 @@
 #   fcmp_web_site         web only (Sprint D): build-web/site, assembled by cmake/FcmpWebSite.cmake from web/*.html,
 #                         *.js, *.css, *.svg, the two modules, the licences and built-from.txt. A build output:
 #                         nothing publishes it.
+#   fcmp_web_print        web only (lead phase): build-web/live-obj/fcmp-print.wasm, a TEST-ONLY standalone module from
+#                         Tools/web/live/*.cpp (dsp.print's program, its parameter sets as WebProtocol records, the
+#                         harness's hash). Never part of the site.
+#   fcmp_web_live         web only (lead phase): build-web/live, assembled by cmake/FcmpWebLive.cmake: the test-only
+#                         pages of web/live, fcmp-print.wasm and the dsp.print goldens. Scripts/web-live.sh serves it at
+#                         /live/ beside the site at /, so its pages reach the shipped files as ../<name>.
+#   verify-web-live       web only (lead phase): Scripts/web-live.sh on this build tree (headless Chrome; lead only,
+#                         never labelled `verify`), the web counterpart of verify-gui-live.
 #   fcmp_web              web only: the engine, the checks, the editor module, the site and the probes under node
 #                         (cmake/FcmpProbes.cmake's fcmp_probe_web): the `web` build preset's target.
 # Natively, fcmp_probe_plugin links fcmp_web_engine_lib and compiles Source/web/facade/*.cpp (Sprint C), so the
@@ -172,11 +180,45 @@ if(FCOMPRESSOR_WEB AND TARGET fcmp_web_engine AND TARGET fcmp_web_ui)
   add_dependencies(fcmp_web_site fcmp_web_engine fcmp_web_ui)
 endif()
 
+# ---- the test-only side of the browser gate (lead phase): never in the site --------------------------------------
+if(FCOMPRESSOR_WEB AND FCMP_WEB_LIVE_SOURCES)
+  add_executable(fcmp_web_print ${FCMP_WEB_LIVE_SOURCES})
+  set_target_properties(fcmp_web_print PROPERTIES OUTPUT_NAME fcmp-print SUFFIX .wasm
+                                                  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/live-obj
+                                                  CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+  target_link_libraries(fcmp_web_print PRIVATE fcdsp fcmp_lto)
+  target_compile_options(fcmp_web_print PRIVATE ${FCMP_WARNING_FLAGS})
+  # Source/ for "web/engine/WebProtocol.h"; Tools/probes/common for "PrintProgram.h" and "Signals.h".
+  target_include_directories(fcmp_web_print PRIVATE ${PROJECT_SOURCE_DIR}/Source ${FCMP_TOOLS_ROOT}/probes/common)
+  # Standalone like the engine: no JavaScript glue, no imports, a fixed memory.
+  target_link_options(fcmp_web_print PRIVATE
+                      -sSTANDALONE_WASM=1 --no-entry
+                      -sEXPORTED_FUNCTIONS=_malloc,_free
+                      -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=16777216 -sSTACK_SIZE=262144)
+endif()
+
+if(FCOMPRESSOR_WEB)
+  add_custom_target(fcmp_web_live
+      COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR} -DFCMP_LIVE_DIR=${CMAKE_BINARY_DIR}/live
+              -DFCMP_LIVE_OBJ_DIR=${CMAKE_BINARY_DIR}/live-obj
+              -P ${PROJECT_SOURCE_DIR}/cmake/FcmpWebLive.cmake
+      VERBATIM)
+  if(TARGET fcmp_web_print)
+    add_dependencies(fcmp_web_live fcmp_web_print)
+  endif()
+  if(TARGET fcmp_web_site AND EXISTS ${PROJECT_SOURCE_DIR}/Scripts/web-live.sh)
+    add_custom_target(verify-web-live
+        COMMAND ${PROJECT_SOURCE_DIR}/Scripts/web-live.sh ${CMAKE_BINARY_DIR}
+        USES_TERMINAL VERBATIM)
+    add_dependencies(verify-web-live fcmp_web_site fcmp_web_live fcmp_probes)
+  endif()
+endif()
+
 # What the gate's stamp covers. fcmp_probes writes built-from-probes.txt, which Scripts/verify.sh reads before it
 # stamps a pass: it must be written only after everything a `verify` test runs has been built from the same tree. The
 # web tests run fcmp_web_check (every configuration), and in the web tree the engine, the editor module, the port
 # check and the site.
-foreach(_t fcmp_web_check fcmp_web_engine fcmp_web_ui fcmp_web_port_check fcmp_web_site)
+foreach(_t fcmp_web_check fcmp_web_engine fcmp_web_ui fcmp_web_port_check fcmp_web_site fcmp_web_live)
   if(TARGET ${_t} AND TARGET fcmp_probes)
     add_dependencies(fcmp_probes ${_t})
   endif()
@@ -184,7 +226,7 @@ endforeach()
 
 if(FCOMPRESSOR_WEB)
   add_custom_target(fcmp_web)
-  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_ui fcmp_web_port_check fcmp_web_site fcmp_probes)
+  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_ui fcmp_web_port_check fcmp_web_site fcmp_web_live fcmp_probes)
     if(TARGET ${_t})
       add_dependencies(fcmp_web ${_t})
     endif()

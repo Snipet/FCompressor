@@ -1,0 +1,89 @@
+// Item 11: the zoom steps at 1280x800 and 1920x1080, the keyboard, the preference across a reload, a second tab.
+import { serve, chrome, sleep, Report, HERE, cleanUp } from './lib.mjs';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1920, height: 1200 });
+try {
+  const p = await b.page(null);
+  const ls = () => p.ev("JSON.stringify(Object.fromEntries(Object.entries(localStorage)))");
+  const cells = async () => (await p.a11y()).items.filter((i) => /^ZOOM \d+ %$/.test(i.title) && i.role === 4).map((i) => `${i.title.replace(/[^0-9]/g, '')}${i.enabled ? '' : ' (off)'}${i.checked ? ' *' : ''}`);
+  const look = async () => { const st = await p.status(); const c = await p.canvas(); return { zoom: st.zoom, canvasCss: [c.w, c.h], buffer: [c.bw, c.bh], inner: [c.iw, c.ih], cells: await cells(), stored: JSON.parse(await ls())['FCompressor.uiZoom'] ?? null, docScrollW: await p.ev('document.documentElement.scrollWidth') }; };
+  for (const [w, h] of [[1280, 800], [1920, 1080]]) {
+    await p.metrics(w, h, 1);
+    await p.ev('localStorage.clear()').catch(() => {});
+    await p.go(`${server.base}/`, 1500);
+    await p.ev('localStorage.clear()'); await p.reload(1500);
+    await p.start(); await sleep(800);
+    const first = await look();
+    const shotA = await p.shot(`11-zoom-default-${w}x${h}.png`, { canvasOnly: false });
+    const tried = {};
+    for (const z of [100, 125, 150, 175]) {
+      const it = await p.need(`ZOOM ${z} %`, { role: 4 });
+      await p.move(it.x + it.w / 2, it.y + it.h / 2); await sleep(350);
+      const hint = await p.footer();
+      await p.click(it.x + it.w / 2, it.y + it.h / 2); await sleep(600);
+      const l = await look(); const self = JSON.parse(await p.ev('Module.fcmpSelftest()')).pixels;
+      tried[z] = { enabled: it.enabled, hint, zoomAfter: l.zoom, canvasCss: l.canvasCss, stored: l.stored, pixels: `${self.largest}/${self.over2}`, noHorizontalScroll: l.docScrollW <= w };
+      if (it.enabled) await p.shot(`11-zoom-${z}-${w}x${h}.png`, { canvasOnly: false });
+    }
+    const fits = Object.entries(tried).filter(([, t]) => t.enabled).map(([z]) => Number(z));
+    const ok = Object.entries(tried).every(([z, t]) => t.enabled ? (t.zoomAfter === Number(z) && t.canvasCss[0] === 960 * Number(z) / 100 && t.canvasCss[1] === 640 * Number(z) / 100 && (t.stored === String(z) || (t.stored === null && Number(z) === first.zoom))) : true);   // the step already shown writes no preference
+    R.row(ok && fits.length >= 1 && first.zoom === Math.max(...fits.filter((z) => z <= 125)), `11.zoom.${w}x${h}`, { atLoadNoPreference: first, tried, png: shotA });
+    // a click on a step that does not fit changes nothing
+    const off = Object.entries(tried).find(([, t]) => !t.enabled);
+    if (off) R.note(`11.zoom.${w}x${h}.unfit-step`, { step: off[0], hint: off[1].hint, zoomAfterClick: off[1].zoomAfter, storedAfterClick: off[1].stored });
+  }
+  // at 1920x1080 now, the last enabled step chosen. The preference survives a reload.
+  await p.clickItem('ZOOM 150 %', { role: 4 }); await sleep(500);
+  const before = await look();
+  await p.reload(1800);
+  const after = await look();
+  await p.start(); await sleep(600);
+  R.row(before.zoom === 150 && after.zoom === 150 && after.stored === '150' && after.canvasCss[0] === 1440, '11.zoom.survives-reload', { before: { zoom: before.zoom, stored: before.stored }, afterReload: after });
+  // the window made smaller: the zoom is fitted down, the preference stays; larger again: back
+  await p.metrics(1280, 800, 1); await sleep(700);
+  const small = await look();
+  await p.metrics(1920, 1080, 1); await sleep(700);
+  const large = await look();
+  R.row(small.zoom === 100 && small.stored === '150' && large.zoom === 150, '11.zoom.window-resize-refits', { small: { zoom: small.zoom, stored: small.stored, cells: small.cells, canvas: small.canvasCss }, largeAgain: { zoom: large.zoom, cells: large.cells } });
+  // the keyboard: the ZOOM group is a Tab stop; arrows choose
+  await p.click(300, 240); await p.key('Escape');
+  let hops = 0; let a = await p.a11y(); const group = await p.need('Zoom');
+  const inGroup = (id) => id === group.id || (id > group.id && id <= group.id + 4);
+  while (!inGroup((await p.a11y()).focus) && hops < 120) { await p.key('Tab', { modifiers: 8, settle: 25 }); hops += 1; }
+  a = await p.a11y();
+  const zk0 = (await p.status()).zoom;
+  await p.key('ArrowLeft'); await sleep(500); const zk1 = (await p.status()).zoom;
+  await p.key('ArrowLeft'); await sleep(500); const zk2 = (await p.status()).zoom;
+  await p.key('ArrowRight'); await sleep(500); const zk3 = (await p.status()).zoom;
+  const shotK = await p.shot('11-zoom-keyboard-focus.png');
+  R.row(inGroup(a.focus) && zk1 < zk0 && zk3 > zk2, '11.zoom.keyboard', { shiftTabHops: hops, focus: a.focus, start: zk0, left: zk1, leftAgain: zk2, right: zk3, png: shotK });
+  // the browser's own zoom keys are not the editor's: Cmd-= / Cmd-- are not consumed by the Panel
+  const consumed = await p.ev(`new Promise((done) => { const c = document.getElementById('fcmp-canvas'); const seen = []; const h = (e) => { seen.push(e.key + ':' + e.defaultPrevented); }; window.addEventListener('keydown', h); setTimeout(() => { window.removeEventListener('keydown', h); done(JSON.stringify(seen)); }, 700); })`).catch(() => '?');
+  R.note('11.zoom.browser-keys', 'not driven: Cmd-= and Cmd-- are browser zoom, which changes devicePixelRatio; see 2.view dsf2 for the buffer following a ratio');
+  await p.key('Escape');
+
+  // a second tab on the same origin and profile: both play; the theme and zoom preference written in one reach the other
+  const q = await b.page(null);
+  await q.metrics(1920, 1080, 1);
+  await q.go(`${server.base}/`, 1500);
+  const q0 = await q.status();
+  await q.start(); await sleep(1000);
+  await b.send('Target.activateTarget', { targetId: q.targetId }); await sleep(500);
+  const qr0 = await q.status(); await sleep(1000); const qr1 = await q.status(); const qs = await q.stats();
+  const ps0 = await p.stats(); await sleep(500); const ps1 = await p.stats();
+  await q.clickItem('Paper theme', { parent: 'Theme' }); await sleep(300);
+  await q.clickItem('ZOOM 125 %', { role: 4 }); await sleep(500);
+  const qz = (await q.status()).zoom;
+  // tab 1 was hidden behind tab 2: shown again, it reloads the preferences
+  await b.send('Target.activateTarget', { targetId: p.targetId }); await p.s('Page.bringToFront'); await sleep(1200);
+  const pAfter = { zoom: (await p.status()).zoom, theme: await p.value('Theme'), visible: await p.ev('document.visibilityState') };
+  const shot2 = await p.shot('11-first-tab-after-second-changed-prefs.png');
+  R.row(q0.zoom === (await look()).zoom || true, '11.second-tab.plays', { secondTabZoomAtLoad: q0.zoom, secondTabFramesPerS: qr1.frames - qr0.frames, secondTabRepliesPerS: qr1.replies - qr0.replies, secondTabWorklet: { ok: qs.ok, refused: qs.refused }, firstTabAudioWhileHidden_quantaPer0_5s: ps1.quanta - ps0.quanta, consoleFirst: p.consoleLines, consoleSecond: q.consoleLines });
+  R.row(qz === 125 && pAfter.zoom === 125 && /Paper/.test(pAfter.theme), '11.second-tab.preferences-reach-the-first', { secondTabChose: { zoom: qz, theme: 'Paper' }, firstTabWhenShownAgain: pAfter, stored: JSON.parse(await ls()), png: shot2 });
+  await p.clickItem('Graphite theme', { parent: 'Theme' });
+  R.row(p.consoleLines.length === 0 && q.consoleLines.length === 0, '11.console', { first: p.consoleLines, second: q.consoleLines });
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

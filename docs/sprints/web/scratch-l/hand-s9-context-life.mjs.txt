@@ -1,0 +1,128 @@
+// Items 9 and 10: a forced WebGL context loss recovers; the tab hidden and shown; pagehide and reload.
+import { serve, chrome, sleep, Report, HERE, cleanUp } from './lib.mjs';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  await p.start(); await sleep(1200); await p.tap(); await sleep(300);
+  const rates = async (ms = 1000) => { const a = await p.status(), w0 = await p.stats(); const t0 = Date.now(); await sleep(ms); const z = await p.status(), w1 = await p.stats(); const dt = (Date.now() - t0) / 1000;
+    return { ok: z.ok, error: z.error, framesPerS: Math.round((z.frames - a.frames) / dt), lostPerS: Math.round((z.lost - a.lost) / dt), repliesPerS: Math.round((z.replies - a.replies) / dt), postedPerS: Math.round((z.posted - a.posted) / dt), quantaPerS: Math.round((w1.quanta - w0.quanta) / dt), lost: z.lost, refused: w1.refused }; };
+  const self = async () => JSON.parse(await p.ev('Module.fcmpSelftest()'));
+  const pageSays = () => p.ev("document.getElementById('fcmp-status').textContent + ' | overlay away: ' + document.getElementById('fcmp-overlay').classList.contains('away') + ' | state ' + fcmpPage.state()");
+
+  // ---- 9. context loss ----
+  const before = await rates(); const self0 = await self();
+  const shot0 = await p.shot('9-before-loss.png');
+  const sameContext = await p.ev(`(() => { const c = document.getElementById('fcmp-canvas'); const gl = c.getContext('webgl2'); globalThis.__gl = gl; globalThis.__lose = gl && gl.getExtension('WEBGL_lose_context');
+    globalThis.__ctxEvents = []; c.addEventListener('webglcontextlost', () => __ctxEvents.push('lost@' + Math.round(performance.now()))); c.addEventListener('webglcontextrestored', () => __ctxEvents.push('restored@' + Math.round(performance.now())));
+    return !!gl && !!__lose && !gl.isContextLost(); })()`);
+  await p.ev('__lose.loseContext()');
+  await sleep(400);
+  const lost = await rates(); const selfLost = await self(); const says1 = await pageSays();
+  const shot1 = await p.shot('9-while-lost.png');
+  R.row(sameContext && lost.ok === 0 && lost.error === '' && lost.framesPerS === 0 && lost.lostPerS > 30 && lost.quantaPerS > 350 && lost.repliesPerS > 30 && selfLost.pixels.frames === 0 && /PLAYING/.test(says1) && /state running/.test(says1), '9.loss.while-lost',
+        { before, whileLost: lost, isContextLost: await p.ev('__gl.isContextLost()'), selftestWhileLost: selfLost.pixels, pageSays: says1, pngs: [shot0, shot1] });
+  await p.ev('__lose.restoreContext()');
+  await sleep(700);
+  const back = await rates(); const self1 = await self(); const ev1 = await p.ev('JSON.stringify(__ctxEvents)');
+  const shot2 = await p.shot('9-after-restore.png');
+  R.row(back.ok === 1 && back.framesPerS > 50 && back.lostPerS === 0 && self1.pixels.frames === 1 && self1.pixels.over2 === 0 && self1.atlasHash === self0.atlasHash && self1.pixels.samples === self0.pixels.samples, '9.loss.recovers',
+        { after: back, selftestBefore: self0, selftestAfter: self1, events: ev1, png: shot2 });
+  // input still works after the restore, and a second loss recovers too
+  const slot = await p.need('THRESHOLD');
+  await p.drag(slot.x + slot.w / 2, slot.y + 44, -30, 0); await sleep(300);
+  const v = (await p.need('THRESHOLD')).v;
+  await p.ev('__lose.loseContext()'); await sleep(300);
+  // while lost: the Panel still takes input (it is ticked), and a menu opens
+  await p.drag(slot.x + slot.w / 2, slot.y + 44, -20, 0); await sleep(300);
+  const vLost = (await p.need('THRESHOLD')).v;
+  await p.ev('__lose.restoreContext()'); await sleep(700);
+  const back2 = await rates(600);
+  // The pixel row on a LIVE frame is not exact (the scout's finding: the moving dot of TRANSFER and one row of CONTROL
+  // PATH differ from SoftRaster in a few percent of frames), so it is judged over several frames here, and exactly
+  // on a still frame below.
+  const selves = []; for (let i = 0; i < 12; i += 1) { selves.push((await self()).pixels); await sleep(60); }
+  const clean = selves.filter((x) => x.frames === 1 && x.over2 === 0).length;
+  R.row(v < -18 && vLost < v && back2.ok === 1 && back2.framesPerS > 50 && selves.every((x) => x.frames === 1 && x.over2 <= 30), '9.loss.second-time-and-input',
+        { thresholdAfterFirstRestore: v, editedWhileLost: vLost, after: back2, liveFramesWithinTolerance: `${clean} of 12`, worstOver2: Math.max(...selves.map((x) => x.over2)), events: await p.ev('JSON.stringify(__ctxEvents)') });
+  // a still frame: the context suspended (the page shows RESUME), a loss and a restore, the pixel row exact; then RESUME
+  await p.ev('fcmpPage.context().suspend()'); await sleep(600);
+  const paused = await pageSays(); const btn = await p.ev("document.getElementById('fcmp-start').textContent + '/' + (document.activeElement === document.getElementById('fcmp-start'))");
+  await p.ev('__lose.loseContext()'); await sleep(300); await p.ev('__lose.restoreContext()'); await sleep(3500);   // the meters have fallen: nothing moves
+  const still = []; for (let i = 0; i < 8; i += 1) { still.push((await self()).pixels); await sleep(60); }
+  const rb = JSON.parse(await p.ev("JSON.stringify((()=>{const r=document.getElementById('fcmp-start').getBoundingClientRect(); return [r.left+r.width/2, r.top+r.height/2];})())"));
+  await p.clickClient(rb[0], rb[1]); await sleep(700);
+  const resumed = await pageSays(); const back2b = await rates(600);
+  R.row(/PAUSED BY THE BROWSER/.test(paused) && /^RESUME\/true/.test(btn) && still.every((x) => x.frames === 1 && x.over2 === 0) && /PLAYING/.test(resumed) && back2b.quantaPerS > 350 && back2b.repliesPerS > 50, '9.loss.still-frame-exact-and-resume',
+        { whileSuspended: paused, button: btn, stillFrames: still.map((x) => `${x.largest}/${x.over2}`), afterResumeClick: resumed, rates: back2b });
+  // a loss with the settings screen open and PAPER on: what is drawn after is that screen in that theme
+  await p.clickItem('Paper theme', { parent: 'Theme' }); await p.clickItem('Settings'); await sleep(400);
+  await p.ev('__lose.loseContext()'); await sleep(300); await p.ev('__lose.restoreContext()'); await sleep(700);
+  const self3 = await self(); const a3 = await p.a11y(); const shot3 = await p.shot('9-after-restore-settings-paper.png');
+  R.row(self3.pixels.over2 === 0 && self3.pixels.frames === 1 && a3.overlay === 3 && /Paper/.test(await p.value('Theme')), '9.loss.overlay-and-theme-kept', { selftest: self3.pixels, overlay: a3.overlay, theme: await p.value('Theme'), display: await p.value('Display', { role: 7, nth: 0 }), png: shot3 });
+  await p.key('Escape'); await p.clickItem('Graphite theme', { parent: 'Theme' });
+  R.row(p.consoleLines.filter((l) => !/WebGL: CONTEXT_LOST_WEBGL|context lost/i.test(l)).length === 0, '9.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+  p.consoleLines.length = 0;
+
+  // ---- 10. hidden and shown ----
+  const vis = () => p.ev("document.visibilityState + '/' + document.hidden");
+  const tries = {};
+  // (a) another tab in front
+  const visible0 = await rates(600);
+  const other = await b.page(null);
+  await other.go('about:blank', 200);
+  await b.send('Target.activateTarget', { targetId: other.targetId });
+  await sleep(500);
+  tries.otherTabInFront = { visibility: await vis(), rates: await rates(1500), pageSays: await pageSays() };
+  await b.send('Target.activateTarget', { targetId: p.targetId });
+  await p.s('Page.bringToFront');
+  await sleep(700);
+  tries.backInFront = { visibility: await vis(), rates: await rates(1000) };
+  // (b) the window minimised
+  let win = null;
+  try { win = await b.send('Browser.getWindowForTarget', { targetId: p.targetId }); await b.send('Browser.setWindowBounds', { windowId: win.windowId, bounds: { windowState: 'minimized' } }); await sleep(600);
+        tries.minimised = { visibility: await vis(), rates: await rates(1500) };
+        await b.send('Browser.setWindowBounds', { windowId: win.windowId, bounds: { windowState: 'normal' } }); await sleep(700);
+        tries.restored = { visibility: await vis(), rates: await rates(1000) };
+  } catch (e) { tries.minimised = String(e.message); }
+  const hiddenWorked = Object.values(tries).some((t) => t && t.visibility && /hidden/.test(t.visibility));
+  const h = tries.otherTabInFront.visibility.startsWith('hidden') ? tries.otherTabInFront : tries.minimised;
+  const shown = tries.otherTabInFront.visibility.startsWith('hidden') ? tries.backInFront : tries.restored;
+  R.row(hiddenWorked && h.rates.framesPerS === 0 && h.rates.postedPerS === 0 && h.rates.quantaPerS > 350 && shown.rates.framesPerS > 50 && shown.rates.repliesPerS > 50 && shown.rates.ok === 1, '10.hidden-and-shown',
+        { visibleBefore: visible0, tries });
+  const tr = await p.tapRead();
+  R.note('10.after-shown', { replyFlags: tr.reply.flags, gapBit: tr.reply.flags & 1, status: await p.status(), console: p.consoleLines });
+  // (d) a control edited right after the tab is shown works; a press held when the tab is hidden ends
+  await p.drag(slot.x + slot.w / 2, slot.y + 44, 20, 0); await sleep(300);
+  R.row((await p.need('THRESHOLD')).v > vLost, '10.input-after-shown', { threshold: (await p.need('THRESHOLD')).v });
+  R.row(p.consoleLines.length === 0, '10.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+
+  // ---- 10b. pagehide and reload ----
+  p.consoleLines.length = 0;
+  await p.ev("window.addEventListener('pagehide', (e) => { try { sessionStorage.setItem('scout-pagehide', JSON.stringify({ persisted: e.persisted, statusAfter: Module.fcmpStatus() })); } catch (x) { sessionStorage.setItem('scout-pagehide', 'threw ' + x); } })");
+  await p.reload(1800);
+  const ph = await p.ev("sessionStorage.getItem('scout-pagehide')");
+  const st1 = await p.status();
+  const idle = await p.ev('fcmpPage.state()');
+  const ms = await p.start(); await sleep(1200);
+  const r2 = await rates(800);
+  R.row(idle === 'idle' && st1.ok === 1 && r2.framesPerS > 50 && r2.repliesPerS > 50 && r2.quantaPerS > 350 && p.consoleLines.length === 0, '10.reload', { pagehideSaw: ph, stateAfterReload: idle, startMs: ms, rates: r2, console: p.consoleLines });
+  // navigate away and back (the back/forward cache may keep the page: then it must still tick)
+  await p.go(`${server.base}/licences/GPL-3.0.txt`, 600);
+  await p.s('Page.navigateToHistoryEntry', { entryId: (await p.s('Page.getNavigationHistory')).entries.slice(-2)[0].id }).catch(() => {});
+  await sleep(1800);
+  let back3 = null; try { back3 = { state: await p.ev('fcmpPage.state()'), status: await p.status(), rates: await rates(600), persisted: await p.ev("performance.getEntriesByType('navigation')[0].type") }; } catch (e) { back3 = String(e.message); }
+  R.row(back3 && back3.status && back3.status.ok === 1 && p.consoleLines.filter((l) => !/favicon\.ico/.test(l)).length === 0, '10.away-and-back', { back: back3, console: p.consoleLines });
+  // (c) the lifecycle state frozen
+  try { await p.s('Page.setWebLifecycleState', { state: 'frozen' }); await sleep(1500);
+        const st = await Promise.race([p.status().then((s) => ({ frames: s.frames, replies: s.replies })), sleep(1500).then(() => 'evaluate unanswered while frozen')]);
+        await p.s('Page.setWebLifecycleState', { state: 'active' }); await sleep(700);
+        const fz = { whileFrozen: st, afterActive: await rates(1000), visibility: await vis() };
+  } catch (e) { R.note('10.frozen', String(e.message)); }
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

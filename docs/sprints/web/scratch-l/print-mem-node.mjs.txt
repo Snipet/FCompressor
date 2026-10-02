@@ -1,0 +1,24 @@
+// scratch: can a reconfigure fail in the shipped module's fixed 16 MB? Every setup (3 qualities x 3 budgets), every Mode,
+// at several context rates, as the worklet does it: configure once, then Params records in the handler.
+import { readFileSync } from 'node:fs';
+const bytes = readFileSync(process.argv[2]);
+const p = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(process.argv[3])), {}).exports; p._initialize();
+const pRec = p.malloc(140); const pu8 = new Uint8Array(p.memory.buffer);
+for (const rate of [44100, 48000, 96000, 192000, 384000, 768000]) {
+  const x = new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports; x._initialize();
+  const xu8 = new Uint8Array(x.memory.buffer);
+  const e = x.fcmp_web_create(); const msg = x.malloc(140);
+  const first = x.fcmp_web_configure(e, rate, 128);
+  let posts = 0, failed = 0, firstFail = '', maxLatency = 0;
+  for (let round = 0; round < 3; round += 1)
+    for (let m = 0; m < p.fcmp_print_modes(); m += 1)
+      for (const q of [0, 1, 2]) for (const b of [0, 1, 2]) {
+        p.fcmp_print_record(m, 0, q, b, b === 0 ? -1 : 2, 1, pRec); xu8.set(pu8.subarray(pRec, pRec + 140), msg);
+        const r = x.fcmp_web_post(e, msg, 140); posts += 1;
+        if (r !== 0) { failed += 1; if (!firstFail) firstFail = `mode ${m} quality ${q} budget ${b}: ${r}`; }
+        maxLatency = Math.max(maxLatency, x.fcmp_web_latency(e));
+      }
+  // the largest block malloc still gives: what is left of the 16 MB
+  let free = 0; for (let size = 16 << 20; size >= 4096; size >>= 1) { const a = x.malloc(size); if (a !== 0) { free = size; x.free(a); break; } }
+  console.log(`${rate} Hz: configure ${first}, ${posts} records, ${failed} refused${firstFail ? ' (first: ' + firstFail + ')' : ''}, max latency ${maxLatency} samples, largest free block >= ${(free / 1048576).toFixed(2)} MB of 16`);
+}

@@ -1,0 +1,337 @@
+# CI: build and test FCompressor on Apple Silicon and on Linux (docs/DECISIONS.md ADR-87, ADR-92).
+#
+#   dsp           the JUCE-free DSP library and its probes (the `dsp` preset): the quick signal, about ten minutes.
+#   plugin        the shipping configuration (the `lead` preset: GPU editor, Release, LTO): the AU, VST3 and Standalone,
+#                 then every probe through Scripts/verify.sh against the blessed goldens, as the lead's gate runs it,
+#                 with --strict: a golden that drifts or is missing fails the job (nobody reads a CI log's candidates).
+#   linux-dsp     the same as dsp, on x86-64 Linux with Clang.
+#   linux-plugin  the same as plugin, on x86-64 Linux with Clang: the VST3 and Standalone (the Vulkan editor), then
+#                 every probe against the same goldens: Linux has no golden overlay of its own.
+#   web           the browser demo (ADR-93; the `web` preset): wasm32 through Emscripten at the version
+#                 cmake/FcmpDeps.cmake asserts (read from that file: one pin). The engine and the editor modules, the
+#                 site, and every web test and UI probe under node against the same goldens. An x86-64 runner on
+#                 purpose: denormal cost and V8's code for the wasm compares show there, not on the lead's Mac. The
+#                 site is uploaded as the artifact `web-site` (a zip a signed-in reader of the repository can download
+#                 for 14 days; nothing is served, nothing is published), downloaded again in the same job and its
+#                 self-test run from a plain static server in headless Chrome (FunkGui's tools/web/check-page.mjs;
+#                 software WebGL, the audio context suspended, sound muted): that run is part of this job's verdict.
+#   web-browsers  the same downloaded artifact on a second machine, in Chrome, Firefox (ubuntu) and Safari (macOS)
+#                 through their WebDriver servers (Scripts/web/page-check.mjs). Reported, never the verdict: each leg
+#                 has continue-on-error, and its log and screenshot are in the summary and in `web-page-<browser>`.
+#
+# Dependencies: Scripts/deps.sh fetches JUCE and bgfx.cmake at their pinned SHAs and builds shaderc into ~/audio/.deps,
+# which is cached per pin and runner (the key is deps.sh itself, where the pins live). FunkGui is cloned from GitHub at
+# the tag cmake/FcmpDeps.cmake pins. The Linux jobs install Clang, Ninja and the development packages JUCE, bgfx and
+# FunkGui need. Nothing is signed, installed or published here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # A shared runner is slower and noisier than the lead's machine: the two wall-clock rows (a setup change reaching the
+  # host within 100 ms, a CPU-cost ratio under 2) get three times the room. Nothing else scales (Tolerances.h).
+  FCMP_TIMING_SCALE: 3
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dsp:
+    name: DSP library
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: xcodebuild -version && cmake --version | head -1 && ninja --version
+      - name: Configure
+        run: cmake --preset dsp
+      - name: Build
+        run: cmake --build --preset dsp
+      - name: Verify
+        run: Scripts/verify.sh --strict build-dsp
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsp-results
+          path: |
+            build-dsp/verify-ctest.log
+            build-dsp/probe-results
+            build-dsp/golden-candidates
+          if-no-files-found: ignore
+
+  plugin:
+    name: Plugin and all probes
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: xcodebuild -version && cmake --version | head -1 && ninja --version
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/audio/.deps
+          key: deps-macos-26-arm64-${{ hashFiles('Scripts/deps.sh') }}
+      - name: Dependencies
+        run: Scripts/deps.sh --no-pluginval
+      - name: Configure
+        run: cmake --preset lead
+      - name: Build
+        run: cmake --build --preset lead
+      - name: Verify
+        run: Scripts/verify.sh --integration --strict build-lead
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-results
+          path: |
+            build-lead/verify-ctest.log
+            build-lead/probe-results
+            build-lead/golden-candidates
+          if-no-files-found: ignore
+
+  linux-dsp:
+    name: DSP library (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang ninja-build
+          clang --version | head -1 && cmake --version | head -1 && ninja --version
+      - name: Configure
+        run: cmake --preset dsp
+      - name: Build
+        run: cmake --build --preset dsp
+      - name: Verify
+        run: Scripts/verify.sh --strict build-dsp
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-dsp-results
+          path: |
+            build-dsp/verify-ctest.log
+            build-dsp/probe-results
+            build-dsp/golden-candidates
+          if-no-files-found: ignore
+
+  linux-plugin:
+    name: Plugin and all probes (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang llvm ninja-build pkg-config \
+            libasound2-dev libfreetype-dev libfontconfig1-dev libglib2.0-dev libsqlite3-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
+            libgl-dev libegl-dev
+          clang --version | head -1 && cmake --version | head -1 && ninja --version
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/audio/.deps
+          key: deps-ubuntu-24.04-x86_64-${{ hashFiles('Scripts/deps.sh') }}
+      - name: Dependencies
+        run: Scripts/deps.sh --no-pluginval
+      - name: Configure
+        run: cmake --preset lead
+      - name: Build
+        run: cmake --build --preset lead
+      - name: Verify
+        run: Scripts/verify.sh --integration --strict build-lead
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-plugin-results
+          path: |
+            build-lead/verify-ctest.log
+            build-lead/probe-results
+            build-lead/golden-candidates
+          if-no-files-found: ignore
+
+  web:
+    name: Web demo (wasm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45                         # the UI probes run as wasm32 under node here too (web Sprint D)
+    defaults:
+      run:
+        shell: bash                             # -eo pipefail: a step that tees its output still fails
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          cmake --version | head -1 && ninja --version
+          # Emscripten's version is the one cmake/FcmpDeps.cmake asserts: read here, written nowhere else.
+          V=$(sed -n 's/^ *set(FCMP_EMSCRIPTEN_VERSION \([0-9][0-9.]*\))$/\1/p' cmake/FcmpDeps.cmake)
+          [ -n "$V" ] || { echo "cmake/FcmpDeps.cmake sets no FCMP_EMSCRIPTEN_VERSION" >&2; exit 1; }
+          echo "FCMP_EMSCRIPTEN=$V" >> "$GITHUB_ENV"
+      - name: Cache emsdk
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ env.FCMP_EMSCRIPTEN }}-ubuntu-24.04-x86_64
+      - name: Emscripten
+        run: |
+          if [ ! -x "$HOME/emsdk/emsdk" ]; then
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          fi
+          "$HOME/emsdk/emsdk" install "$FCMP_EMSCRIPTEN"
+          "$HOME/emsdk/emsdk" activate "$FCMP_EMSCRIPTEN"
+          . "$HOME/emsdk/emsdk_env.sh"
+          echo "$HOME/emsdk" >> "$GITHUB_PATH"
+          echo "$HOME/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+          echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
+          echo "EMSDK_NODE=$EMSDK_NODE" >> "$GITHUB_ENV"
+          emcc --version | head -1 && "$EMSDK_NODE" --version
+      - name: Configure
+        run: cmake --preset web
+      - name: Build
+        run: cmake --build --preset web
+      - name: Verify
+        run: Scripts/verify.sh --strict build-web | tee build-web/verify-out.txt
+      - name: Numbers (the x86 runner's)
+        if: always()
+        run: |
+          NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
+          for what in simdbench speed tail; do
+            "$NODE" build-web/fcmp_web_check.js "$what" || true
+          done 2>&1 | tee build-web/numbers.txt
+      # Every by-product of this job is under build-web/ (ignored) or in $RUNNER_TEMP: a file in the workspace before
+      # the build would make built-from.txt say dirty, and the page would not link its commit.
+      - name: The site is this commit's
+        run: grep -q "^site $(git rev-parse HEAD) clean " build-web/site/built-from.txt || { cat build-web/site/built-from.txt; exit 1; }
+      - name: Upload the site
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-site
+          path: build-web/site
+          if-no-files-found: error
+          retention-days: 14
+      - name: Download the site again
+        uses: actions/download-artifact@v4
+        with:
+          name: web-site
+          path: ${{ runner.temp }}/web-site
+      - name: Page (the downloaded site, a plain static server, headless Chrome)
+        run: |
+          diff -r build-web/site "$RUNNER_TEMP/web-site"
+          google-chrome --version
+          # Any --chrome-flag replaces the runner's defaults, so the software WebGL path is named too. Always muted.
+          "$EMSDK_NODE" build-web/_deps/funkgui-src/tools/web/check-page.mjs "$RUNNER_TEMP/web-site" --page fcmp-ui \
+            --chrome-flag --use-angle=swiftshader --chrome-flag --enable-unsafe-swiftshader --chrome-flag --mute-audio \
+            | tee build-web/page-chrome.txt
+      - name: Summary
+        if: always()
+        run: |
+          NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
+          {
+            echo "### Web demo"
+            echo
+            echo "- built from: \`$(cat build-web/site/built-from.txt 2>/dev/null || echo 'no site was built')\`"
+            echo "- this run: \`$GITHUB_SHA\` ($GITHUB_EVENT_NAME $GITHUB_REF; on a pull request that is the merge commit, and the branch's head is \`$HEAD_SHA\`)"
+            echo "- Emscripten $FCMP_EMSCRIPTEN, node $("$NODE" --version 2>/dev/null)"
+            echo "- $(grep -m1 '^== verify.sh summary' build-web/verify-out.txt 2>/dev/null || echo 'verify.sh printed no summary')"
+            echo "- the page in Chrome: $(grep '^check-page: [PF]' build-web/page-chrome.txt 2>/dev/null || echo 'no verdict')"
+            echo
+            echo "| file | bytes | gzip -9 |"
+            echo "|---|---:|---:|"
+            "$NODE" web/tests/size.mjs build-web/site 2>/dev/null \
+              | sed -n "s/^NOTE       '\(.*\)': \[\([0-9]*\), \([0-9]*\)\],$/| \1 | \2 | \3 |/p" \
+              | awk -F'|' '{ print; raw += $3; gz += $4 } END { printf "| **%d files** | **%d** | **%d** |\n", NR, raw, gz }'
+            echo
+            echo '```'
+            cat build-web/page-chrome.txt 2>/dev/null
+            grep -E 'speed:|hq_worst|row\(s\) passed|^FAIL' build-web/numbers.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-results
+          path: |
+            build-web/verify-ctest.log
+            build-web/page-chrome.txt
+          if-no-files-found: ignore
+
+  web-browsers:
+    name: Web page (${{ matrix.browser }}, reported)
+    needs: web
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    continue-on-error: true                     # reported, never the verdict (ADR-93): Chrome gates in `web`
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { browser: chrome,  os: ubuntu-24.04 }    # the runner script's control: the browser `web` already passed
+          - { browser: firefox, os: ubuntu-24.04 }
+          - { browser: safari,  os: macos-26 }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: Scripts/web
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-site
+          path: site
+      - name: Browser and driver
+        run: |
+          case "${{ matrix.browser }}" in
+            chrome)  google-chrome --version; "$CHROMEWEBDRIVER/chromedriver" --version ;;
+            firefox) firefox --version; "$GECKOWEBDRIVER/geckodriver" --version | head -1 ;;
+            safari)  sw_vers; /usr/bin/safaridriver --version; sudo /usr/bin/safaridriver --enable ;;
+          esac
+      - name: Self-test (the audio context suspended, as with no gesture)
+        run: >
+          node Scripts/web/page-check.mjs site --browser ${{ matrix.browser }}
+          --screenshot "$RUNNER_TEMP/page.png" --log "$RUNNER_TEMP/page.txt"
+      - name: Self-test again, the audio context allowed to run
+        if: always() && matrix.browser != 'safari'
+        run: >
+          node Scripts/web/page-check.mjs site --browser ${{ matrix.browser }} --autoplay
+          --log "$RUNNER_TEMP/page-audio.txt"
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.browser }} on ${{ matrix.os }}"
+            echo '```'
+            cat "$RUNNER_TEMP"/page*.txt 2>/dev/null || echo "no log was written"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-page-${{ matrix.browser }}
+          path: |
+            ${{ runner.temp }}/page.png
+            ${{ runner.temp }}/page*.txt
+          if-no-files-found: ignore
+          retention-days: 14

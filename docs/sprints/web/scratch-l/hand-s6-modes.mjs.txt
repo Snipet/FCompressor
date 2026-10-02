@@ -1,0 +1,76 @@
+// Item 6: Mode changes (the browser, the arrows, the wheel), and PNGs of the six views in one stepped Mode (BUS G) and
+// one continuous Mode (CLEAN), GRAPHITE and PAPER for the main panel.
+import { serve, chrome, sleep, Report, HERE, cleanUp, PID } from './lib.mjs';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  await p.start(); await sleep(1000); await p.tap(); await sleep(400);
+  const mode = async () => { const t = await p.tapRead(); const m = await p.need('Mode'); const a = await p.a11y(); return { latch: m.value, group: m.description, posted: t.last ? t.last.v[PID.mode] : null, snap: t.last ? t.last.snap : null, engineSlot: t.reply.modeSlot, fade: t.reply.fade, latency: t.reply.latency, hookMode: a.mode }; };
+  const m0 = await mode();
+  // the arrows: next wraps from the 13th to the 14th..., previous returns
+  const latch = await p.need('Mode');
+  await p.click(latch.x + latch.w - 12, latch.y + 16); await sleep(900);       // › {896,14,24,32}
+  const m1 = await mode();
+  await p.click(latch.x + 12, latch.y + 16); await sleep(900);                 // ‹ {656,14,24,32}
+  const m2 = await mode();
+  R.row(m0.latch === 'CLEAN' && m1.latch !== 'CLEAN' && m1.engineSlot === m1.posted && m2.latch === 'CLEAN' && m2.engineSlot === 0, '6.mode.arrows', { start: m0, next: m1, previous: m2 });
+  // the wheel over the latch: one Mode per burst
+  await p.wheel(latch.x + 130, latch.y + 16, 120); await sleep(1200);
+  const m3 = await mode();
+  await p.wheel(latch.x + 130, latch.y + 16, -120); await sleep(1200);
+  const m4 = await mode();
+  R.row(m3.latch !== 'CLEAN' && m4.latch === 'CLEAN', '6.mode.wheel', { wheelDown: m3.latch, wheelUp: m4.latch, pageScrollY: await p.ev('scrollY') });
+  await p.ev('scrollTo(0,0)');
+
+  const views = async (key, modeName) => {
+    // the browser: a click on the row chooses the Mode
+    await p.click(latch.x + 130, latch.y + 16); await sleep(500);
+    const open = (await p.a11y()).overlay;
+    const row = await p.need(modeName, { role: 6 });
+    await p.click(row.x + row.w / 2, row.y + row.h / 2); await sleep(1000);
+    const m = await mode(); const a = await p.a11y();
+    R.row(open === 1 && m.latch === modeName && m.engineSlot === m.posted && m.fade === 1, `6.mode.browser.${key}`, { browserOpened: open === 1, overlayAfterChoice: a.overlay, mode: m, footer: await p.footer() });
+    if (a.overlay !== 0) { await p.key('Escape'); await sleep(300); }
+    // which controls are stepped here (role slider with detent labels is not in the a11y data: the value texts say it)
+    const slots = (await p.a11y()).items.filter((i) => i.id >= 131073 && i.id <= 131093).map((i) => `${i.title}=${i.value}`);
+    R.note(`6.slots.${key}`, slots.slice(0, 7));
+    const shots = [];
+    const settle = async (name) => { await sleep(900); shots.push(await p.shot(name)); };
+    await p.move(300, 630);
+    await settle(`mode-${key}-panel-graphite.png`);
+    await p.clickItem('Paper theme', { parent: 'Theme' }); await p.move(300, 630);
+    const theme = await p.value('Theme');
+    await settle(`mode-${key}-panel-paper.png`);
+    await p.clickItem('Graphite theme', { parent: 'Theme' }); await p.move(300, 630);
+    await p.clickItem('CHARACTERISTICS'); await p.move(300, 630); await sleep(900);        // the curves follow once it rests
+    await settle(`mode-${key}-chars.sidechain-graphite.png`);
+    await p.click(822, 412); await p.move(300, 630);
+    const colour = (await p.a11y()).scTab;
+    await settle(`mode-${key}-chars.colour-graphite.png`);
+    await p.click(763, 412); await p.clickItem('CHARACTERISTICS'); await p.move(300, 630);
+    await p.click(latch.x + 130, latch.y + 16); await p.move(300, 630);
+    await settle(`mode-${key}-modebrowser-graphite.png`);
+    await p.key('Escape');
+    await p.clickItem('Preset'); await p.move(300, 630);
+    await settle(`mode-${key}-presetbrowser-graphite.png`);
+    await p.key('Escape');
+    await p.clickItem('Settings'); await p.move(300, 630);
+    const modeRow = await p.value('Mode', { role: 7 });
+    await settle(`mode-${key}-settings-graphite.png`);
+    await p.key('Escape'); await sleep(300);
+    const end = await p.a11y();
+    R.row(/Paper/.test(theme) && colour === 1 && end.overlay === 0 && end.screen === 0 && shots.length === 7, `6.views.${key}`, { themeWhilePaper: theme, settingsModeRow: modeRow, pngs: shots });
+  };
+  await views('bus-g', 'BUS G');
+  await views('clean', 'CLEAN');
+  R.row(p.consoleLines.length === 0, '6.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+  const st = await p.status(); const ws = await p.stats();
+  R.row(st.refused === 0 && ws.refused === 0 && ws.ok, '6.engine-took-every-record', { posted: st.posted, records: ws.records, refused: ws.refused, theme: await p.ev("JSON.stringify(Object.fromEntries(Object.entries(localStorage)))") });
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

@@ -1,0 +1,40 @@
+const say = (line) => { document.getElementById('funkgui-log').textContent += `${line}\n`; };
+const CASES = [
+  ['ftz: 1e-20 * 1e-20 (f32.mul)', 'mul32', 0x1e3ce508, 0x1e3ce508],
+  ['ftz: 1e-20 * 1e-20 (f32x4.mul)', 'mulv', 0x1e3ce508, 0x1e3ce508],
+  ['ftz: FLT_MIN + -1.5*FLT_MIN... (f32.add FLT_MIN, -0x00c00000)', 'add32', 0x00800000, 0x80c00000],
+  ['daz: denormal 1e-40 * 1e20 (f32.mul)', 'mul32', 0x000116c2, 0x60ad78ec],
+  ['daz: denormal 1e-40 * 1e20 (f32x4.mul)', 'mulv', 0x000116c2, 0x60ad78ec],
+  ['demote: (double)1e-20 * (double)1e-20 -> f32', 'demote', 0x1e3ce508, 0x1e3ce508],
+  ['f64: 2^-600 * 2^-450 (denormal double)', 'mul64hi', 0x1a700000, 0x23d00000],
+];
+async function main() {
+  say(`NOTE     ${navigator.userAgent}`);
+  const wasm = await (await fetch('fcmp-fpmode.wasm')).arrayBuffer();
+  const x = (await WebAssembly.instantiate(wasm, {})).instance.exports;
+  const main = {};
+  for (const [name, fn, a, b] of CASES) main[name] = (x[fn](a, b) >>> 0).toString(16).padStart(8, '0');
+  const d = new Float64Array([2.2250738585072014e-308, 0.5]);
+  main['js: DBL_MIN * 0.5'] = String(d[0] * d[1]);
+  const where = { 'main thread': main };
+  for (const kind of ['offline', 'live']) {
+    const ctx = kind === 'offline' ? new OfflineAudioContext({ numberOfChannels: 2, length: 4800, sampleRate: 48000 })
+                                   : new AudioContext({ sampleRate: 48000 });
+    await ctx.audioWorklet.addModule('fcmp-fpmode-worklet.js');
+    const node = new AudioWorkletNode(ctx, 'fcmp-fpmode', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { wasm } });
+    node.connect(ctx.destination);
+    if (kind === 'offline') await ctx.startRendering();
+    else { ctx.resume().catch(() => {}); await new Promise((r) => setTimeout(r, 700)); }
+    const got = await new Promise((r) => { node.port.onmessage = (e) => r(e.data); node.port.postMessage('?'); });
+    say(`NOTE     ${kind} context state ${ctx.state}`);
+    where[`${kind} worklet, constructor`] = got.inConstructor;
+    where[`${kind} worklet, message handler`] = got.inHandler;
+    where[`${kind} worklet, process()`] = got.inProcess;
+    if (kind === 'live') ctx.close();
+  }
+  for (const [place, r] of Object.entries(where)) {
+    if (r === null) { say(`NOTE     ${place}: did not run`); continue; }
+    for (const [name, v] of Object.entries(r)) say(`NOTE     ${place} | ${name} = ${v}`);
+  }
+}
+main().catch((e) => say(`FAIL     ${e && e.stack || e}`)).then(() => { document.title = 'PASS'; });

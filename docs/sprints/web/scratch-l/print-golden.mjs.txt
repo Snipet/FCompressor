@@ -1,0 +1,17 @@
+// scratch: tests/golden/base/modes/<key>/dsp.print.txt -> { "<key>": { "print.default.l.hash": "...", ... } }
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+const root = process.argv[2];
+const out = {};
+for (const key of readdirSync(join(root, 'base/modes')).sort()) {
+  const f = join(root, 'base/modes', key, 'dsp.print.txt');
+  if (!existsSync(f)) continue;
+  const rows = {};
+  for (const line of readFileSync(f, 'utf8').split('\n')) {
+    if (line.startsWith('#') || !line.includes('\t')) continue;
+    const [k, v, tol] = line.split('\t');
+    if (k.startsWith('print.') && tol.trim() === 'exact') rows[k] = v;
+  }
+  out[key] = rows;
+}
+console.log(JSON.stringify(out));

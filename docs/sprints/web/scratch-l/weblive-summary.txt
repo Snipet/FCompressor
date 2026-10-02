@@ -1,0 +1,31 @@
+web-live: /private/tmp/claude-501/-Users-seanfunk-audio-plugins-FCompressor/1e18d990-0133-428b-8995-1664ebc8733a/scratchpad/scout-l/weblive/site at http://127.0.0.1:63516/ in Chrome/154.0.8037.93
+EQUAL    panel.theme0: geometry 738cee5019a4f33c text 3e535f56470579c4 (44 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 1 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 279 ms)
+EQUAL    panel.theme1: geometry 738cee5019a4f33c text 3e535f56470579c4 (44 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 1 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 196 ms)
+EQUAL    chars.sidechain.theme0: geometry c49649acde227ac8 text 79d1cc66e25760f9 (42 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 29 drawn 1 idle 1; pixels largest 2 over2 0 of 9830400; 354 ms)
+EQUAL    chars.sidechain.theme1: geometry c49649acde227ac8 text 79d1cc66e25760f9 (42 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 2 over2 0 of 9830400; 313 ms)
+EQUAL    chars.colour.theme0: geometry 06088e0047f882fd text 9562f4299af2788a (41 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 2 over2 0 of 9830400; 295 ms)
+EQUAL    chars.colour.theme1: geometry 06088e0047f882fd text 9562f4299af2788a (41 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 2 over2 0 of 9830400; 295 ms)
+EQUAL    modebrowser.theme0: geometry d062e4b63a9c86b8 text 5fe08e552da17562 (49 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 29 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 214 ms)
+EQUAL    modebrowser.theme1: geometry d062e4b63a9c86b8 text 5fe08e552da17562 (49 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 210 ms)
+EQUAL    presetbrowser.theme0: geometry 2fe336d74dc85fd5 text 29ce5e8cb09834e4 (49 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 29 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 236 ms)
+EQUAL    presetbrowser.theme1: geometry 2fe336d74dc85fd5 text 29ce5e8cb09834e4 (49 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 233 ms)
+EQUAL    settings.theme0: geometry a337e3b270dc06e4 text 306354ce3a105d98 (47 rows; dpi 2 clock fixed theme 0 dt 0.0166666675 settle 28 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 233 ms)
+EQUAL    settings.theme1: geometry a337e3b270dc06e4 text 306354ce3a105d98 (47 rows; dpi 2 clock fixed theme 1 dt 0.0166666675 settle 30 drawn 1 idle 1; pixels largest 1 over2 0 of 9830400; 240 ms)
+  NOTE     Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36
+  PASS     web.selftest browser: WebAssembly, a secure context, AudioWorklet, WebGL2
+  PASS     web.selftest engine.selfcheck.main: 5a96ce217d29ca6f (want 5a96ce217d29ca6f)
+  PASS     web.selftest engine.selfcheck.worklet: 5a96ce217d29ca6f in 31 ms (want 5a96ce217d29ca6f); abi 1, latency 4, 48000 Hz
+  PASS     web.selftest worklet.render: 10 s of the loop through the worklet: 0 of 480000 frames differ from the engine driven directly, peak 0.452, 3750 quanta of 128
+  NOTE     worklet load: 10 s rendered in 102 ms, 98x real time (default Mode, STD)
+  PASS     web.selftest engine.silence: signal 24.0 us a quantum, silence at worst 24.0 us over 2/3 s from 0.0 s (x1.00, limit x3; best of 3 runs, gate off)
+  PASS     web.selftest page.start: 48000 Hz, the context is running
+  PASS     web.selftest page.status: the status line says "PLAYING" and is rendered; no button
+  PASS     web.selftest editor.atlas: b744c79b9bb755d0 (want b744c79b9bb755d0)
+  PASS     web.selftest editor.pixels: 1 frame(s) read back through the sink: 3840000 samples against SoftRaster, the largest difference 2 of 255, 0 over 2
+  NOTE     editor: {"ok":1,"error":"","frames":55,"fps":33.4,"zoom":125,"replies":39,"refused":0,"flags":52,"latency":4,"prepared":1,"rate":48000,"posted":41,"dropped":2,"host":"Google Chrome 154","carriers":1,"ignored":0,"lost":0}
+  NOTE     worklet: {"fcmp":"stats","ok":true,"quanta":228,"oddQuanta":0,"lastFrames":128,"inChannels":2,"outChannels":2,"records":41,"replies":39,"refused":0,"lastRefusal":0,"latency":4}
+  PASS     web.selftest editor.draws: 39 frames drawn while watched (55 in all), 33.4 fps, zoom 125
+  PASS     web.selftest editor.link: 39 replies while watched (39 in all), flags 0x34, 48000 Hz; the worklet took 41 records, refused 0
+  PASS     web.selftest page.audio: 112 quanta of 128 in 0.3 s, 2 channels in, 2 out, the gate is open; base latency 5.3 ms, output latency 24.0 ms
+PASS     selftest: PASS (1891 ms)
+web-live: 13/13 passed (results in /private/tmp/claude-501/-Users-seanfunk-audio-plugins-FCompressor/1e18d990-0133-428b-8995-1664ebc8733a/scratchpad/scout-l/weblive/out3)

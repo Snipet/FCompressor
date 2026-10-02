@@ -1,0 +1,202 @@
+// page-check.test.mjs [runner]: the WebDriver runner against a fake driver (fake-driver.mjs). No browser is started.
+// As a FCompressor test this would carry: // FCMP_WEB_TEST name=web.pagecheck timeout=180 args={source}
+// Output: PASS/FAIL lines as the probes print them. Exit 0 pass, 1 fail.
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const TEST = 'web.pagecheck';
+const here = dirname(fileURLToPath(import.meta.url));
+const runner = process.argv[2] || join(here, 'page-check.mjs');
+const fake = join(here, 'fake-driver.mjs');
+let failed = 0;
+function row(ok, name, detail = '') {
+  console.log(`${ok ? 'PASS' : 'FAIL'}     ${TEST} ${name}${detail ? ': ' + detail : ''}`);
+  if (!ok) failed += 1;
+  return ok;
+}
+const scratch = mkdtempSync(join(tmpdir(), 'fcmp-pagecheck-'));
+const site = join(scratch, 'site');
+mkdirSync(join(site, 'licences'), { recursive: true });
+writeFileSync(join(site, 'fcmp-ui.html'), '<!doctype html><title>RUNNING</title>');
+writeFileSync(join(site, 'index.html'), '<!doctype html><title>INDEX</title>');
+writeFileSync(join(site, 'main.js'), 'export {};');
+writeFileSync(join(site, 'fcmp-engine.wasm'), Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+writeFileSync(join(scratch, 'secret.txt'), 'not the site');
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+let runs = 0;
+// One run of the runner. → { code, out, err, ms, record }
+function run(scenario, args, { env = {}, signalAfterMs = 0 } = {}) {
+  runs += 1;
+  const recordPath = join(scratch, `record-${runs}.json`);
+  const t0 = Date.now();
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [runner, site, ...args],
+                        { env: { ...process.env, GITHUB_ACTIONS: '', FAKE_SCENARIO: scenario, FAKE_RECORD: recordPath, ...env },
+                          stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    if (signalAfterMs) setTimeout(() => child.kill('SIGTERM'), signalAfterMs);
+    child.on('exit', (code) => {
+      const record = existsSync(recordPath) ? JSON.parse(readFileSync(recordPath, 'utf8')) : null;
+      done({ code, out, err, ms: Date.now() - t0, record });
+    });
+  });
+}
+const chrome = ['--browser', 'chrome', '--driver', fake];
+const stopped = (r) => r.record !== null && !alive(r.record.pid);
+
+// ---- the three verdicts ---------------------------------------------------------------------------------------------
+{
+  const shot = join(scratch, 'pass.png');
+  const logFile = join(scratch, 'pass.txt');
+  const r = await run('pass', [...chrome, '--screenshot', shot, '--log', logFile]);
+  row(r.code === 0, 'pass.exit', `exit ${r.code}`);
+  row(/PASS {5}web\.selftest browser/.test(r.out) && /page-check: PASS\n/.test(r.out), 'pass.log',
+      'the page\'s log and the verdict are printed');
+  row(r.record.deleted === 1 && stopped(r), 'pass.cleanup', `sessions deleted ${r.record.deleted}, the driver is `
+      + `${stopped(r) ? 'gone' : 'ALIVE'}`);
+  row(existsSync(shot) && readFileSync(shot).subarray(1, 4).toString() === 'PNG', 'pass.screenshot');
+  row(existsSync(logFile) && /page-check: PASS/.test(readFileSync(logFile, 'utf8'))
+      && /web\.selftest browser/.test(readFileSync(logFile, 'utf8')), 'pass.logfile');
+  row(/renderer: Fake Renderer/.test(r.out), 'pass.renderer', 'the WebGL renderer is recorded');
+  row(r.record.url.endsWith('/fcmp-ui.html') && r.record.url.startsWith('http://127.0.0.1:'), 'pass.url', r.record.url);
+  // The runner's own server, as the fake asked it.
+  const s = r.record.served;
+  row(s.page.status === 200 && s.page.type.startsWith('text/html'), 'server.page', JSON.stringify(s.page));
+  row(s.wasm.status === 200 && s.wasm.type === 'application/wasm' && s.wasm.bytes === 8, 'server.wasm', JSON.stringify(s.wasm));
+  row(s.script.status === 200 && s.script.type.startsWith('text/javascript'), 'server.script', JSON.stringify(s.script));
+  row(s.head.status === 200 && s.head.bytes === 0, 'server.head', JSON.stringify(s.head));
+  row(s.missing.status === 404 && /server: 404 GET \/no-such-file\.js/.test(r.out), 'server.missing',
+      'a 404 is answered and said at the end');
+  row([s.above, s.aboveEncoded, s.aboveSlash].every((a) => a.status !== 200 && a.bytes < 12), 'server.above',
+      `nothing above the site is served: ${s.above.status}, ${s.aboveEncoded.status}, ${s.aboveSlash.status}`);
+  row(s.post.status === 405, 'server.post', `POST ${s.post.status}`);
+  row(s.directory.status === 200 && s.directory.type.startsWith('text/html'), 'server.directory', '/ is index.html');
+}
+{
+  const r = await run('fail', chrome);
+  row(r.code === 1 && /page-check: FAIL: editor\.pixels/.test(r.out) && /FAIL {5}web\.selftest editor\.pixels/.test(r.out),
+      'fail.exit', `exit ${r.code}`);
+  row(r.record.deleted === 1 && stopped(r), 'fail.cleanup');
+}
+{
+  const shot = join(scratch, 'running.png');
+  const r = await run('running', [...chrome, '--timeout', '2', '--screenshot', shot]);
+  row(r.code === 2 && /no verdict within 2 s \(the title was 'RUNNING'\)/.test(r.err), 'timeout.exit', `exit ${r.code} after ${r.ms} ms`);
+  row(/NOTE {5}a fake browser/.test(r.out), 'timeout.log', 'the log as last read is printed');
+  row(r.record.deleted === 1 && stopped(r) && existsSync(shot), 'timeout.cleanup', 'session deleted, driver gone, a picture taken');
+}
+// ---- what can go wrong on the way -----------------------------------------------------------------------------------
+{
+  const r = await run('hang', [...chrome, '--timeout', '2']);
+  row(r.code === 2 && /the page stopped answering/.test(r.err) && r.ms < 12000, 'hang.exit', `exit ${r.code} after ${r.ms} ms`);
+  row(r.record.deleted === 1 && stopped(r), 'hang.cleanup');
+}
+{
+  const r = await run('nosession', chrome);
+  row(r.code === 2 && /no session \(session not created: session not created: the browser binary was not found\)/.test(r.err),
+      'nosession.exit', `exit ${r.code}`);
+  row(/the driver said:\nfake-driver: scenario nosession/.test(r.err) && stopped(r), 'nosession.said', 'the driver\'s output is shown');
+}
+{
+  const r = await run('crash', [...chrome, '--timeout', '60']);
+  row(r.code === 2 && /the driver went away \(code 7\)/.test(r.err) && r.ms < 10000, 'crash.exit', `exit ${r.code} after ${r.ms} ms`);
+  row(/NOTE {5}a fake browser/.test(r.out), 'crash.log', 'the log as last read is printed');
+}
+{
+  const r = await run('lost', [...chrome, '--timeout', '60']);
+  row(r.code === 2 && /the browser went away before a verdict \(invalid session id/.test(r.err) && r.ms < 10000,
+      'lost.exit', `exit ${r.code} after ${r.ms} ms`);
+  row(stopped(r), 'lost.cleanup');
+}
+{
+  const r = await run('notready', [...chrome, '--timeout', '2']);
+  row(r.code === 2 && /was not ready in time/.test(r.err) && stopped(r) && r.record.capabilities === null, 'notready.exit',
+      `exit ${r.code} after ${r.ms} ms; no session was asked for`);
+}
+{
+  const r = await run('garbage', [...chrome, '--timeout', '5']);
+  row(r.code === 2 && /is not JSON/.test(r.err) && stopped(r), 'garbage.exit', `exit ${r.code}`);
+}
+{
+  const r = await run('scripterror', [...chrome, '--timeout', '5']);
+  row(r.code === 2 && /javascript error/.test(r.err) && r.record.deleted === 1, 'scripterror.exit', `exit ${r.code}`);
+}
+{
+  const r = await run('noshot', [...chrome, '--screenshot', join(scratch, 'none.png')]);
+  row(r.code === 0 && /no screenshot \(unable to capture screen/.test(r.out) && !existsSync(join(scratch, 'none.png')),
+      'noshot.exit', 'a picture that cannot be taken does not change the verdict');
+}
+{
+  const r = await run('pass', ['--browser', 'chrome', '--driver', join(scratch, 'no-such-driver')]);
+  row(r.code === 2 && /did not start \(ENOENT\)/.test(r.err), 'nodriver.exit', `exit ${r.code}`);
+}
+{
+  const r = await run('slowquit', chrome);
+  row(r.code === 0 && r.record.sigterm === true && stopped(r), 'slowquit.killed',
+      `a driver that ignores SIGTERM is killed (exit ${r.code} after ${r.ms} ms)`);
+}
+{
+  const r = await run('running', [...chrome, '--timeout', '60'], { signalAfterMs: 1500 });
+  row(r.code === 2 && /terminated/.test(r.err) && r.record.deleted === 1 && stopped(r), 'sigterm.cleanup',
+      `the runner told to stop ends the session and the driver (exit ${r.code})`);
+}
+// ---- what each browser is asked for ---------------------------------------------------------------------------------
+{
+  const r = await run('pass', [...chrome, '--autoplay', '--arg', '--use-angle=gl', '--binary', '/opt/x/chrome',
+                               '--page', 'index.html?selftest=1']);
+  const o = (r.record.capabilities || {})['goog:chromeOptions'] || {};
+  const a = o.args || [];
+  const gl = process.platform === 'darwin' ? ['--use-angle=metal'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
+  row(r.record.capabilities.browserName === 'chrome' && a.includes('--headless=new') && a.includes('--mute-audio')
+      && gl.every((f) => a.includes(f)) && a.includes('--autoplay-policy=no-user-gesture-required')
+      && a[a.length - 1] === '--use-angle=gl' && o.binary === '/opt/x/chrome', 'caps.chrome', JSON.stringify(o));
+  row(r.record.url.endsWith('/index.html?selftest=1') && r.record.served.page.status === 200, 'caps.page', r.record.url);
+  row(r.record.argv.join(' ').startsWith('--port='), 'caps.chrome.port', r.record.argv.join(' '));
+}
+{
+  const r = await run('pass', chrome);
+  const a = r.record.capabilities['goog:chromeOptions'].args;
+  row(a.includes('--mute-audio') && !a.some((f) => f.startsWith('--autoplay-policy')), 'caps.chrome.default',
+      'muted, and no autoplay unless asked');
+  const h = await run('pass', [...chrome, '--headed']);
+  const ha = h.record.capabilities['goog:chromeOptions'].args;
+  row(!ha.includes('--headless=new') && ha.includes('--mute-audio'), 'caps.chrome.headed');
+}
+{
+  const r = await run('pass', ['--browser', 'firefox', '--driver', fake, '--autoplay']);
+  const o = (r.record.capabilities || {})['moz:firefoxOptions'] || {};
+  const p = o.prefs || {};
+  row(r.code === 0 && r.record.capabilities.browserName === 'firefox' && o.args.includes('-headless')
+      && p['media.volume_scale'] === '0.0' && p['webgl.force-enabled'] === true
+      && p['media.autoplay.default'] === 0 && p['media.autoplay.blocking_policy'] === 0, 'caps.firefox', JSON.stringify(o));
+  row(r.record.argv[0] === '--port' && Number(r.record.argv[1]) > 0, 'caps.firefox.port', r.record.argv.join(' '));
+  const d = await run('pass', ['--browser', 'firefox', '--driver', fake]);
+  const dp = d.record.capabilities['moz:firefoxOptions'].prefs;
+  row(dp['media.volume_scale'] === '0.0' && !('media.autoplay.default' in dp), 'caps.firefox.default');
+}
+{
+  const refusedHere = await run('pass', ['--browser', 'safari', '--driver', fake]);
+  row(refusedHere.code === 2 && refusedHere.record === null && /only on a CI runner/.test(refusedHere.err), 'caps.safari.refused',
+      'outside GitHub Actions Safari is not driven: no driver was started');
+  const r = await run('pass', ['--browser', 'safari', '--driver', fake], { env: { GITHUB_ACTIONS: 'true' } });
+  const c = r.record ? r.record.capabilities : {};
+  row(r.code === 0 && c.browserName === 'safari' && Object.keys(c).sort().join() === 'browserName,timeouts', 'caps.safari',
+      JSON.stringify(c));
+}
+// ---- usage ----------------------------------------------------------------------------------------------------------
+{
+  const none = await run('pass', ['--driver', fake]);
+  const page = await run('pass', [...chrome, '--page', '../secret.txt']);
+  const edge = await run('pass', ['--browser', 'edge', '--driver', fake]);
+  row([none, page, edge].every((r) => r.code === 2 && r.record === null && /usage:/.test(r.err)), 'usage',
+      `no browser ${none.code}, a page outside ${page.code}, an unknown browser ${edge.code}`);
+}
+rmSync(scratch, { recursive: true, force: true });
+console.log(failed === 0 ? `${TEST}: all rows pass` : `${TEST}: ${failed} row(s) FAIL`);
+process.exit(failed === 0 ? 0 : 1);

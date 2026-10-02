@@ -1,0 +1,55 @@
+// Scratch (scout-l/audio): native values for rows the goldens do not hold: a tail into the gate, a floor at the
+// denormal boundary, other sample rates. Through the C ABI, record then configure, 128-frame quanta, default set.
+#include "web/engine/WebEngine.h"
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+#include <string>
+#include <cstdlib>
+extern "C" {
+std::int32_t fcmp_print_frames(void) noexcept;
+void fcmp_print_program(float*, float*) noexcept;
+std::int32_t fcmp_print_modes(void) noexcept;
+const char* fcmp_print_key(std::int32_t) noexcept;
+std::int32_t fcmp_print_record(std::int32_t, std::int32_t, float, float, float, std::int32_t, std::uint8_t*) noexcept;
+void fcmp_print_hash(const float*, std::int32_t, std::uint32_t*) noexcept;
+}
+int main()
+{
+    const int n = fcmp_print_frames(), half = n / 2;
+    std::vector<float> pl(n), pr(n), fl(n), fr(n), l(n), r(n);
+    fcmp_print_program(pl.data(), pr.data());
+    fl = pl; fr = pr;
+    for (int i = half; i < n; ++i) { const float v = (i % 96 < 48 ? 1.0f : -1.0f) * 0x1p-120f; fl[i] = v; fr[i] = -v; }
+    struct Kind { const char* name; double fs; float q; int input; };   // input 0 program, 1 program then nothing, 2 program then floor
+    const Kind kinds[] = { { "tail", 48000, 1, 1 }, { "floor", 48000, 1, 2 }, { "std@44100", 44100, 1, 0 }, { "std@96000", 96000, 1, 0 }, { "hq@44100", 44100, 2, 0 } };
+    std::printf("{\n");
+    bool first = true;
+    for (int m = 0; m < fcmp_print_modes(); ++m)
+        for (const Kind& k : kinds)
+        {
+            std::uint8_t rec[140];
+            FcmpWebEngine* e = fcmp_web_create();
+            fcmp_print_record(m, 0, k.q, 0, -1, 1, rec);
+            fcmp_web_post(e, rec, 140);
+            const int latency = fcmp_web_configure(e, k.fs, 128);
+            const float* inL = k.input == 2 ? fl.data() : pl.data();
+            const float* inR = k.input == 2 ? fr.data() : pr.data();
+            for (int off = 0; off < n; off += 128)
+            {
+                const bool none = k.input == 1 && off >= half;
+                fcmp_web_process(e, none ? nullptr : inL + off, none ? nullptr : inR + off, l.data() + off, r.data() + off, 128);
+            }
+            fcmp_web_destroy(e);
+            if (const char* d = std::getenv("DUMP")) { const std::string f = std::string(d) + "/native-" + fcmp_print_key(m) + "-" + k.name + ".f32"; if (std::FILE* o = std::fopen(f.c_str(), "wb")) { std::fwrite(l.data(), 4, l.size(), o); std::fclose(o); } }
+            std::uint32_t hl[2], hr[2];
+            fcmp_print_hash(l.data(), n, hl);
+            fcmp_print_hash(r.data(), n, hr);
+            int lastNonZero = -1, tiny = 0;
+            for (int i = 0; i < n; ++i) { if (l[i] != 0.0f) lastNonZero = i; const float a = l[i] < 0 ? -l[i] : l[i]; if (a != 0.0f && a < 0x1p-126f) ++tiny; }
+            std::printf("%s  \"%s %s\": { \"l\": \"%08x%08x\", \"r\": \"%08x%08x\", \"latency\": %d, \"lastNonZero\": %d, \"denormalOut\": %d }",
+                        first ? "" : ",\n", fcmp_print_key(m), k.name, hl[1], hl[0], hr[1], hr[0], latency, lastNonZero, tiny);
+            first = false;
+        }
+    std::printf("\n}\n");
+}

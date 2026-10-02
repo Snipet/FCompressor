@@ -1,0 +1,35 @@
+// Scratch (scout-l/audio): does this browser give a worklet another render quantum than 128 (Web Audio 1.1's
+// renderSizeHint)? If so, one print row through the worklet's odd-quantum path against the golden.
+const say = (line) => { document.getElementById('funkgui-log').textContent += `${line}\n`; };
+const hex8 = (v) => v.toString(16).padStart(8, '0');
+async function main() {
+  say(`NOTE     ${navigator.userAgent}`);
+  const golden = await (await fetch('fcmp-print-golden.json')).json();
+  const engineBytes = await (await fetch('fcmp-engine.wasm')).arrayBuffer();
+  const p = (await WebAssembly.instantiate(await (await fetch('fcmp-quantum.wasm')).arrayBuffer(), {})).instance.exports;
+  p._initialize();
+  const n = p.fcmp_print_frames();
+  const pL = p.malloc(n * 4), pR = p.malloc(n * 4), pRec = p.malloc(140), pHash = p.malloc(8);
+  const pf = new Float32Array(p.memory.buffer), pu8 = new Uint8Array(p.memory.buffer), pu32 = new Uint32Array(p.memory.buffer);
+  p.fcmp_print_program(pL, pR);
+  const progL = pf.slice(pL / 4, pL / 4 + n), progR = pf.slice(pR / 4, pR / 4 + n);
+  const hash = (a) => { pf.set(a, pL / 4); p.fcmp_print_hash(pL, a.length, pHash); return hex8(pu32[pHash / 4 + 1]) + hex8(pu32[pHash / 4]); };
+  const record = (m, q) => { p.fcmp_print_record(m, 0, q, 0, -1, 1, pRec); return pu8.slice(pRec, pRec + 140).buffer; };
+  say(`NOTE     'renderQuantumSize' in OfflineAudioContext.prototype: ${'renderQuantumSize' in OfflineAudioContext.prototype}; in AudioContext.prototype: ${'renderQuantumSize' in (AudioContext.prototype)}; in BaseAudioContext.prototype: ${'renderQuantumSize' in BaseAudioContext.prototype}`);
+  for (const hint of [undefined, 256, 100, 2048, 'hardware']) {
+    let ctx;
+    try { ctx = new OfflineAudioContext(hint === undefined ? { numberOfChannels: 2, length: n, sampleRate: 48000 } : { numberOfChannels: 2, length: n, sampleRate: 48000, renderSizeHint: hint }); }
+    catch (e) { say(`NOTE     renderSizeHint ${hint}: the constructor threw ${e}`); continue; }
+    await ctx.audioWorklet.addModule('fcmp-worklet.js');
+    const node = new AudioWorkletNode(ctx, 'fcmp-engine', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers', processorOptions: { wasm: engineBytes } });
+    await new Promise((r) => { node.port.onmessage = (e) => { if (e.data && e.data.fcmp === 'ready') r(); }; });
+    node.port.postMessage(record(1, 2)); node.port.postMessage(record(1, 1));
+    const buffer = ctx.createBuffer(2, n, 48000); buffer.copyToChannel(progL, 0); buffer.copyToChannel(progR, 1);
+    const source = ctx.createBufferSource(); source.buffer = buffer; source.connect(node).connect(ctx.destination); source.start();
+    const out = await ctx.startRendering();
+    const stats = await new Promise((r) => { node.port.onmessage = (e) => { if (e.data && e.data.fcmp === 'stats') r(e.data); }; node.port.postMessage({ fcmp: 'stats' }); });
+    const got = hash(out.getChannelData(0));
+    say(`NOTE     renderSizeHint ${hint}: renderQuantumSize ${ctx.renderQuantumSize}, the worklet saw ${stats.quanta} quanta, the last of ${stats.lastFrames} frames, ${stats.oddQuanta} not of 128; bus-g print.default.l ${got === golden['bus-g']['print.default.l.hash'] ? 'equals the golden' : 'DIFFERS: ' + got}`);
+  }
+}
+main().catch((e) => say(`FAIL     ${e && e.stack || e}`)).then(() => { document.title = 'PASS'; });
