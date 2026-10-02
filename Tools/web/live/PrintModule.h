@@ -80,7 +80,8 @@ std::int32_t fcmp_print_latency(std::int32_t quality, std::int32_t budget, doubl
 FCMP_PRINT_EXPORT(fcmp_print_hash) void fcmp_print_hash(const float* v, std::int32_t n, std::uint32_t* hash) noexcept;
 
 // Where a channel's tail ends, by its bits: out[0] the index of the last sample that is not a zero (-1: there is
-// none), out[1] the number of denormal samples. A browser that flushes to zero on its audio thread moves both.
+// none), out[1] the number of denormal samples. Beside the hash they say how a browser's values differ from node's: one
+// that flushes to zero on its audio thread may end a tail at another sample, and computes no denormal one.
 FCMP_PRINT_EXPORT(fcmp_print_tail) void fcmp_print_tail(const float* v, std::int32_t n, std::int32_t* out) noexcept;
 
 } // extern "C"

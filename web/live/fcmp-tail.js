@@ -43,6 +43,7 @@ const NODE_WINDOW = 125;                    // quanta: 1/3 s, web.engine.tail's 
 const RUNS = 3;
 const CLOCK_STEPS = 20;                     // a timed window is at least this many steps of the clock
 const REPLY_FIXED_BYTES = 320;              // WebProtocol.h kReplyFixedBytes
+const FP_MS = 15000;                        // one context's floating-point environment: then it is not measured
 
 const page = new Page('web.live.tail');
 
@@ -54,7 +55,7 @@ async function fpNotes() {
   page.note(`web.live.fpmode main thread: ${fpText(fpMode())}`);
   for (const kind of ['offline', 'live']) {
     let context = null;
-    try {
+    const measure = async () => {
       context = kind === 'offline'
         ? new OfflineAudioContext({ numberOfChannels: 2, length: RATE / 10, sampleRate: RATE }) : new AudioContext();
       await context.audioWorklet.addModule('fcmp-fpmode-worklet.js');
@@ -63,13 +64,18 @@ async function fpNotes() {
       node.port.start();
       node.connect(context.destination);
       if (kind === 'offline') {
-        await within(10000, 'the offline render', context.startRendering());
+        await context.startRendering();
       } else {
         context.resume().catch(() => {});                // without a gesture it stays suspended
         for (let i = 0; i < 10 && context.state !== 'running'; i += 1) await sleep(50);
         if (context.state === 'running') await sleep(200);
       }
-      const got = await ask(node, 'fpmode');
+      return ask(node, 'fpmode');
+    };
+    try {
+      // A NOTE, so it may not hold the page up: a context that never answers (a machine with no audio device) is
+      // "not measured", not a stalled page.
+      const got = await within(FP_MS, `the ${kind} context`, measure());
       page.note(`web.live.fpmode ${kind} context: process() ${fpText(got.inProcess)}; message handler `
                 + `${fpText(got.inHandler)}; constructor ${fpText(got.inConstructor)}`
                 + (kind === 'live' ? ` (the context is ${context.state})` : ''));
