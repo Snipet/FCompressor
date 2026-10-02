@@ -103,6 +103,12 @@ file(GLOB FCMP_BENCH_SOURCES        CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/bench/*
 # so the same sources build natively for its checks; Tools/web holds those checks' programs.
 file(GLOB FCMP_WEB_ENGINE_SOURCES   CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/web/engine/*.cpp)
 file(GLOB FCMP_WEB_TOOL_SOURCES     CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/web/*.cpp)
+# The web facade (ADR-93, Sprint C): the browser's ProcessorFacade, portable C++ (lint web.facade). It builds natively
+# into fcmp_probe_plugin, where proc.webnull, proc.webpresets and ui.web hold it to the processor, and as wasm32 with
+# the editor. FCMP_PLUGIN_PORTABLE_SOURCES is the part of FCMP_PLUGIN_SOURCES the web build shares (lint
+# plugin.portable).
+file(GLOB FCMP_WEB_FACADE_SOURCES   CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/web/facade/*.cpp)
+file(GLOB FCMP_PLUGIN_PORTABLE_SOURCES CONFIGURE_DEPENDS ${FCMP_SOURCE_ROOT}/plugin/portable/*.cpp)
 
 # ---- editor choice (SPRINTS §7 D22): exactly one CreateEditor*.cpp per target, chosen here, never by #if ------------
 set(FCMP_CREATE_EDITOR_GENERIC ${FCMP_SOURCE_ROOT}/plugin/CreateEditorGeneric.cpp)

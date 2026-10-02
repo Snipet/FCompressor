@@ -21,7 +21,15 @@
 #                         __attribute__((export_name("fcmp_...")))  under `#if defined(__wasm__)` (no Emscripten
 #                         header; natively the macro is empty), plus malloc and free. Nothing else: no
 #                         --export-dynamic, which would export the C++ runtime's default-visible symbols too.
-#   fcmp_web              web only: everything above (the `web` build preset's target).
+#   fcmp_web_facade_check web only (Sprint C): Source/plugin/portable and Source/web/facade compiled as wasm32 under
+#                         the warning list. Compile-only: a static library nothing links.
+#   fcmp_web_editor_check web only (Sprint C), not in `all`: the editor outside gpu/, the portable model code and
+#                         the facade over FunkGui's JUCE-free core, compiled as wasm32. Build it by name
+#                         (cmake --build build-web --target fcmp_web_editor_check). The module and the probes under
+#                         node are Sprint D.
+#   fcmp_web              web only: the engine, the checks and fcmp_web_facade_check (the `web` build preset's target).
+# Natively, fcmp_probe_plugin links fcmp_web_engine_lib and compiles Source/web/facade/*.cpp (Sprint C), so the
+# probes proc.webnull, proc.webpresets and ui.web hold the facade to the real processor.
 # None of them exists before its directory has a source, so the skeleton configures on its own.
 #
 # Tests register themselves from the first matching line of a file, as the probes do (cmake/FcmpProbes.cmake):
@@ -90,9 +98,38 @@ if(FCOMPRESSOR_WEB AND TARGET fcmp_web_engine_lib)
   set(FCMP_WEB_ENGINE_WASM $<TARGET_FILE:fcmp_web_engine>)
 endif()
 
+# ---- the web facade, natively: in fcmp_probe_plugin beside the processor (Sprint C) ----------------------------------
+if(TARGET fcmp_probe_plugin)
+  if(TARGET fcmp_web_engine_lib)
+    target_link_libraries(fcmp_probe_plugin PRIVATE fcmp_web_engine_lib)
+  endif()
+  if(FCMP_WEB_FACADE_SOURCES)
+    target_sources(fcmp_probe_plugin PRIVATE ${FCMP_WEB_FACADE_SOURCES})
+    fcmp_warn_sources(${FCMP_WEB_FACADE_SOURCES})
+  endif()
+endif()
+
+# ---- the editor's sources as wasm32, compile-only (Sprint C; the module and the node probes are Sprint D) ----------
+if(FCOMPRESSOR_WEB)
+  # The facade and the model code it shares with the plugin: no FunkGui source, only its include root.
+  add_library(fcmp_web_facade_check STATIC ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
+  target_include_directories(fcmp_web_facade_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
+  target_link_libraries(fcmp_web_facade_check PRIVATE fcdsp FunkGui::harness)
+  target_compile_options(fcmp_web_facade_check PRIVATE ${FCMP_WARNING_FLAGS})
+  # The whole editor over FunkGui's JUCE-free core. FunkGui's own sources compile in this target (an INTERFACE
+  # library's sources), so our warning list goes on our files only, as in fcmp_probe_plugin.
+  set(_fcmp_web_editor_own ${FCMP_EDITOR_SOURCES} ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
+  add_library(fcmp_web_editor_check STATIC EXCLUDE_FROM_ALL ${_fcmp_web_editor_own})
+  fcmp_warn_sources(${_fcmp_web_editor_own})
+  target_include_directories(fcmp_web_editor_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
+  target_link_libraries(fcmp_web_editor_check PRIVATE fcdsp FunkGui::core)
+  funkgui_configure_product(fcmp_web_editor_check PRODUCT ${FCMP_PRODUCT_NAME} OBJC_PREFIX ${FCMP_OBJC_PREFIX}
+                            ENV_PREFIX ${FCMP_ENV_PREFIX} PREFS_FOLDER ${FCMP_PREFS_FOLDER})
+endif()
+
 if(FCOMPRESSOR_WEB)
   add_custom_target(fcmp_web)
-  foreach(_t fcmp_web_engine fcmp_web_check)
+  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_facade_check)
     if(TARGET ${_t})
       add_dependencies(fcmp_web ${_t})
     endif()
