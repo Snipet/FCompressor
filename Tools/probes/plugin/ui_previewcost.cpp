@@ -19,31 +19,48 @@
 // The no-thread path (PreviewWorker.h's contract: computed inside tick(), once no newer request has replaced it for
 // 0.15 s of tick time). Under node it is the build's own. Natively the probe chooses it with PreviewWorker.cpp's
 // switch, previewWorkerRefuseThread: while it is on no worker's thread starts, as on a system that refuses one. Ticks
-// of 0.04 s, so 0.12 s is inside the rest and 0.16 s past it:
+// of 0.04 s, so 0.12 s is inside the rest and 0.16 s past it. Three requests: A is the Mode at its defaults, B and C
+// are EngineParams chosen by content (below), so that a result is known by what it holds, not by its key alone:
+//   rest.differs.b       (precondition) B's synchronous result differs, bitwise, from A's ...
+//   rest.differs.c       ... and C's from A's and from B's
 //   rest.early.jobs      a request that has rested 0.12 s has cost no job ...
 //   rest.early.pending   ... and is pending (the Panel keeps ticking at full rate)
 //   rest.replaced.jobs   a newer request restarts the rest: 0.12 s after it (0.24 s after the first) still no job
 //   rest.computed.jobs   one tick later (0.16 s) exactly one job ran ...
-//   rest.computed.latest ... the newer request's, equal to the synchronous result: the replaced one was never computed
+//   rest.computed.latest ... the newer request's, equal to B's own synchronous result: the replaced one, A, was never
+//                        computed, and its EngineParams are not what ran under B's key
 //   rest.same.jobs       a request equal to the computed one is never pending and costs no job
 //   rest.repeat.early    a request repeated before every tick (StepPlot's way) rests once: no job at 0.12 s ...
-//   rest.repeat.jobs     ... and one at 0.16 s
+//   rest.repeat.jobs     ... and one at 0.16 s, equal to C's own synchronous result
 //   rest.sync.jobs       a synchronous worker (PanelOptions::syncPreview) never rests: one job in its first tick
 // The Panel on that path (Panel{skipHint, asynchronous}; HeadlessHost at 1/60 s, dpi 2, theme 0; CHARACTERISTICS),
 // with frames counted from the one whose StepPlots made the request:
 //   panel.open.early     opening the screen: no job in the first 8 frames (0.133 s) ...
 //   panel.open.jobs      ... and one by the 10th (0.167 s)
-//   panel.drag.moved     a slot the Mode leaves continuous (the first of THRESHOLD, RELEASE, ATTACK, MAKEUP, MIX,
-//                        RATIO, DRIVE, KNEE) written every frame for 30 frames, over half its range: the curves' input
+//   panel.drag.moved     a slot chosen by content (below) written every frame for 30 frames: the curves' input
 //                        (engSerial) changed in every one of them ...
 //   panel.drag.jobs      ... and no job ran: every frame of the drag is free of the computation
 //   panel.rest.early     the controls at rest: no job in the next 8 frames ...
 //   panel.rest.jobs      ... one by the 10th, and nothing pending
-//   panel.rest.equal     the plots' result is the synchronous result of the Panel's final EngineParams
+//   panel.rest.differs   (precondition) the synchronous result of the EngineParams the drag ended on differs,
+//                        bitwise, from the opening's result and from the first drag frame's: neither passes for it
+//   panel.rest.equal     the plots' result is that synchronous result, the Panel's final EngineParams'
 //   panel.settled        the Panel then settles (HeadlessHost::settle within 600 frames)
-//   notes                drag_param: the slot written; drag_frame_ms: the median wall time of a drag frame, ticked and
-//                        drawn (no job in it); rest_frame_ms: the slowest of the ten frames after it, the one that
-//                        held the job
+//   notes                drag_param: the slot written; drag_kind: "ramp" or "steps"; drag_frame_ms: the median wall
+//                        time of a drag frame, ticked and drawn (no job in it); rest_frame_ms: the slowest of the ten
+//                        frames after it, the one that held the job; rest_b, rest_c: the slots B and C change
+// Chosen by content. A row that compares a result needs requests whose results differ, or a stale result passes for
+// the newest; and in most Modes some obvious slot does not move the step response at all (its stimulus is placed
+// relative to the threshold; MAKEUP and MIX never reach the control path). So values of THRESHOLD, RELEASE, ATTACK,
+// MAKEUP, MIX, RATIO, DRIVE and KNEE, in this order, are written into the Mode at its defaults and judged by their
+// synchronous results:
+//   the drag             the first slot the Mode leaves continuous whose ramp, 30 values from 0.23 to 0.71 of its own
+//                        range, ends on a result that differs from the defaults' and from its first value's. Where no
+//                        ramp does (Diode 54, Diode 609: MIX and DRIVE), the first stepped slot with two steps that
+//                        do, written in turn, so that every frame is still a new request
+//   B and C              the first two values tried (a ramp's two ends, a stepped slot's steps) whose results differ
+//                        from the defaults' and from each other
+// A Mode that offers none fails the precondition row: no row passes for want of a difference.
 #include "ProbeRegistry.h"
 
 #include "FakeFacade.h"
@@ -55,6 +72,7 @@
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/EngineParams.h"
+#include "fcdsp/params/HostParams.h"
 #include "fcdsp/params/ParamSpec.h"
 #include "fcdsp/params/Pid.h"
 #include "fcdsp/params/Resolve.h"
@@ -69,8 +87,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace fcmp::ui
 {
@@ -158,6 +178,17 @@ namespace
         return equal;
     }
 
+    // Two results, both computed, that differ somewhere: a result that does not exist differs from nothing.
+    bool differ(const ui::PreviewWorker& a, const ui::PreviewWorker& b)
+    {
+        return a.result().key != 0 && b.result().key != 0 && !sameResult(a, b);
+    }
+
+    bool sameEng(const fcdsp::EngineParams& a, const fcdsp::EngineParams& b)
+    {
+        return std::memcmp(&a, &b, sizeof a) == 0;               // no padding (116 B): what the Panel's engHash reads
+    }
+
     bool allRuns(const ui::PreviewWorker::Result& r)
     {
         bool all = true;
@@ -241,13 +272,137 @@ namespace
        #endif
     }
 
+    // ---- chosen by content: EngineParams whose results differ -------------------------------------------------------
+
+    // The synchronous result of `eng`, what a worker's result is compared with (no entry: no result, equal to nothing
+    // and different from nothing). Stopped: the render scratch goes, the result stays.
+    std::shared_ptr<ui::PreviewWorker> reference(const fcdsp::ModeEntry* entry, const fcdsp::EngineParams& eng)
+    {
+        auto ref = std::make_shared<ui::PreviewWorker>(true);
+        ref->setActive(true);
+        if (entry != nullptr)
+            ref->request(*entry, eng, kFs, 1);
+        ref->tick(kDt);
+        ref->stop();
+        return ref;
+    }
+
+    // One value written into one slot of the Mode at its defaults.
+    struct Tried
+    {
+        Pid pid = fcdsp::kNoPid;
+        fcdsp::EngineParams eng{};                               // what the Mode resolves to with it ...
+        std::shared_ptr<ui::PreviewWorker> sync;                 // ... and its synchronous result
+    };
+
+    Tried tryPlain(const fcdsp::ModeEntry& entry, fcdsp::RawParams raw, Pid pid, float plain)
+    {
+        raw[pid] = fcdsp::legal(pid, plain);                     // what FakePort::scriptPlain stores
+        fcdsp::Resolution res;
+        fcdsp::resolve(entry, raw, res);
+        return { pid, res.eng, reference(&entry, res.eng) };
+    }
+
+    // What the search found (the file comment's "Chosen by content"); the rows that use it check it again.
+    struct Varied
+    {
+        Tried b, c;                                              // the rest rows' B and C (no sync: none found)
+        Pid   pid = fcdsp::kNoPid;                               // the slot the drag writes (kNoPid: none found) ...
+        bool  steps = false;                                     // ... two of its steps in turn, not a ramp ...
+        std::array<float, kDragFrames> plain{};                  // ... and the value of every frame
+    };
+    static_assert(kDragFrames % 2 == 0, "two steps written in turn: the last frame writes the second");
+
+    float rampPlain(const fcdsp::ParamSpec& s, int i)            // frame i of a ramp: from 0.23 to 0.71 of the range
+    {
+        const float u = 0.23f + 0.5f * static_cast<float>(i) / static_cast<float>(kDragFrames);
+        return s.lo + u * (s.hi - s.lo);
+    }
+
+    // `raw` and `def` are the Mode at its defaults, `sync` holds their result. Each slot's values are tried in the
+    // order a drag writes them. B and C are the first two whose results differ from the defaults' and from each other.
+    // The drag is the first slot with a first value that is a new request (its EngineParams are not the defaults') and
+    // a later one whose result differs from the defaults' and from the first's: a ramp's two ends, then two steps.
+    Varied vary(const fcdsp::ModeEntry& entry, const fcdsp::RawParams& raw, const fcdsp::Resolution& def,
+                const ui::PreviewWorker& sync)
+    {
+        Varied v;
+        const auto done = [&v] { return v.pid != fcdsp::kNoPid && v.c.sync != nullptr; };
+        for (const bool steps : { false, true })                 // a ramp wherever one will do
+            for (const Pid p : { Pid::thr, Pid::rel, Pid::atk, Pid::makeup, Pid::mix, Pid::ratio, Pid::drive,
+                                 Pid::knee })
+            {
+                const fcdsp::ParamSpec* s = def.view.spec[fcdsp::idx(p)];
+                if (s == nullptr)
+                    continue;
+                std::vector<float> values;
+                if (!steps && s->kind == fcdsp::Kind::continuous && s->lo < s->hi
+                    && def.view[p].state == fcdsp::SlotState::live)
+                    values = { rampPlain(*s, 0), rampPlain(*s, kDragFrames - 1) };
+                else if (steps && s->kind == fcdsp::Kind::stepped
+                         && def.view[p].state == fcdsp::SlotState::stepped)
+                    for (int k = 0; k < fcdsp::stepCount(*s); ++k)
+                        values.push_back(fcdsp::stepPlain(*s, k));
+
+                Tried first;                                     // this slot's first drag frame, once a value is one
+                float firstPlain = 0.0f;
+                for (std::size_t j = 0; j < values.size() && !done(); ++j)
+                {
+                    const Tried t = tryPlain(entry, raw, p, values[j]);
+                    const bool moved = differ(*t.sync, sync);
+                    if (moved && v.b.sync == nullptr)
+                        v.b = t;
+                    else if (moved && v.c.sync == nullptr && differ(*t.sync, *v.b.sync))
+                        v.c = t;
+
+                    if (v.pid != fcdsp::kNoPid)
+                        continue;                                // the drag is found: only C is still looked for
+                    if (first.sync == nullptr)
+                    {
+                        if (!sameEng(t.eng, def.eng))
+                        {
+                            first = t;
+                            firstPlain = values[j];
+                        }
+                    }
+                    else if (moved && differ(*t.sync, *first.sync))
+                    {
+                        v.pid = p;
+                        v.steps = steps;
+                        for (int i = 0; i < kDragFrames; ++i)
+                            v.plain[static_cast<std::size_t>(i)]
+                                = !steps ? rampPlain(*s, i) : (i % 2 == 0 ? firstPlain : values[j]);
+                    }
+                }
+            }
+        return v;
+    }
+
+    std::string slotNote(Pid p)                                  // a slot's id as a note ("" for none)
+    {
+        return "\"" + std::string(p != fcdsp::kNoPid ? fcdsp::kHostParams[fcdsp::idx(p)].id : "") + "\"";
+    }
+
     // ---- the no-thread path: the rest -------------------------------------------------------------------------------
 
     void restRows(Probe& P, const fcdsp::ModeEntry& entry, const fcdsp::EngineParams& eng,
-                  const ui::PreviewWorker& sync)
+                  const ui::PreviewWorker& sync, const Varied& v)
     {
         const NoThread noThread;
         constexpr uint64_t kA = 21, kB = 22, kC = 23;
+
+        // A is `eng`, whose result `sync` holds. Where the search found no B or no C the rows still run, on A's
+        // EngineParams, and the precondition fails.
+        const bool hasB = v.b.sync != nullptr, hasC = v.c.sync != nullptr;
+        const fcdsp::EngineParams& engB = hasB ? v.b.eng : eng;
+        const fcdsp::EngineParams& engC = hasC ? v.c.eng : eng;
+        const ui::PreviewWorker& syncB = hasB ? *v.b.sync : sync;
+        const ui::PreviewWorker& syncC = hasC ? *v.c.sync : sync;
+        P.eq("rest.differs.b", differ(syncB, sync) ? 1 : 0, 1);
+        P.eq("rest.differs.c", differ(syncC, sync) && differ(syncC, syncB) ? 1 : 0, 1);
+        P.note("rest_b", slotNote(v.b.pid));
+        P.note("rest_c", slotNote(v.c.pid));
+
         ui::PreviewWorker w(false);
         w.setActive(true);
 
@@ -256,15 +411,15 @@ namespace
         P.eq("rest.early.jobs", jobs(w), 0);
         P.eq("rest.early.pending", w.pending() ? 1 : 0, 1);
 
-        w.request(entry, eng, kFs, kB);                          // newer: A is replaced inside its rest
+        w.request(entry, engB, kFs, kB);                         // newer: A is replaced inside its rest
         ticks(w, 3, kRestDt);                                    // A would be at 0.24 s; B: 0.12 s
         P.eq("rest.replaced.jobs", jobs(w), 0);
 
         w.tick(kRestDt);                                         // B: 0.16 s
         P.eq("rest.computed.jobs", jobs(w), 1);
-        P.eq("rest.computed.latest", !w.pending() && w.result().key == kB && sameResult(w, sync) ? 1 : 0, 1);
+        P.eq("rest.computed.latest", !w.pending() && w.result().key == kB && sameResult(w, syncB) ? 1 : 0, 1);
 
-        w.request(entry, eng, kFs, kB);                          // what is computed already
+        w.request(entry, engB, kFs, kB);                         // what is computed already
         bool idle = !w.pending();
         for (int i = 0; i < 5; ++i)
         {
@@ -275,13 +430,13 @@ namespace
 
         for (int i = 0; i < 3; ++i)                              // C before every tick, as a StepPlot asks every frame
         {
-            w.request(entry, eng, kFs, kC);
+            w.request(entry, engC, kFs, kC);
             w.tick(kRestDt);
         }
         P.eq("rest.repeat.early", jobs(w), 1);                   // C: 0.12 s
-        w.request(entry, eng, kFs, kC);
+        w.request(entry, engC, kFs, kC);
         w.tick(kRestDt);                                         // C: 0.16 s
-        P.eq("rest.repeat.jobs", w.result().key == kC && !w.pending() ? jobs(w) : -1, 2);
+        P.eq("rest.repeat.jobs", w.result().key == kC && !w.pending() && sameResult(w, syncC) ? jobs(w) : -1, 2);
         w.stop();
 
         ui::PreviewWorker s(true);                               // PanelOptions::syncPreview: at once, as ever
@@ -293,21 +448,7 @@ namespace
 
     // ---- the Panel on the no-thread path ----------------------------------------------------------------------------
 
-    // The slot the drag moves: the first of these that the Mode leaves continuous at its defaults, so that a write
-    // inside its own range is a new value, new EngineParams and a new request in every frame. kNoPid: none.
-    Pid dragPid(const fcdsp::ParamView& view)
-    {
-        for (const Pid p : { Pid::thr, Pid::rel, Pid::atk, Pid::makeup, Pid::mix, Pid::ratio, Pid::drive, Pid::knee })
-        {
-            const fcdsp::ParamSpec* s = view.spec[fcdsp::idx(p)];
-            if (s != nullptr && s->kind == fcdsp::Kind::continuous && s->lo < s->hi
-                && view[p].state == fcdsp::SlotState::live)
-                return p;
-        }
-        return fcdsp::kNoPid;
-    }
-
-    void panelRows(Probe& P, const fcdsp::ModeDescriptor& desc)
+    void panelRows(Probe& P, const fcdsp::ModeDescriptor& desc, const Varied& v)
     {
         const NoThread noThread;
         probe::FakeFacade facade(desc.key);
@@ -323,34 +464,45 @@ namespace
         host.tick(2, kDt);
         P.eq("panel.open.jobs", jobs(w), 1);
 
-        const Pid pid = dragPid(panel.context().frame.res.view);
-        if (pid == fcdsp::kNoPid)
-        {
-            P.harnessError("ui.previewcost: '" + std::string(desc.key) + "' has no continuous slot to drag");
+        P.note("drag_param", slotNote(v.pid));
+        if (v.pid == fcdsp::kNoPid)                              // no drag ends on a result of its own in this Mode:
+        {                                                        // nothing below could tell a stale one, so it fails
+            P.eq("panel.rest.differs", 0, 1);
+            panel.shutdown();
             return;
         }
-        const fcdsp::ParamSpec& spec = *panel.context().frame.res.view.spec[fcdsp::idx(pid)];
-        P.note("drag_param", "\"" + std::string(facade.fakePort(pid).id()) + "\"");
+        P.note("drag_kind", v.steps ? "\"steps\"" : "\"ramp\"");
         const auto frame = [&host] {                             // one frame, ticked and drawn: its wall time in ms
             const auto t0 = std::chrono::steady_clock::now();
             host.tick(1, kDt);
             host.draw();
             return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         };
+        const ui::FrameState& f = panel.context().frame;
         std::array<double, kDragFrames> dragMs{};
+        fcdsp::EngineParams engFirst{};                          // the first drag frame's
         int moved = 0;
-        for (int i = 0; i < kDragFrames; ++i)                    // from 0.23 to 0.73 of the slot's own range
+        for (int i = 0; i < kDragFrames; ++i)                    // the ramp, or the two steps in turn
         {
-            const float u = 0.23f + 0.5f * static_cast<float>(i) / static_cast<float>(kDragFrames);
-            const uint32_t before = panel.context().frame.engSerial;
-            facade.fakePort(pid).scriptPlain(spec.lo + u * (spec.hi - spec.lo));
-            dragMs[static_cast<std::size_t>(i)] = frame();
-            moved += panel.context().frame.engSerial != before ? 1 : 0;
+            const auto k = static_cast<std::size_t>(i);
+            const uint32_t before = f.engSerial;
+            facade.fakePort(v.pid).scriptPlain(v.plain[k]);
+            dragMs[k] = frame();
+            moved += f.engSerial != before ? 1 : 0;
+            if (i == 0)
+                engFirst = f.eng;
         }
         P.eq("panel.drag.moved", moved, kDragFrames);
         P.eq("panel.drag.jobs", jobs(w), 1);                     // the one of the opening
         std::sort(dragMs.begin(), dragMs.end());
         P.note("drag_frame_ms", json(dragMs[kDragFrames / 2]));
+
+        // The request the drag ended on, computed synchronously. What a stale worker would show instead is the
+        // opening's result, which is the Panel's until the rest has passed (panel.drag.jobs), or an earlier drag
+        // frame's: the reference must differ from both, or panel.rest.equal could not tell.
+        const fcdsp::EngineParams engLast = f.eng;
+        const std::shared_ptr<ui::PreviewWorker> ref = reference(f.entry, engLast);
+        const bool differs = differ(*ref, w) && differ(*ref, *reference(f.entry, engFirst));
 
         double heldMs = 0.0;
         for (int i = 0; i < 8; ++i)
@@ -361,13 +513,8 @@ namespace
         P.eq("panel.rest.jobs", !w.pending() ? jobs(w) : -1, 2);
         P.note("rest_frame_ms", json(heldMs));
 
-        const ui::FrameState& f = panel.context().frame;
-        ui::PreviewWorker ref(true);
-        ref.setActive(true);
-        if (f.entry != nullptr)
-            ref.request(*f.entry, f.eng, kFs, 1);
-        ref.tick(kDt);
-        P.eq("panel.rest.equal", sameResult(w, ref) ? 1 : 0, 1);
+        P.eq("panel.rest.differs", differs ? 1 : 0, 1);
+        P.eq("panel.rest.equal", sameEng(f.eng, engLast) && sameResult(w, *ref) ? 1 : 0, 1);
         P.eq("panel.settled", host.settle(kMaxSettle, kDt) < kMaxSettle ? 1 : 0, 1);
         panel.shutdown();
     }
@@ -387,8 +534,9 @@ FCMP_PROBE(ui, previewcost)
     fcdsp::resolve(*entry, facade.currentRaw(), res);
 
     ui::PreviewWorker sync(true);
-    costRows(P, *entry, res.eng, sync);
-    restRows(P, *entry, res.eng, sync);
-    panelRows(P, *entry->desc);
+    costRows(P, *entry, res.eng, sync);                           // `sync` keeps the defaults' result
+    const Varied varied = vary(*entry, facade.currentRaw(), res, sync);
+    restRows(P, *entry, res.eng, sync, varied);
+    panelRows(P, *entry->desc, varied);
     return P.finish();
 }
