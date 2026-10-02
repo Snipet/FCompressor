@@ -23,8 +23,6 @@
 #include <funkgui/text/TextFit.h>
 #include <funkgui/widgets/FocusRing.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -561,10 +559,11 @@ namespace fcmp::ui
 
     bool Settings::copyReport()
     {
-        if (ctx_.host == nullptr || ctx_.host->ownerComponent() == nullptr)
-            return false;                                        // headless: no clipboard of ours to write
+        if (ctx_.host == nullptr)
+            return false;                                        // not attached: no host to ask
         refresh();
-        juce::SystemClipboard::copyTextToClipboard(juce::String::fromUTF8(report().c_str()));
+        if (!ctx_.host->copyText(report()))
+            return false;                                        // a host without a clipboard: nothing to announce
         copiedUntil_ = ctx_.seconds + S::kCopiedS;
         ++revision_;
         return true;

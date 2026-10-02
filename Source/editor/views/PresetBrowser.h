@@ -1,6 +1,7 @@
 // Source/editor/views/PresetBrowser.h — the PresetBrowser sub-view (02 §6.3, §8.9). Class declaration frozen at FZ4; U6 (S12) completes
 // it: the preset overlay at layout::kOverlay over PresetAccess: factory and user rows,
-// categories, save-as (LineEdit), menus (MenuLook). Drawn while the Panel's overlay fade is > 0.
+// categories, save-as (LineEdit), menus and file choosers (the host's: HostServices). Drawn while the Panel's overlay
+// fade is > 0.
 //
 // U6 (S12) behaviour, where 02 is silent (U6 handoff). HR's preset browser (PresetPanel.cpp) in the Mode browser's frame
 // (ModeBrowser.h): the same ground (kOverlay grown 8 px left and right, 4 px up and down), hairlines, headings (kCaption
@@ -16,10 +17,10 @@
 //   right-aligned to x 908); a 2 px ink32 scroll thumb at x 916 when the rows do not fit. The list scrolls by the pixel
 //   (ADR-84): a trackpad moves it 1:1 with the fingers (at the UI zoom) in the system's direction, natural scrolling
 //   included, with the system's momentum; a wheel notch glides it 3 rows (τ 0.05 s); keys and the selection bring a row
-//   into view at once. A row cut by the list's edge (y 88–308) is drawn clipped (Canvas::pushClip, FunkGui v0.9.0) and
-//   listed, hit and focused like the others. The selected row (the one Return
-//   and the actions take) has an ink16 fill; the current preset has the bar and its name in ink100; a hovered name is
-//   ink100, a pressed one accent.
+//   into view at once. A row cut by the list's edge (y 88–308) is drawn clipped (Canvas::pushClip, FunkGui v0.9.0; the
+//   clip's y edges snapped to device px, ADR-93) and listed, hit and focused like the others. The selected row (the
+//   one Return and the actions take) has an ink16 fill; the current preset has the bar and its name in ink100; a
+//   hovered name is ink100, a pressed one accent.
 // - Bottom, y 324–340 (a hairline at y 316 above): the status line at x 40 (the count, "33 PRESETS · 9 SHOWN", ink32; a
 //   message for 3 s of panel time after an action, ink70; the delete confirmation, ink100) and the actions, text cells
 //   right-aligned to x 920 (kCaption; ink52, hover ink100, accent while pressed, ink16 when not available): SAVE (P3c),
@@ -32,11 +33,11 @@
 // - Save as (SAVE AS, the strip's SAVE, the menus, a11y): the heading line becomes "SAVE AS [name] IN <CATEGORY>", a
 //   LineEdit pre-filled with the current preset's name, selected (typing replaces it; Init and "no preset" start empty),
 //   at most 40 characters, drawn upper case with a steady accent caret and an accent rule. The category is the chosen
-//   filter's when that is a category, else the current preset's (none for Init); the live editor's category word opens a
-//   menu of the categories. The status line says what the store will do: "TAKEN: IT WILL BE SAVED AS 'X 2'" when the
-//   name is taken (PresetStore's unique-name rule, factory names included). Return (or SAVE) calls PresetAccess::saveAs
-//   once; an empty name is refused before the call. A save started from the strip closes the browser after it succeeds;
-//   one started here keeps it open on the new row.
+//   filter's when that is a category, else the current preset's (none for Init); the category word opens a menu of
+//   the categories (the host's). The status line says what the store will do: "TAKEN: IT WILL BE SAVED AS 'X 2'" when
+//   the name is taken (PresetStore's unique-name rule, factory names included). Return (or SAVE) calls
+//   PresetAccess::saveAs once; an empty name is refused before the call. A save started from the strip closes the
+//   browser after it succeeds; one started here keeps it open on the new row.
 // - Save (SAVE, a11y; P3c, S12.5, S12 lead revision 11): the strip's SAVE, here. With a user preset current it saves
 //   over it (one PresetAccess::overwrite of the current row, no dialog), whichever row is selected, and says "SAVED
 //   'MY BUS'"; the browser stays open and the selection stays. With a factory preset current, or none, it is SAVE AS.
@@ -53,14 +54,16 @@
 //   'X'", DELETE reads CONFIRM in accent); the second calls PresetAccess::remove once. The second press of a double-click
 //   never counts (no action cell fires twice from one double-click). The row menu's Delete is the confirmation itself.
 //   The selection moves to the next row.
-// - Import: IMPORT opens a juce::FileChooser (*.fcmppreset, several files) parented on HostServices::ownerComponent();
-//   a preset file dropped on the panel imports through Panel::filesDropped → filesDropped(). Each file is one
+// - Import: IMPORT asks the host for a file chooser (HostServices::chooseFiles: *.fcmppreset, several files); a preset
+//   file dropped on the panel imports through Panel::filesDropped → filesDropped(). Each file is one
 //   PresetAccess::importFile; the browser opens on the first new row; a single imported file is also loaded (HR: one
-//   file is a request to hear it). Export: EXPORT (or the row menu) opens a save chooser in Documents named after the
-//   preset and calls PresetAccess::exportFile once. Without an owner component (headless) no chooser and no menu opens.
-// - Menus (a popup click on a row, or on the list's background; a11y showMenu): a funkgui::MenuLook juce::PopupMenu in
-//   the theme, anchored on the row inside HostServices::ownerComponent(): Load, Save As…, Rename…, Export…, Import…,
-//   Delete (Rename and Delete on user rows only).
+//   file is a request to hear it). Export: EXPORT (or the row menu) asks for a save chooser that starts at the
+//   preset's name (the host makes it a legal file name and gives the result the extension) and calls
+//   PresetAccess::exportFile once. A host that reports no hostservice::fileChooser has IMPORT and EXPORT (the cells and
+//   the menu items) disabled; menus are not gated.
+// - Menus (a popup click on a row, or on the list's background; a11y showMenu): the host's (HostServices::showMenu; web
+//   Sprint C, ADR-93) in the product's Theme, anchored on the row in the Panel's own px: Load, Save As…, Rename…,
+//   Export…, Import…, Delete (Rename and Delete on user rows only).
 // - PresetAccess is read when revision() moves (once per tick and before acting on input), into rows this view owns, so
 //   draw() allocates nothing and a row's index is re-found by its uuid before any call (another process may have
 //   changed the list in between).
@@ -102,16 +105,6 @@
 #include <string_view>
 #include <vector>
 
-namespace juce
-{
-    class FileChooser;
-}
-
-namespace funkgui
-{
-    class MenuLook;
-}
-
 namespace fcmp::ui
 {
     class PresetBrowser final : public SubView
@@ -129,7 +122,7 @@ namespace fcmp::ui
         int  focusOrder(std::span<uint32_t> out) const override;
 
         // ---- U6 additions -------------------------------------------------------------------------------------------
-        ~PresetBrowser() override;                               // dismisses an open menu before its look goes
+        ~PresetBrowser() override;                               // a menu or chooser callback still held does nothing
 
         // the SubView input the browser takes
         void pointerDown(const funkgui::PointerEvent&) override;
@@ -329,9 +322,7 @@ namespace fcmp::ui
         // the footer line under the hand (rebuilt every tick while the pointer is on an item: it names the selection)
         char spec_[256]{};
 
-        // live-editor services: menus and file choosers (never in a headless run: no owner component)
-        std::unique_ptr<funkgui::MenuLook> menuLook_;
-        std::unique_ptr<juce::FileChooser> chooser_;
+        // the host's menus and file choosers (HostServices) answer later, perhaps after this view
         std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // callbacks check it: this view still exists
 
         // ---- S13 H1a additions: the browser in the Panel's Tab order (see "Keyboard focus" above) -------------------

@@ -5,8 +5,9 @@
 //   hand), ink16 when there is nothing to take back; a release inside fires. Their footer line names the step
 //   ("UNDO THRESHOLD   CMD-Z"; CTRL-Z off macOS, ADR-92), their a11y buttons are disabled when there is nothing.
 // - A | B: two letters, the active one ink100 on a 1 px rule, the other ink32 (ink70 under the hand); a click on the
-//   other one switches (EditAccess::selectSlot, an undo step). A popup click, or a11y showMenu, opens a menu with "Copy A
-//   to B" (or B to A) in a live editor; headless no menu opens. A11y: a radioGroup "Compare" of two radioButtons.
+//   other one switches (EditAccess::selectSlot, an undo step). A popup click, or a11y showMenu, asks the host for a
+//   menu with "Copy A to B" (or B to A) (HostServices::showMenu, anchored on the two letters in the Panel's own px, in
+//   the product's Theme; web Sprint C, ADR-93). A11y: a radioGroup "Compare" of two radioButtons.
 // - Keys (focused, 02 §8.9): Return / Space on UNDO or REDO; on the group, ← → Home End choose a slot and Return / Space
 //   switch to the other. Cmd-Z and Shift-Cmd-Z anywhere on the panel are the Panel's (Panel::key).
 #pragma once
@@ -24,7 +25,6 @@
 namespace funkgui
 {
     class Canvas;
-    class MenuLook;
     struct Theme;
 }
 
@@ -51,10 +51,12 @@ namespace fcmp::ui
         // open (and the history refuses).
         static EditAccess& edits(PanelContext&);
 
-        // The platform's command key (ADR-92): Cmd on macOS; elsewhere JUCE's command modifier is Ctrl, so a key event
-        // carries mods.cmd and mods.ctrl together. commandOnly: that key held with no other modifier but Shift.
-        static bool commandOnly(const funkgui::Mods&) noexcept;
-        static const char* commandKeyName() noexcept;            // "CMD" or "CTRL", as the footer lines write it
+        // The platform's command key (ADR-92), as the host says it is (HostServices::commandKeyIsMeta(); web Sprint C,
+        // ADR-93: a compile-time platform test would be wrong in a browser): Cmd where it is Meta (macOS); elsewhere
+        // the command modifier is Ctrl, so a key event carries mods.cmd and mods.ctrl together. commandOnly: that key
+        // held with no other modifier but Shift.
+        static bool commandOnly(const funkgui::Mods&, bool commandKeyIsMeta) noexcept;
+        static const char* commandKeyName(bool commandKeyIsMeta) noexcept;   // "CMD" or "CTRL", as the footer writes it
 
         explicit EditControls(PanelContext&);
         ~EditControls();
@@ -83,7 +85,7 @@ namespace fcmp::ui
 
     private:
         void fire(Part);
-        void showMenu();                                         // Copy A to B (live editor only)
+        void showMenu();                                         // Copy A to B (HostServices::showMenu)
         Part focusedPart() const noexcept;
 
         PanelContext& ctx_;
@@ -97,7 +99,6 @@ namespace fcmp::ui
         uint32_t revision_ = 0;
         char     undoSpec_[96]{};
         char     redoSpec_[96]{};
-        std::unique_ptr<funkgui::MenuLook> menuLook_;
         std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // a menu callback checks it
     };
 }

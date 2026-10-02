@@ -1,6 +1,6 @@
 // Source/editor/views/PresetBrowser.cpp — the preset browser (see PresetBrowser.h): filters, rows, save (P3c: over the
-// current user preset), save as and rename (LineEdit), delete, import and export (juce::FileChooser), context menus
-// (funkgui::MenuLook) over PresetAccess.
+// current user preset), save as and rename (LineEdit), delete, import and export (the host's file chooser), context
+// menus (the host's) over PresetAccess.
 #include "editor/views/PresetBrowser.h"
 
 #include "editor/Layout.h"
@@ -17,12 +17,9 @@
 #include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
-#include <funkgui/juce/MenuLook.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/text/TextFit.h>
 #include <funkgui/widgets/FocusRing.h>
-
-#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
 #include <cmath>
@@ -216,6 +213,12 @@ namespace fcmp::ui
         }
 
         uint32_t local(uint32_t id) noexcept { return id & 0xFFFFu; }
+
+        // Whether the host can open a file chooser (web Sprint C, ADR-93): IMPORT and EXPORT are available only then.
+        bool hasChooser(const PanelContext& ctx) noexcept
+        {
+            return ctx.host != nullptr && (ctx.host->services() & funkgui::hostservice::fileChooser) != 0u;
+        }
     }
 
     // ---- construction ---------------------------------------------------------------------------------------------------
@@ -251,12 +254,9 @@ namespace fcmp::ui
         refresh(true);
     }
 
-    PresetBrowser::~PresetBrowser()
-    {
-        alive_.reset();                                          // a chooser or menu callback still queued does nothing
-        if (menuLook_ != nullptr)
-            juce::PopupMenu::dismissAllActiveMenus();            // an open menu holds a pointer to its look (HR)
-    }
+    // A chooser or menu callback the host still holds does nothing. No service is called from here: the host has
+    // dropped its callbacks when a Panel's views go, and may be gone itself (HostServices.h).
+    PresetBrowser::~PresetBrowser() { alive_.reset(); }
 
     // ---- the model ------------------------------------------------------------------------------------------------------
 
@@ -720,9 +720,16 @@ namespace fcmp::ui
                         else
                             l.add(sel != nullptr ? "FACTORY PRESETS CANNOT BE DELETED" : "SELECT ONE OF YOUR PRESETS");
                         break;
-                    case Action::importFiles: l.add("IMPORT .FCMPPRESET FILES   OR DROP THEM ON THE PLUGIN"); break;
+                    // Without a chooser the two cells are disabled (actionEnabled) and their lines say so, selection or
+                    // not; IMPORT's promises no drop either (no service bit says whether such a host takes files).
+                    case Action::importFiles:
+                        l.add(hasChooser(ctx_) ? "IMPORT .FCMPPRESET FILES   OR DROP THEM ON THE PLUGIN"
+                                               : "IMPORTING PRESET FILES IS NOT AVAILABLE HERE");
+                        break;
                     case Action::exportFile:
-                        if (sel != nullptr)
+                        if (!hasChooser(ctx_))
+                            l.add("EXPORTING PRESET FILES IS NOT AVAILABLE HERE");
+                        else if (sel != nullptr)
                         {
                             l.add("EXPORT '");
                             l.add(sel->shownName);
@@ -1089,55 +1096,45 @@ namespace fcmp::ui
 
     void PresetBrowser::chooseImport()
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr)
-            return;                                              // headless: no window to parent a chooser
-        chooser_ = std::make_unique<juce::FileChooser>(
-            "Import presets", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
-            juce::String("*") + kFileExtension, true, false, owner);
+        if (ctx_.host == nullptr)
+            return;                                              // not attached: no host to ask
+        funkgui::FileRequest request;
+        request.mode = funkgui::FileRequest::Mode::openMany;
+        request.title = "Import presets";
+        request.pattern = std::string("*") + kFileExtension;
         const std::weak_ptr<int> alive = alive_;
-        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
-                                  | juce::FileBrowserComponent::canSelectMultipleItems,
-                              [this, alive](const juce::FileChooser& fc) {
-                                  if (alive.expired())
-                                      return;
-                                  std::vector<std::string> paths;
-                                  for (const juce::File& f : fc.getResults())
-                                      paths.push_back(f.getFullPathName().toStdString());
-                                  importFiles(paths);
-                              });
+        ctx_.host->chooseFiles(request, [this, alive](const std::vector<std::string>& paths) {
+            if (alive.expired())
+                return;
+            importFiles(paths);                                  // none (cancelled): nothing
+        });
     }
 
     void PresetBrowser::chooseExport(int entry)
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr || entry < 0)
+        if (ctx_.host == nullptr || entry < 0)
             return;
         const Entry& e = entries_[static_cast<std::size_t>(entry)];
-        const juce::String ext(kFileExtension);
-        const juce::File initial = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                                       .getChildFile(juce::File::createLegalFileName(juce::String(e.name)) + ext);
-        chooser_ = std::make_unique<juce::FileChooser>("Export preset", initial, "*" + ext, true, false, owner);
+        // The host starts the chooser at the suggested name, made a legal file name, and gives the chosen path the
+        // pattern's extension (HostServices::chooseFiles): the view does neither.
+        funkgui::FileRequest request;
+        request.mode = funkgui::FileRequest::Mode::save;
+        request.title = "Export preset";
+        request.pattern = std::string("*") + kFileExtension;
+        request.suggestedName = e.name + kFileExtension;
         const std::weak_ptr<int> alive = alive_;
         const std::string uuid = e.uuid;
-        chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
-                                  | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this, alive, uuid, ext](const juce::FileChooser& fc) {
-                                  if (alive.expired())
-                                      return;
-                                  juce::File f = fc.getResult();
-                                  if (f == juce::File())
-                                      return;                     // cancelled
-                                  if (!f.hasFileExtension(ext))
-                                      f = f.withFileExtension(ext);
-                                  const int index = indexOf(uuid);
-                                  if (index < 0)
-                                      flash("THAT PRESET IS GONE");
-                                  else
-                                      exportTo(index, f.getFullPathName().toStdString());
-                                  if (ctx_.host != nullptr)
-                                      ctx_.host->nudgeFullRate();
-                              });
+        ctx_.host->chooseFiles(request, [this, alive, uuid](const std::vector<std::string>& paths) {
+            if (alive.expired() || paths.empty())
+                return;                                          // gone, or cancelled
+            const int index = indexOf(uuid);
+            if (index < 0)
+                flash("THAT PRESET IS GONE");
+            else
+                exportTo(index, paths.front());
+            if (ctx_.host != nullptr)
+                ctx_.host->nudgeFullRate();
+        });
     }
 
     int PresetBrowser::menu(int index, std::span<MenuItem> out) const
@@ -1154,12 +1151,13 @@ namespace fcmp::ui
         if (e != nullptr)
             add(Command::load, "Load", true, false);
         add(Command::saveAs, "Save As...", true, e != nullptr);
+        const bool chooser = hasChooser(ctx_);                   // Export... and Import... need the host's chooser
         if (e != nullptr)
         {
             add(Command::rename, "Rename...", !e->factory, false);
-            add(Command::exportFile, "Export...", true, false);
+            add(Command::exportFile, "Export...", chooser, false);
         }
-        add(Command::importFiles, "Import...", true, false);
+        add(Command::importFiles, "Import...", chooser, false);
         if (e != nullptr)
             add(Command::remove, "Delete", !e->factory, true);
         return static_cast<int>(n);
@@ -1214,51 +1212,40 @@ namespace fcmp::ui
 
     void PresetBrowser::showMenu(int entry, funkgui::Rect anchor)
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr)
-            return;
-        if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
-        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
+        if (ctx_.host == nullptr)
+            return;                                              // not attached: no host to ask
 
         std::array<MenuItem, 8> items{};
         const int index = entry >= 0 ? entries_[static_cast<std::size_t>(entry)].index : -1;
         const int n = menu(index, items);
-        juce::PopupMenu m;
-        m.setLookAndFeel(menuLook_.get());
+        funkgui::MenuRequest request;
         for (int i = 0; i < n; ++i)
         {
             const MenuItem& it = items[static_cast<std::size_t>(i)];
             if (it.separatorBefore)
-                m.addSeparator();
-            m.addItem(static_cast<int>(it.command), it.label, it.enabled);
+                request.items.push_back({ .separator = true });
+            request.items.push_back({ static_cast<int>(it.command), it.label, it.enabled });
         }
-        const float s = static_cast<float>(owner->getWidth()) / static_cast<float>(layout::kWidth);   // the UI zoom
-        const juce::Rectangle<int> area = owner->localAreaToGlobal(
-            juce::Rectangle<float>(anchor.x * s, anchor.y * s, anchor.w * s, anchor.h * s).toNearestInt());
+        request.anchor = anchor;                                 // the Panel's own px: the host scales to the UI zoom
+        request.theme = productTheme(ctx_.host->themeIndex());
         const std::weak_ptr<int> alive = alive_;
         const std::string uuid = entry >= 0 ? entries_[static_cast<std::size_t>(entry)].uuid : std::string();
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(area),
-                        [this, alive, uuid](int id) {
-                            if (alive.expired() || id <= 0)
-                                return;
-                            const int at = uuid.empty() ? -1 : indexOf(uuid);
-                            if (!uuid.empty() && at < 0)
-                                return;                          // the row went while the menu was open
-                            run(static_cast<Command>(id), at);
-                            if (ctx_.host != nullptr)
-                                ctx_.host->nudgeFullRate();
-                        });
+        ctx_.host->showMenu(request, [this, alive, uuid](int id) {
+            if (alive.expired() || id <= 0)
+                return;
+            const int at = uuid.empty() ? -1 : indexOf(uuid);
+            if (!uuid.empty() && at < 0)
+                return;                                          // the row went while the menu was open
+            run(static_cast<Command>(id), at);
+            if (ctx_.host != nullptr)
+                ctx_.host->nudgeFullRate();
+        });
     }
 
     void PresetBrowser::showCategoryMenu()
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr || edit_ != Edit::saveAs)
+        if (ctx_.host == nullptr || edit_ != Edit::saveAs)
             return;
-        if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
-        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
 
         std::vector<std::string> names;                          // the list's own spellings, in filter order
         for (const Filter& f : filters_)
@@ -1269,30 +1256,27 @@ namespace fcmp::ui
                         names.push_back(e.category);
                         break;
                     }
-        juce::PopupMenu m;
-        m.setLookAndFeel(menuLook_.get());
-        m.addItem(1, "No Category", true, saveCategory_.empty());
+        funkgui::MenuRequest request;
+        request.items.push_back({ 1, "No Category", true, saveCategory_.empty() });
         if (!names.empty())
-            m.addSeparator();
+            request.items.push_back({ .separator = true });
         for (std::size_t i = 0; i < names.size(); ++i)
-            m.addItem(100 + static_cast<int>(i), juce::String(names[i]), true, sameNoCase(names[i], saveCategory_));
-        const float s = static_cast<float>(owner->getWidth()) / static_cast<float>(layout::kWidth);
-        const Rect r { kEntryCategoryX, kEntryCentreY - 9.0f, kEntryCategoryMaxW, 18.0f };
-        const juce::Rectangle<int> area =
-            owner->localAreaToGlobal(juce::Rectangle<float>(r.x * s, r.y * s, r.w * s, r.h * s).toNearestInt());
+            request.items.push_back({ 100 + static_cast<int>(i), names[i], true, sameNoCase(names[i], saveCategory_) });
+        // The category word, in the Panel's own px: the host scales the anchor to the UI zoom.
+        request.anchor = { kEntryCategoryX, kEntryCentreY - 9.0f, kEntryCategoryMaxW, 18.0f };
+        request.theme = productTheme(ctx_.host->themeIndex());
         const std::weak_ptr<int> alive = alive_;
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(area),
-                        [this, alive, names](int id) {
-                            if (alive.expired() || id <= 0 || edit_ != Edit::saveAs)
-                                return;
-                            if (id == 1)
-                                saveCategory_.clear();
-                            else if (id >= 100 && static_cast<std::size_t>(id - 100) < names.size())
-                                saveCategory_ = names[static_cast<std::size_t>(id - 100)];
-                            ++revision_;
-                            if (ctx_.host != nullptr)
-                                ctx_.host->nudgeFullRate();
-                        });
+        ctx_.host->showMenu(request, [this, alive, names](int id) {
+            if (alive.expired() || id <= 0 || edit_ != Edit::saveAs)
+                return;
+            if (id == 1)
+                saveCategory_.clear();
+            else if (id >= 100 && static_cast<std::size_t>(id - 100) < names.size())
+                saveCategory_ = names[static_cast<std::size_t>(id - 100)];
+            ++revision_;
+            if (ctx_.host != nullptr)
+                ctx_.host->nudgeFullRate();
+        });
     }
 
     bool PresetBrowser::actionEnabled(Action a) const
@@ -1302,11 +1286,11 @@ namespace fcmp::ui
         {
             case Action::save:
             case Action::saveAs:
-            case Action::importFiles:
             case Action::cancel:      return true;
             case Action::rename:
             case Action::remove:      return sel != nullptr && !sel->factory;
-            case Action::exportFile:  return sel != nullptr;
+            case Action::importFiles: return hasChooser(ctx_);   // a host with a file chooser (ADR-93)
+            case Action::exportFile:  return sel != nullptr && hasChooser(ctx_);
             case Action::commit:      return editValid();
         }
         return false;
@@ -1616,13 +1600,20 @@ namespace fcmp::ui
 
         // The rows (ADR-84): at the offset snapped to a device px, so text lands on the pixel grid while it moves; when a
         // row is cut by the list's edge the rows are clipped to the list (at rest on a whole row nothing is cut, and the
-        // frame is the one drawn before pixel scrolling).
+        // frame is the one drawn before pixel scrolling). The clip's y edges are snapped to device px too (ADR-93): an
+        // edge through device pixel centres is filled one row further down by FunkGui's WebGlSink than by SoftRaster
+        // and the native sinks (Canvas.h). Where the dpi is a multiple of 0.25 (the goldens' 1 and 2, every macOS
+        // window) 88 and 308 are device px already and the snap changes nothing; elsewhere (a browser at 1.5625) each
+        // edge moves by at most half a device px.
         const float rowCap = -c.capCentreTop(0.0f, T::kLabel);  // cap centre below a kLabel line's top
         char fitted[256];
         const float off = c.snapY(scrollPx_);
         const bool cut = !shown_.empty() && off != kRowPitch * std::floor(off / kRowPitch);
         if (cut)
-            c.pushClip({ kGround.x, kList.y, kGround.w, kList.h });
+        {
+            const float top = c.snapY(kList.y);
+            c.pushClip({ kGround.x, top, kGround.w, c.snapY(kList.bottom()) - top });
+        }
         const int lastRow = static_cast<int>(shown_.size()) - 1;
         for (int s = std::max(0, static_cast<int>(std::floor(off / kRowPitch)));
              s <= std::min(lastRow, static_cast<int>(std::ceil((off + kTrackH) / kRowPitch)) - 1); ++s)

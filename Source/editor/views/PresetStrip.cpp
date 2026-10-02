@@ -15,13 +15,10 @@
 #include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
-#include <funkgui/juce/MenuLook.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/text/LineEdit.h>
 #include <funkgui/text/TextFit.h>
 #include <funkgui/widgets/FocusRing.h>
-
-#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -105,12 +102,9 @@ namespace fcmp::ui
 
     PresetStrip::PresetStrip(PanelContext& ctx) : ctx_(ctx), edits_(ctx) { refresh(); }
 
-    PresetStrip::~PresetStrip()
-    {
-        alive_.reset();                                          // a menu callback still queued does nothing
-        if (menuLook_ != nullptr)
-            juce::PopupMenu::dismissAllActiveMenus();            // an open menu holds a pointer to its look
-    }
+    // A menu callback the host still holds does nothing. No service is called from here: the host has dropped its
+    // callbacks when a Panel's views go, and may be gone itself (HostServices.h).
+    PresetStrip::~PresetStrip() { alive_.reset(); }
 
     // ---- state ----------------------------------------------------------------------------------------------------------
 
@@ -387,35 +381,28 @@ namespace fcmp::ui
 
     void PresetStrip::showMenu()
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr)
-            return;                                              // headless: no window to anchor a menu on
+        if (ctx_.host == nullptr)
+            return;                                              // not attached: no host to ask
         refresh();
-        if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
-        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
 
         std::array<MenuItem, 4> items{};
         const int n = menu(items);
-        juce::PopupMenu m;
-        m.setLookAndFeel(menuLook_.get());
+        funkgui::MenuRequest request;
         for (int i = 0; i < n; ++i)
         {
             const MenuItem& it = items[static_cast<std::size_t>(i)];
-            m.addItem(static_cast<int>(it.command), it.label, it.enabled);
+            request.items.push_back({ static_cast<int>(it.command), it.label, it.enabled });
         }
-        const float s = static_cast<float>(owner->getWidth()) / static_cast<float>(layout::kWidth);   // the UI zoom
-        const juce::Rectangle<int> area = owner->localAreaToGlobal(
-            juce::Rectangle<float>(kSaveBox.x * s, kSaveBox.y * s, kSaveBox.w * s, kSaveBox.h * s).toNearestInt());
+        request.anchor = kSaveBox;                               // the Panel's own px: the host scales to the UI zoom
+        request.theme = productTheme(ctx_.host->themeIndex());
         const std::weak_ptr<int> alive = alive_;
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(area),
-                        [this, alive](int id) {
-                            if (alive.expired() || id <= 0)
-                                return;
-                            run(static_cast<Command>(id));
-                            if (ctx_.host != nullptr)
-                                ctx_.host->nudgeFullRate();
-                        });
+        ctx_.host->showMenu(request, [this, alive](int id) {
+            if (alive.expired() || id <= 0)
+                return;
+            run(static_cast<Command>(id));
+            if (ctx_.host != nullptr)
+                ctx_.host->nudgeFullRate();
+        });
     }
 
     void PresetStrip::activate(Part p)

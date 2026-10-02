@@ -22,10 +22,10 @@
 //   browser and presses the browser's SAVE AS (Panel::a11yAction, the path VoiceOver uses), so the name is typed in the
 //   browser, over the list it joins; a save started from here closes the browser again (PresetBrowser.h). An overwrite
 //   the processor refuses (the preset went, the store failed) falls back to that save as, so the sound is never lost.
-//   Save as stays one step away for a user preset: SAVE's context menu (a popup click, or a11y showMenu) is a
-//   funkgui::MenuLook juce::PopupMenu anchored on the box inside HostServices::ownerComponent(): "Save" (what the click
-//   does) and "Save As..." (always the browser's save as); Shift-Return on the focused SAVE is the save as too.
-//   Headless (no owner component) no menu opens. The footer line and the a11y help say which save the click is
+//   Save as stays one step away for a user preset: SAVE's context menu (a popup click, or a11y showMenu) is the
+//   host's (HostServices::showMenu; web Sprint C, ADR-93), anchored on the box in the Panel's own px, in the product's
+//   Theme: "Save" (what the click does) and "Save As..." (always the browser's save as); Shift-Return on the focused
+//   SAVE is the save as too. The footer line and the a11y help say which save the click is
 //   ("SAVE OVER 'MY BUS'   RIGHT-CLICK OR SHIFT-RETURN: SAVE AS"; "Saves over My Bus. Its menu has Save as").
 // - The strip reads PresetAccess only when revision() moves (count, current, modified and the current row), once per
 //   tick and before acting on input, so draw() and accessibility() read its own copy (02 §3.7) and nothing allocates
@@ -55,11 +55,6 @@
 #include <memory>
 #include <span>
 #include <vector>
-
-namespace funkgui
-{
-    class MenuLook;
-}
 
 namespace fcmp::ui
 {
@@ -95,7 +90,7 @@ namespace fcmp::ui
         static constexpr uint32_t kSaveLocal = 4;
 
         // ---- P3c additions (S12.5): SAVE over a user preset, and SAVE's context menu --------------------------------
-        ~PresetStrip() override;                                 // dismisses an open menu before its look goes
+        ~PresetStrip() override;                                 // a menu callback still held does nothing
 
         // SAVE's context menu: its items (returns how many) and choosing one. save: what a click on SAVE does (over the
         // current user preset, else save as); saveAs: the browser's save as, whatever is current.
@@ -145,12 +140,11 @@ namespace fcmp::ui
         // ---- P3c additions ----------------------------------------------------------------------------------------
         bool savesOver() const noexcept;                         // SAVE is an overwrite: a user preset is current
         void saveAs();                                           // the browser's save as (SAVE before P3c)
-        void showMenu();                                         // SAVE's context menu (live editor only)
+        void showMenu();                                         // SAVE's context menu (HostServices::showMenu)
         void rebuildSaveSpec();                                  // saveSpec_ for the current preset
 
         double savedUntil_ = -1.0;                               // SAVED shows until then (panel time)
         char   saveSpec_[160]{};                                 // SAVE's footer line
-        std::unique_ptr<funkgui::MenuLook> menuLook_;            // live-editor menus (never headless)
         std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // a menu callback checks it: this view still exists
 
         // ---- v1.2 (ADR-91): UNDO, REDO and A | B on the second line, routed first ---------------------------------------

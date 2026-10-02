@@ -25,8 +25,8 @@
 //   DSP LOAD, OVERRUNS, AUDIO and DISPLAY are live-tagged. The preset counts are re-read when PresetAccess::revision()
 //   moves, so a refresh allocates nothing.
 // - Bottom bar, under a rule: "ESC CLOSES" and COPY REPORT, a text cell right-aligned to x 920: report() on the
-//   clipboard (juce::SystemClipboard) in a live editor, then COPIED for 2 s; headless (no owner component) it copies
-//   nothing and says nothing.
+//   clipboard through the host (HostServices::copyText; web Sprint C, ADR-93), then COPIED for 2 s; when the host did
+//   not write it (it has no clipboard) nothing is said.
 // - Input as the browsers': first in the hit order, a click outside kArea closes it (the Panel), Esc closes it, it is
 //   the whole Tab order while open (the five cell groups, then COPY REPORT) and takes the focus onto QUALITY when it was
 //   opened from the keyboard. Every group offers its footer spec line on hover and on focus.
@@ -80,7 +80,7 @@ namespace fcmp::ui
 
         // The DIAGNOSTICS as plain text: a title line, then "KEY: value" per row. COPY REPORT's text.
         std::string report() const;
-        // COPY REPORT: report() on the system clipboard; false (and nothing copied) without an owner component.
+        // COPY REPORT: report() on the clipboard, by the host; false (and no COPIED) when the host did not write it.
         bool copyReport();
 
         // a11y locals: a11yId(ViewIndex::settings, local). A radioGroup's cells are its local + 1 + i.

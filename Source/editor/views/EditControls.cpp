@@ -13,12 +13,9 @@
 #include <funkgui/core/Ease.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/core/TypeScale.h>
-#include <funkgui/juce/MenuLook.h>
 #include <funkgui/panel/HostServices.h>
 #include <funkgui/params/GestureController.h>
 #include <funkgui/widgets/FocusRing.h>
-
-#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <cmath>
 #include <cstdio>
@@ -81,31 +78,23 @@ namespace fcmp::ui
         return ctx.facade.edits();
     }
 
-    bool EditControls::commandOnly(const funkgui::Mods& m) noexcept
+    bool EditControls::commandOnly(const funkgui::Mods& m, bool commandKeyIsMeta) noexcept
     {
-       #if JUCE_MAC
-        return m.cmd && !m.ctrl && !m.alt;
-       #else
+        if (commandKeyIsMeta)
+            return m.cmd && !m.ctrl && !m.alt;
         return m.cmd && !m.alt;                                  // Ctrl is the command key: both flags are set
-       #endif
     }
 
-    const char* EditControls::commandKeyName() noexcept
+    const char* EditControls::commandKeyName(bool commandKeyIsMeta) noexcept
     {
-       #if JUCE_MAC
-        return "CMD";
-       #else
-        return "CTRL";
-       #endif
+        return commandKeyIsMeta ? "CMD" : "CTRL";
     }
 
     EditControls::EditControls(PanelContext& ctx) : ctx_(ctx) {}
 
-    EditControls::~EditControls()
-    {
-        alive_.reset();
-        juce::PopupMenu::dismissAllActiveMenus();                // a menu never outlives its look
-    }
+    // A menu callback the host still holds does nothing. No service is called from here: the host has dropped its
+    // callbacks when a Panel's views go, and may be gone itself (HostServices.h).
+    EditControls::~EditControls() { alive_.reset(); }
 
     bool EditControls::contains(funkgui::Point p) const noexcept { return partAt(p) != Part::none; }
 
@@ -158,12 +147,13 @@ namespace fcmp::ui
         canRedo_ = redo;
         slot_ = slot;
         usedB_ = used;
+        const char* commandKey = commandKeyName(ctx_.host != nullptr && ctx_.host->commandKeyIsMeta());
         if (canUndo_)
-            std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO %s   %s-Z", e.undoName(), commandKeyName());
+            std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO %s   %s-Z", e.undoName(), commandKey);
         else
             std::snprintf(undoSpec_, sizeof undoSpec_, "UNDO   NOTHING TO UNDO");
         if (canRedo_)
-            std::snprintf(redoSpec_, sizeof redoSpec_, "REDO %s   SHIFT-%s-Z", e.redoName(), commandKeyName());
+            std::snprintf(redoSpec_, sizeof redoSpec_, "REDO %s   SHIFT-%s-Z", e.redoName(), commandKey);
         else
             std::snprintf(redoSpec_, sizeof redoSpec_, "REDO   NOTHING TO REDO");
 
@@ -301,28 +291,21 @@ namespace fcmp::ui
 
     void EditControls::showMenu()
     {
-        juce::Component* owner = ctx_.host != nullptr ? ctx_.host->ownerComponent() : nullptr;
-        if (owner == nullptr)
-            return;                                              // headless: no window to anchor a menu on
-        if (menuLook_ == nullptr)
-            menuLook_ = std::make_unique<funkgui::MenuLook>(productTheme(ctx_.host->themeIndex()));
-        menuLook_->setTheme(productTheme(ctx_.host->themeIndex()));
-        juce::PopupMenu m;
-        m.setLookAndFeel(menuLook_.get());
-        m.addItem(slot_ == 0 ? kCopyB : kCopyA, slot_ == 0 ? "Copy A to B" : "Copy B to A");
-        const float s = static_cast<float>(owner->getWidth()) / static_cast<float>(layout::kWidth);   // the UI zoom
-        const funkgui::Rect r { E::kA.x, E::kA.y, E::kB.right() - E::kA.x, E::kA.h };
-        const juce::Rectangle<int> area =
-            owner->localAreaToGlobal(juce::Rectangle<float>(r.x * s, r.y * s, r.w * s, r.h * s).toNearestInt());
+        if (ctx_.host == nullptr)
+            return;                                              // not attached: no host to ask
+        funkgui::MenuRequest request;
+        request.items.push_back({ slot_ == 0 ? kCopyB : kCopyA, slot_ == 0 ? "Copy A to B" : "Copy B to A" });
+        // The two letters, in the Panel's own px: the host scales the anchor to the UI zoom.
+        request.anchor = { E::kA.x, E::kA.y, E::kB.right() - E::kA.x, E::kA.h };
+        request.theme = productTheme(ctx_.host->themeIndex());
         const std::weak_ptr<int> alive = alive_;
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(owner).withTargetScreenArea(area),
-                        [this, alive](int id) {
-                            if (alive.expired() || id <= 0)
-                                return;
-                            edits(ctx_).copySlot();              // the live sound into the other slot
-                            if (ctx_.host != nullptr)
-                                ctx_.host->nudgeFullRate();
-                        });
+        ctx_.host->showMenu(request, [this, alive](int id) {
+            if (alive.expired() || id <= 0)
+                return;
+            edits(ctx_).copySlot();                              // the live sound into the other slot
+            if (ctx_.host != nullptr)
+                ctx_.host->nudgeFullRate();
+        });
     }
 
     // ---- accessibility ------------------------------------------------------------------------------------------------
