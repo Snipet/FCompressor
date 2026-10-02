@@ -65,6 +65,7 @@ const NEAR_PX = 10;                                   // two presses nearer than
 // How long until() looks for an outcome before the row fails, unless the caller says: far longer than any outcome
 // takes on a fast machine (tens of milliseconds), for a software renderer on a loaded one.
 const BOUND_MS = 6000;
+const OUTCOME_MS = 10000;                             // a wait with a bound up to this is a wait for an outcome
 
 // One look at the page, as a JSON text: evaluated in the page, so it must stand alone.
 const LOOK = `JSON.stringify((() => {
@@ -177,7 +178,8 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
   };
   try {
     if (await start('profile', flags)) {
-      audio = flags.includes(NULL_SINK) ? `the browser's null sink (${NULL_SINK}, as asked)` : "the machine's device";
+      audio = flags.includes(NULL_SINK) ? `a context renders into the browser's null sink (${NULL_SINK}, as asked)`
+                                        : "a context renders through the machine's audio device (Chrome is muted)";
     } else if (flags.includes(NULL_SINK)) {
       throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK}`);
     } else {
@@ -185,7 +187,8 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
       if (!await start('profile-null-sink', [...flags, NULL_SINK])) {
         throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK} or without`);
       }
-      audio = `the browser's null sink (${NULL_SINK}): no context rendered through an audio device of the machine`;
+      audio = `a context renders into the browser's null sink (${NULL_SINK}): none did through an audio device of `
+              + 'this machine';
     }
   } catch (error) {
     await close();
@@ -216,7 +219,7 @@ export async function user(browser, base) {
         s = await u.look();
         if (test(s)) {
           const took = Date.now() - t0;
-          if (took / ms > u.slowest.ms / u.slowest.bound) u.slowest = { ms: took, bound: ms };
+          if (ms <= OUTCOME_MS && took / ms > u.slowest.ms / u.slowest.bound) u.slowest = { ms: took, bound: ms };
           return { ok: true, s, ms: took };
         }
       } catch { /* the next look */ }
@@ -225,6 +228,7 @@ export async function user(browser, base) {
     }
   };
   // The outcome that came nearest to its bound, of those that came: how much room the bounds leave on this machine.
+  // Not counted: the longer waits, for a page to boot and for the Panel to come to rest, which take seconds by design.
   u.slowest = { ms: 0, bound: BOUND_MS };
   // As until(), and every item of the list lies where it lay in the look before: for a look whose items are then
   // pressed where it says they are (a screen that is opening lists them, then moves them).

@@ -138,7 +138,7 @@ const watchdog = setTimeout(() => {
 try {
   session = await launch({ dir, out, chromePath: opt.chrome, flags: opt.flags });
 } catch (error) {
-  cannot(`the browser or the server did not start (${error.message})`);
+  cannot(`the run could not start (${error.message})`);
 }
 
 // An error as one line: what it says, and where in the scenario's own files it was thrown.

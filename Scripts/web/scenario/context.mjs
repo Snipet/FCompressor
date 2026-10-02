@@ -19,8 +19,8 @@
 //   context.restored         restored: the editor draws again and counts no more lost frames
 //   context.restored.edit    an edit afterwards reaches the engine
 //   context.restored.still   the audio paused (the context suspended, on the page's own context: the other still
-//                            frame there is) and the Panel at rest: that frame, with the traces and the meters the
-//                            demo left, is SoftRaster's too, from the same atlas; a press on RESUME plays on
+//                            frame there is) and the Panel at rest: that frame, of a demo that played, is SoftRaster's
+//                            too, from the same atlas; a press on RESUME plays on
 import { ROLE } from './driver.mjs';
 import { holds, sayThreshold, threshold, thresholdIs } from './engine.mjs';
 
@@ -51,7 +51,9 @@ const RESTORE = '(() => { globalThis.fcmpScenarioLose.restoreContext(); return t
 
 export async function run({ u, row, note }) {
   const selftest = async () => JSON.parse(await u.p.ev('Module.fcmpSelftest()'));
-  // At rest: the Panel no longer asks for the full frame rate (after START and paused that takes some 5 s).
+  // At rest: the Panel no longer asks for the full frame rate. Paused after START that takes some 5.5 s: the stream
+  // goes stale, the operating dot fades, the meters fall and HISTORY scrolls what it shows out of view. Until then a
+  // frame is not still, and a GPU's differs from SoftRaster's in a few samples (measured: up to 3, by up to 38).
   const still = (ms = 20000) => u.until((s) => s.status.ok === 1 && s.a11y.fullRate === 0, ms);
 
   const loaded = u.up(await u.load({ query: '?nohint=1' }));
@@ -119,7 +121,7 @@ export async function run({ u, row, note }) {
   const reset = await u.until((s) => thresholdIs(u, s, DEFAULT_DB));
   row(reset.ok, 'restored.edit', `a double click on THRESHOLD: ${sayThreshold(threshold(u, reset.s))}`);
 
-  // ---- the still frame of the demo that played: the audio paused, nothing moves ----
+  // ---- the still frame of the demo that played: the audio paused, and nothing moves any more ----
   await u.p.ev('fcmpPage.context().suspend().then(() => true)');
   const paused = await u.until((s) => s.context === 'suspended' && s.button === 'RESUME');
   const restedLast = await still();
