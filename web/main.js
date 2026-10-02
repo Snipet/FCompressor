@@ -26,7 +26,8 @@
 // uncaught error or an unhandled rejection is a FAIL at once, and no PASS replaces it. When this file never runs
 // (it or loop.js is missing or does not parse), index.html says so itself, until boot() sets fcmpBooted.
 //
-// Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest. It
+// Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest; and,
+// in the self-test only, Module.fcmpA11y's fullRate where the module has it (the web lead phase's contract). It
 // never pulls (the module does, once a frame), and it calls neither Module.fcmpResetEngine (a new source runs into
 // the engine as the next song would into the plugin) nor Module.fcmpShutdown (the module ends itself when the page
 // goes).
@@ -163,6 +164,30 @@ export function pixelRule(pixels, renderer) {
            rule: software ? `software: at most ${SOFTWARE_PIXELS.worst}, and ${SOFTWARE_PIXELS.perMille} per mille `
                             + 'over 2'
                           : 'a GPU: none over 2' };
+}
+
+// The Panel at rest, for the self-test's still frame: it no longer asks for the full frame rate (Module.fcmpA11y's
+// fullRate 0: what Scripts/web/scenario calls a still frame). Before START no reply has come, so no trace, dot or
+// HISTORY moves; but the IN and OUT meters fall from the facade's first frame for some 2.5 s after the editor is
+// ready, and the first-use hint holds the full rate for 6 s. Asked every REST.step ms, for at most REST.bound ms. A
+// module that does not say (no fcmpA11y, or no fullRate in it) is given a quiet time of REST.quiet ms instead, longer
+// than those: then the rest is assumed, not seen, and `how` says so. wait(ms) sleeps; now() is in ms.
+// {still, ms, how, fullRate}: how is 'fullRate' (and fullRate is the last answer) or 'quiet'.
+export const REST = { bound: 20000, step: 50, quiet: 7000 };
+export async function untilRest(module, wait, now) {
+  const t0 = now();
+  const fullRate = () => (typeof module.fcmpA11y === 'function' ? JSON.parse(module.fcmpA11y()).fullRate : undefined);
+  let rate = fullRate();
+  if (typeof rate !== 'number') {
+    await wait(REST.quiet);
+    return { still: true, ms: Math.round(now() - t0), how: 'quiet' };
+  }
+  for (;;) {
+    const ms = Math.round(now() - t0);
+    if (rate === 0 || ms >= REST.bound) return { still: rate === 0, ms, how: 'fullRate', fullRate: rate };
+    await wait(REST.step);
+    rate = fullRate();
+  }
 }
 
 // The self-test's verdict. show(title, line) is told the title after every change and each log line once. A failing
@@ -647,9 +672,12 @@ function boot() {
 
     // 4. The editor's own check (the seam's Module.fcmpSelftest), before START: the atlas it draws with is the
     //    committed bake, and one frame through the WebGL2 sink, read back inside that call, is SoftRaster's by
-    //    pixelRule(). A still frame, on purpose: nothing answers the editor yet, so nothing in it moves. Once the
-    //    engine does, a moving trace is a pixel off SoftRaster's in a share of the frames that depends on the state,
-    //    which says nothing about the sink. An editor that is not there is page.start's failure below.
+    //    pixelRule(). A still frame, on purpose: it is asked for once the Panel is at rest (untilRest(): before START
+    //    the meters' first fall and the first-use hint keep it moving for some 6 s; a Panel that does not rest within
+    //    the bound fails the row; a module that cannot say gets a quiet time, and the NOTE says which), in the same
+    //    task as the answer that said so, so no frame of the host's comes between. After START the engine answers,
+    //    and a moving trace is a pixel off SoftRaster's in a share of the frames that depends on the state, which
+    //    says nothing about the sink. An editor that is not there is page.start's failure below.
     let drawing = false;
     try {
       await within(20000, 'the editor', editor);
@@ -662,6 +690,12 @@ function boot() {
     } else if (drawing) {
       const renderer = rendererName();
       note(`renderer: ${renderer || 'not named'} (${softwareRenderer(renderer) ? 'software' : 'judged as a GPU'})`);
+      const rest = await untilRest(Module, sleep, () => performance.now());
+      note(rest.how === 'fullRate'
+        ? `the still frame: the Panel ${rest.still ? 'at rest' : 'NOT at rest'} after ${rest.ms} ms (Module.fcmpA11y's `
+          + `fullRate ${rest.fullRate}; at most ${REST.bound} ms)`
+        : `the still frame: after a quiet time of ${rest.ms} ms (the module does not say whether the Panel is at rest: `
+          + 'no Module.fcmpA11y with fullRate)');
       let self = null;
       try {
         self = JSON.parse(Module.fcmpSelftest());
@@ -672,12 +706,16 @@ function boot() {
         const pixels = self.pixels || {};
         const judged = pixelRule(pixels, renderer);
         row(self.atlasHash === ATLAS_HASH, 'editor.atlas', `${self.atlasHash} (want ${ATLAS_HASH})`);
-        row(judged.ok, 'editor.pixels',
-            judged.read ? `${pixels.frames} still frame(s), before START, read back through the sink: `
-                          + `${pixels.samples} samples against SoftRaster, the largest difference ${pixels.largest} `
-                          + `of 255, ${pixels.over2} over 2 (${judged.share.toFixed(2)} per mille; ${judged.rule})`
-                        : `no still frame was drawn and read back before START (frames ${pixels.frames}, samples `
-                          + `${pixels.samples}): nothing to judge. A hidden document draws none`);
+        const numbers = `${pixels.samples} samples against SoftRaster, the largest difference ${pixels.largest} of `
+                        + `255, ${pixels.over2} over 2 (${judged.share.toFixed(2)} per mille; ${judged.rule})`;
+        const moving = rest.still ? '' : `; the Panel was not at rest within ${rest.ms} ms`;
+        const atRest = rest.how === 'quiet' ? `after a quiet time of ${rest.ms} ms` : 'the Panel at rest';
+        row(judged.ok && rest.still, 'editor.pixels',
+            !judged.read ? `no still frame was drawn and read back before START (frames ${pixels.frames}, samples `
+                           + `${pixels.samples}${moving}): nothing to judge. A hidden document draws none`
+            : !rest.still ? `the Panel was not at rest within ${rest.ms} ms: no still frame before START (what was `
+                            + `read of the moving one: ${pixels.frames} frame(s), ${numbers})`
+            : `${pixels.frames} still frame(s), before START, ${atRest}, read back through the sink: ${numbers}`);
       }
     }
 

@@ -23,7 +23,8 @@
 //   pixels.*       the self-test's pixel rule (web lead phase): the software bound is FunkGui's for its own sink's
 //                  page; a renderer's class is its name's, and an unknown name is a GPU; both sides of each number (a
 //                  GPU: none over 2 of 255; software: none over 16, at most 10 per mille over 2); no frame, no pass;
-//                  and the frame is asked for before the demo starts, which the row says
+//                  the Panel's rest (Module.fcmpA11y's fullRate 0, bounded; a quiet time where the module does not
+//                  say); and the frame is asked for at rest, in that task, before the demo starts, which the row says
 //   files.*        the limits of a dropped file, and the fades at its ends
 //   built_from.*   the footer's line: a link only for `clean`, nothing for `none` or an unreadable line
 //   verdict.*      the self-test's title: RUNNING, then PASS or FAIL: <the first failing row>; an uncaught error is a
@@ -405,21 +406,62 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
                                  + 'passes, as a GPU or as software'
                                : `passed: ${passedEmpty.map((pixels) => JSON.stringify(pixels)).join('; ')}`);
 
-  // The frame is a still one: the self-test asks the editor before it starts the demo, and says so. The page's row is
-  // pixelRule()'s verdict and nothing else.
+  // The Panel at rest (untilRest()), on a clock of its own: Module.fcmpA11y's fullRate asked every REST.step ms until
+  // it is 0, for at most REST.bound ms; a module that does not say gets REST.quiet ms, and the answer says so.
+  const rested = async (module) => {
+    let t = 0;
+    const r = await page.untilRest(module, async (ms) => { t += ms; }, () => t);
+    return { ...r, t };
+  };
+  const answering = (rates) => {
+    const m = { asked: 0 };
+    m.fcmpA11y = () => JSON.stringify({ screen: 0, fullRate: rates[Math.min(m.asked++, rates.length - 1)] });
+    return m;
+  };
+  const { step, bound, quiet } = page.REST;
+  const settles = answering([1, 1, 1, 0]);
+  const atOnce = answering([0]);
+  const never = answering([1]);
+  const unsaid = { fcmpA11y: () => '{"screen":0}' };
+  const cases = [
+    ['rests after three answers', await rested(settles), { still: true, ms: 3 * step, how: 'fullRate' }, settles, 4],
+    ['at rest at once', await rested(atOnce), { still: true, ms: 0, how: 'fullRate' }, atOnce, 1],
+    ['never rests', await rested(never), { still: false, ms: bound, how: 'fullRate' }, never, bound / step + 1],
+    ['no fcmpA11y', await rested({}), { still: true, ms: quiet, how: 'quiet' }, null, 0],
+    ['no fullRate in it', await rested(unsaid), { still: true, ms: quiet, how: 'quiet' }, null, 0],
+  ];
+  const restWrong = cases.filter(([, got, want, m, asked]) => got.still !== want.still || got.ms !== want.ms
+                                                              || got.how !== want.how || got.t !== want.ms
+                                                              || (m !== null && m.asked !== asked))
+                         .map(([what, got]) => `${what}: ${JSON.stringify(got)}`);
+  row(restWrong.length === 0 && bound > 6000 && quiet > 6000 && step > 0, 'pixels.rest',
+      restWrong.length === 0 ? `untilRest(): fullRate asked every ${step} ms until it is 0 (at once when it is), for `
+                               + `at most ${bound} ms, and then not at rest; a module with no fcmpA11y or no fullRate `
+                               + `in it gets a quiet time of ${quiet} ms (both longer than the first-use hint's 6 s)`
+                             : restWrong.join('; '));
+
+  // The frame is a still one: the self-test waits for the Panel's rest and asks the editor in the same task, before it
+  // starts the demo, and says so. The page's row is pixelRule()'s verdict on a frame of a Panel at rest.
   const selftest = main.slice(main.indexOf('async function runSelftest()'));
   const asks = [...selftest.matchAll(/JSON\.parse\(Module\.fcmpSelftest\(\)\)/g)].map((m) => m.index);
+  const rests = [...selftest.matchAll(/const rest = await untilRest\(Module, sleep, /g)].map((m) => m.index);
   const starts = [...selftest.matchAll(/await within\(\d+, 'the start', start\(\)\)/g)].map((m) => m.index);
   const before = asks.length === 1 && starts.length === 1 && asks[0] < starts[0];
-  const theRow = 'row(judged.ok, \'editor.pixels\',';
+  const waits = rests.length === 1 && asks.length === 1 && rests[0] < asks[0]
+             && !/\bawait\b/.test(selftest.slice(rests[0] + 'const rest = await'.length, asks[0]));
+  const theRow = 'row(judged.ok && rest.still, \'editor.pixels\',';
+  const rowText = selftest.slice(selftest.indexOf(theRow) + theRow.length);
   const says = selftest.includes(theRow)
-            && /^\s*judged\.read \? `\$\{pixels\.frames\} still frame\(s\), before START,/
-                 .test(selftest.slice(selftest.indexOf(theRow) + theRow.length));
+            && selftest.includes('const atRest = rest.how === \'quiet\' ? `after a quiet time of ${rest.ms} ms` '
+                                 + ': \'the Panel at rest\';')
+            && /^[^;]*: `\$\{pixels\.frames\} still frame\(s\), before START, \$\{atRest\},/.test(rowText);
   const judged = selftest.includes('const judged = pixelRule(pixels, renderer);') && says;
-  row(before && judged, 'pixels.still_frame',
+  row(before && waits && judged, 'pixels.still_frame',
       `runSelftest() asks Module.fcmpSelftest() ${asks.length} time(s) and starts the demo ${starts.length} time(s), `
-      + `the question ${before ? 'before' : 'NOT BEFORE'} the start; editor.pixels is pixelRule()'s verdict and says `
-      + `"still frame(s), before START": ${judged}`);
+      + `the question ${before ? 'before' : 'NOT BEFORE'} the start; it waits for untilRest() ${rests.length} time(s), `
+      + `${waits ? 'before the question and in its task' : 'NOT JUST BEFORE THE QUESTION'}; editor.pixels is `
+      + 'pixelRule()\'s verdict on a Panel at rest and says "still frame(s), before START, the Panel at rest" (or '
+      + `"after a quiet time" where the module does not say): ${judged}`);
 }
 
 // ---- files ---------------------------------------------------------------------------------------------------------
