@@ -33,17 +33,18 @@
 
 #include "editor/Layout.h"
 #include "editor/Panel.h"
-#include "plugin/factory/FactoryBank.h"
+#include "plugin/portable/FactoryData.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
 #include "fcdsp/params/HostParams.h"
+#include "fcdsp/params/Pid.h"
 
 #include <funkgui/canvas/PrimList.h>
 #include <funkgui/panel/HeadlessHost.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 
 #include <cmath>
@@ -51,6 +52,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -162,16 +164,14 @@ namespace
     // made current (FakePresets lists the whole bank in bank order). False when the bank has no such preset.
     bool applyPreset(fcmp::probe::FakeFacade& ports, const std::string& mode, const std::string& name)
     {
-        const std::vector<funkgui::presets::Preset>& bank = fcmp::factory::factoryBank();
+        const std::span<const fcmp::factory::FactoryRow> bank = fcmp::factory::factoryRows();
         for (std::size_t i = 0; i < bank.size(); ++i)
         {
-            const funkgui::presets::Attribute* key = bank[i].attr(fcmp::factory::kModeIdAttr);
-            if (bank[i].name.toStdString() != name || key == nullptr || key->value.toStdString() != mode)
+            if (bank[i].name != name || bank[i].modeKey != mode)
                 continue;
-            for (const funkgui::presets::ParamValue& v : bank[i].params)
-                for (const fcdsp::HostParam& h : fcdsp::kHostParams)
-                    if (v.id == h.id)
-                        ports.setPlain(h.pid, v.value);
+            for (const fcdsp::Pid pid : fcdsp::kApvtsOrder)      // what FactoryBank.cpp's preset holds, in its order
+                if (fcdsp::idx(pid) < fcdsp::kNumModeParams && fcdsp::kHostParams[fcdsp::idx(pid)].inPresets)
+                    ports.setPlain(pid, bank[i].values[fcdsp::idx(pid)]);
             ports.fakePresets().setCurrent(static_cast<int>(i));
             return true;
         }
@@ -215,7 +215,7 @@ namespace
             return 1;
         }
 
-        const juce::ScopedJuceInitialiser_GUI juceInit;          // FontService bakes the atlas through JUCE's fonts
+        const funkgui::HeadlessGuiScope gui;                     // FontService bakes the atlas through JUCE's fonts
         std::unique_ptr<fcmp::probe::FakeFacade> fake;
         std::unique_ptr<fcmp::probe::EngineFacade> engine;
         if (a.liveSeconds > 0.0f)

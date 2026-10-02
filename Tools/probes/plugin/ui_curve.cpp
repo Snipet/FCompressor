@@ -57,7 +57,7 @@
 #include <funkgui/text/FontService.h>
 #include <funkgui/widgets/ValueModel.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <algorithm>
 #include <cmath>
@@ -587,7 +587,7 @@ namespace
 
 FCMP_PROBE(ui, curve)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const char* prefsDir = std::getenv("FCMP_PREFS_DIR");
     if (prefsDir == nullptr || *prefsDir == '\0')
     {
