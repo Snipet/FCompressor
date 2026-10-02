@@ -27,7 +27,9 @@
 //   connect.resync              inside connect() the facade's values (a snap) and its Attach go out, and the engine
 //                               takes both
 //   frames.replies              60 frames, a Pull each: 60 replies, none refused, each in a later task than its pull()
-//   frames.one_carrier          and one carrier allocated for all of them
+//   frames.one_carrier          and one carrier allocated for all of them: by the link's count, and seen from the
+//                               port, where each Pull after the first goes out in the very buffer the last reply came
+//                               back in
 //   frames.flags                the reply's flags: a frame, configured, attached
 //   frames.telemetry            columns in the facade's mirror, a published UiFrame
 //   frames.diagnostics          prepared, the connected rate and block, the engine's latency
@@ -45,11 +47,22 @@
 //   replaced.late_reply         the old port's reply, arriving afterwards, is ignored and counted
 //   replaced.resynced           the new engine has the facade's values: the same latency
 //   lost.pull_patience          a worklet that stops answering: 61 pull() calls post 3 Pulls and allocate 2 carriers
-//   lost.extras_dropped         its late answers are taken, one carrier is kept, and the next frames allocate none
+//                               (the first travels in the buffer that had come back, the other two in new ones)
+//   lost.extras_dropped         its late answers are taken, one carrier is kept, and the next frames allocate none:
+//                               each travels in a buffer that had come back
 //   disconnected.dropped        after disconnect() records are dropped and counted, and the port's late reply ignored
 //   reconnect.same_port         connect() with that port again: resync, replies
-//   destroyed.inert             with the link gone Module.fcmpPort does nothing (a port given to connect() is left
-//                               alone) and a late message is harmless
+//   destroyed.late_reply        with the link gone a reply still arrives on its port (the page hears it): nothing
+//                               is called in the module and nothing is written (the check module watches the
+//                               destroyed link's bytes, the place of its inbox and the bytes at address 0:
+//                               Tools/web/port/portcheck.cpp)
+//   destroyed.inert             and Module.fcmpPort does nothing (a port given to connect() is left alone)
+//   displaced.inert             a second link in the module (a second instance of the check module, so that the rows
+//                               above keep their one link) takes the name Module.fcmpPort; the first is disconnected
+//                               and inert: a record on its port is not delivered, what it posts is dropped, its
+//                               connect() does nothing
+//   displaced.destroyed         the first link destroyed while displaced: a record on its port touches nothing, and
+//                               the second link, connected through the name, takes its own
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -196,9 +209,19 @@ class WorkletStandIn {
   }
 }
 
-// What the link hands the port: every postMessage call, seen before and after the port takes it.
+// What the link hands the port: every postMessage call, seen before and after the port takes it. And whose buffer a
+// carrier is, seen from this side of the port and not by the link's own count: `returned` when it is one that arrived
+// on this port in a reply and has not gone out since, `last` when it is the last one that arrived. (A listener and the
+// port's onmessage are given the same event, so the same ArrayBuffer object.)
 function watchPosts(port) {
   const posts = [];
+  const came = new Set();
+  let lastCame = null;
+  port.addEventListener('message', (event) => {
+    if (!(event.data instanceof ArrayBuffer) || event.data.byteLength !== CARRIER_BYTES) return;
+    came.add(event.data);
+    lastCame = event.data;
+  });
   const post = port.postMessage.bind(port);
   port.postMessage = (message, transfer) => {
     const isBuffer = message instanceof ArrayBuffer;
@@ -207,6 +230,8 @@ function watchPosts(port) {
       bytes: isBuffer || ArrayBuffer.isView(message) ? message.byteLength : -1,
       listed: Array.isArray(transfer) && transfer.length === 1 && transfer[0] === message,
       detached: false,
+      returned: came.delete(message),
+      last: message === lastCame,
     };
     post(message, transfer);
     entry.detached = isBuffer && message.byteLength === 0;
@@ -215,6 +240,9 @@ function watchPosts(port) {
   return posts;
 }
 
+// The carriers a port was handed, in order: R for a buffer that had come back, n for one that had not.
+const carriers = (w) => w.posts.filter((p) => p.bytes === CARRIER_BYTES).map((p) => (p.returned ? 'R' : 'n')).join('');
+
 function worklet(sampleRate) {
   const channel = new MessageChannel();
   const posts = watchPosts(channel.port1);
@@ -222,7 +250,8 @@ function worklet(sampleRate) {
 }
 
 // ---- the module -----------------------------------------------------------------------------------------------------
-const M = await (await import(pathToFileURL(checkPath).href)).default();
+const instantiate = (await import(pathToFileURL(checkPath).href)).default;
+const M = await instantiate();
 const check = M.fcmpCheck;
 const link = M.fcmpPort;
 if (!row(!!check && !!link && typeof link.connect === 'function' && typeof link.disconnect === 'function',
@@ -281,8 +310,11 @@ link.connect(a.page, 48000, QUANTUM);
       && a.standIn.short === 0 && repliesInsideCalls === 0, 'frames.replies',
       `${s.replies} replies to 60 pulls, ${s.refused} refused by the facade, ${a.standIn.refused} by the engine, `
       + `${repliesInsideCalls} inside a pull() call`);
-  row(s.carriers === 1, 'frames.one_carrier',
-      `${s.carriers} carrier(s) of ${CARRIER_BYTES} bytes allocated for 60 pulls`);
+  const carried = a.posts.filter((p) => p.bytes === CARRIER_BYTES);
+  const same = carried.filter((p) => p.returned && p.last).length;
+  row(s.carriers === 1 && carried.length === 60 && !carried[0].returned && same === 59, 'frames.one_carrier',
+      `${s.carriers} carrier(s) of ${CARRIER_BYTES} bytes allocated for 60 pulls by the link's count; at the port, `
+      + `${same} of the 59 Pulls after the first went out in the buffer the last reply came back in`);
   const want = REPLY_FRAME | REPLY_CONFIGURED | REPLY_ATTACHED;
   row((s.flags & want) === want, 'frames.flags', `0x${s.flags.toString(16)} (a frame, configured, attached)`);
   row(s.written > 500 && s.publish > 0, 'frames.telemetry',
@@ -399,16 +431,20 @@ const b = worklet(44100);
   for (let f = 0; f < 2 * PULL_PATIENCE + 1; f += 1) check.pull();
   const taken = await until(() => b.standIn.kept.length === 3);
   const s = check.status();
-  row(taken && s.posted === before.posted + 3 && s.carriers === before.carriers + 2 && s.replies === before.replies,
-      'lost.pull_patience',
+  const sent = carriers(b).slice(-3);
+  row(taken && s.posted === before.posted + 3 && s.carriers === before.carriers + 2 && s.replies === before.replies
+      && sent === 'Rnn', 'lost.pull_patience',
       `${2 * PULL_PATIENCE + 1} unanswered pull() calls posted ${s.posted - before.posted} Pulls and allocated `
-      + `${s.carriers - before.carriers} more carriers`);
+      + `${s.carriers - before.carriers} more carriers; at the port: ${sent} (R: a buffer that had come back)`);
   b.standIn.answerKept();                      // all three, late
   const late = await until(() => check.status().replies === before.replies + 3);
   const answered = await frames(b, 5);
   const end = check.status();
-  row(late && answered === 5 && end.carriers === s.carriers && end.refused === before.refused, 'lost.extras_dropped',
-      `the three late replies were taken; 5 more frames allocated ${end.carriers - s.carriers} carriers`);
+  const next = carriers(b).slice(-5);
+  row(late && answered === 5 && end.carriers === s.carriers && end.refused === before.refused && next === 'RRRRR',
+      'lost.extras_dropped',
+      `the three late replies were taken; 5 more frames allocated ${end.carriers - s.carriers} carriers; at the `
+      + `port: ${next}`);
 }
 
 // ---- 9. disconnect, and the same port again -------------------------------------------------------------------------
@@ -440,16 +476,35 @@ const b = worklet(44100);
 }
 
 // ---- 10. the link gone ----------------------------------------------------------------------------------------------
+// A call into a destroyed link throws nothing by itself: the check module says what was touched, and a trap, which
+// node reports as an uncaught exception of the message task, is caught here and fails the row.
+const trapped = [];
+process.on('uncaughtException', (error) => trapped.push(String(error)));
+const untouched = (s) => s.alive === 0 && s.watching === 1 && s.touched.link === 0 && s.touched.inbox === 0
+                         && s.touched.null === 0;
+const touched = (s) => `the destroyed link's bytes ${s.touched?.link}, its inbox's place ${s.touched?.inbox} `
+                       + `(watched: ${s.watching}), address 0 ${s.touched?.null} changed; `
+                       + `${trapped.length === 0 ? 'no trap' : trapped[0]}`;
 {
   b.standIn.holdReplies = true;
   check.pull();
   const taken = await until(() => b.standIn.held.length === 1);
+  let heard = 0;                               // the page's own listener: the late reply did arrive
+  b.page.addEventListener('message', (event) => {
+    if (event.data instanceof ArrayBuffer) heard += 1;
+  });
   check.destroy();
+  b.standIn.release();                         // a reply to a link that no longer exists
+  const arrived = await until(() => heard === 1);
+  await settle();
+  const s = check.status();
+  row(taken && arrived && untouched(s) && trapped.length === 0 && link.link === 0 && link.port === null
+      && link.carrier === null, 'destroyed.late_reply',
+      `${heard} reply of ${CARRIER_BYTES} bytes arrived on the destroyed link's port: ${touched(s)}`);
+
   const c = worklet(48000);
   let threw = '';
   try {
-    b.standIn.release();                       // a reply to a link that no longer exists
-    await settle();
     M.fcmpPort.connect(c.page, 48000, QUANTUM);
     M.fcmpPort.disconnect();
     await settle();
@@ -457,11 +512,71 @@ const b = worklet(44100);
     threw = String(error);
   }
   const handler = typeof c.page.onmessage === 'function';
-  row(taken && threw === '' && check.status().alive === 0 && !handler && c.posts.length === 0, 'destroyed.inert',
-      threw || `a late reply, connect() and disconnect() after the link was destroyed: the port given has `
+  const end = check.status();
+  row(threw === '' && untouched(end) && trapped.length === 0 && !handler && c.posts.length === 0, 'destroyed.inert',
+      threw || `connect() and disconnect() after the link was destroyed: the port given has `
                + `${handler ? 'a' : 'no'} handler and carried ${c.posts.length} posts`);
   c.page.close();
 }
 
-note(`port A: ${a.standIn.records.length} records, port B: ${b.standIn.records.length}, through the shipped engine`);
+// ---- 11. a second link in one module --------------------------------------------------------------------------------
+{
+  const M2 = await instantiate();
+  const check2 = M2.fcmpCheck;
+  const first = M2.fcmpPort;                   // what a page kept of the first link
+  const p = new MessageChannel();              // port1 is the page's end, as above; this script is the worklet
+  let heard = 0;
+  p.port1.addEventListener('message', (event) => {
+    if (event.data instanceof ArrayBuffer) heard += 1;
+  });
+  const send = (fill) => {
+    const buffer = new ArrayBuffer(CARRIER_BYTES);
+    new Uint8Array(buffer).fill(fill);
+    p.port2.postMessage(buffer, [buffer]);
+    const want = heard + 1;
+    return until(() => heard === want);
+  };
+  first.connect(p.port1, 48000, QUANTUM);
+  const live = (await send(0)) && check2.status().delivered === 1;      // the handler is live: one record delivered
+  const before = check2.status();
+
+  check2.second();
+  const named = M2.fcmpPort !== first && first.link === 0 && first.port === null && first.carrier === null;
+  const arrived = await send(0);
+  await settle();
+  check2.pull();
+  const q = new MessageChannel();
+  first.connect(q.port1, 44100, QUANTUM);
+  first.disconnect();
+  const s = check2.status();
+  row(live && named && arrived && s.second.alive === 1 && s.connected === 0
+      && s.disconnects === before.disconnects + 1 && s.connects === before.connects
+      && s.delivered === before.delivered && s.ignored === before.ignored && s.posted === before.posted
+      && s.dropped === before.dropped + 1 && typeof q.port1.onmessage !== 'function', 'displaced.inert',
+      `a second link took the name; the first: ${named ? 'no link, port or carrier in its state' : 'state kept'}, `
+      + `disconnected() ${s.disconnects - before.disconnects} time(s), delivered `
+      + `${s.delivered - before.delivered} and ignored ${s.ignored - before.ignored} of 1 record on its port, `
+      + `posted ${s.posted - before.posted} and dropped ${s.dropped - before.dropped} of 1 Pull, connect() `
+      + `${s.connects - before.connects} time(s)`);
+
+  check2.destroy();                            // the first link, displaced, goes
+  const late = await send(0x3c);
+  await settle();
+  const gone = check2.status();
+  const r = new MessageChannel();
+  M2.fcmpPort.connect(r.port1, 44100, QUANTUM);
+  const mine = new ArrayBuffer(PULL_BYTES);
+  r.port2.postMessage(mine, [mine]);
+  const taken = await until(() => check2.status().second.records === 1);
+  await settle();
+  const end = check2.status();
+  row(late && untouched(gone) && untouched(end) && trapped.length === 0 && taken && end.second.connected === 1
+      && end.second.connects === 1 && end.second.records === 1, 'displaced.destroyed',
+      `a record on the port of the first link, destroyed while displaced: ${touched(end)}; the second link: `
+      + `connected() ${end.second.connects} time(s), ${end.second.records} record(s) of its own port`);
+  for (const port of [p.port1, q.port1, r.port1]) port.close();
+}
+
+note(`port A: ${a.standIn.records.length} records, port B: ${b.standIn.records.length}, through the shipped engine; `
+     + `port B's carriers: ${carriers(b)}`);
 finish();

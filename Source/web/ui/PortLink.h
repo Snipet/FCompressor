@@ -8,7 +8,8 @@
 //                                 A port already connected is disconnected first. The port's onmessage is the link's
 //                                 from here on: a page that wants the port's other messages uses addEventListener.
 //   Module.fcmpPort.disconnect()  no port any more (the node was closed). Nothing on the port itself is changed.
-// Both are there from the constructor to the destructor; afterwards they do nothing.
+// Both are there from the constructor to the destructor; afterwards they do nothing, and neither does a handler the
+// link left on a port.
 //
 // The wire rule, this side of it:
 //   post()   never blocks and never throws. A Pull travels in the carrier, an ArrayBuffer of sizeof(Reply) = 16,704
@@ -29,12 +30,14 @@
 //            late reply) is ignored and counted: its columns are another engine's.
 //
 // Events::connected runs inside connect(), with the port already usable: WebMain answers with
-// WebFacade::setEngineSetup and resync(). Events::disconnected runs inside disconnect() and when connect() replaces a
-// port.
+// WebFacade::setEngineSetup and resync(). Events::disconnected runs inside disconnect(), when connect() replaces a
+// port, and when a second link displaces this one while it has a port.
 //
-// One PortLink per module (it owns the name Module.fcmpPort; a second one takes the name and the first then drops
-// everything). Main thread only. It assumes no DOM: the same file is the node check's link (Tools/web/port,
-// web/tests/port.mjs), where the ports are a node MessageChannel's.
+// One PortLink per module: it owns the name Module.fcmpPort. A second one takes the name, and the first is inert from
+// that moment, as after its destructor, though it lives on: it is disconnected (Events::disconnected, when it had a
+// port), what is posted to it is dropped and counted, a record that still arrives on its port is neither delivered
+// nor counted, and the connect and disconnect a page kept from it do nothing. Main thread only. It assumes no DOM: the
+// same file is the node check's link (Tools/web/port, web/tests/port.mjs), where the ports are a node MessageChannel's.
 #pragma once
 
 #include "web/facade/EngineLink.h"
@@ -66,8 +69,8 @@ namespace fcmp::web
             std::uint32_t carriers = 0;                  // carriers allocated: 1 on a page whose worklet answers
         };
 
-        explicit PortLink(Events* events = nullptr);     // installs Module.fcmpPort
-        ~PortLink() override;                            // Module.fcmpPort does nothing from here on
+        explicit PortLink(Events* events = nullptr);     // installs Module.fcmpPort (and retires a link that had it)
+        ~PortLink() override;                            // nothing in JavaScript reaches this link from here on
 
         PortLink(const PortLink&) = delete;
         PortLink& operator=(const PortLink&) = delete;

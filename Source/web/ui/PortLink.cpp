@@ -21,10 +21,15 @@ using FcmpPortDisconnectedFn = void (*)(void*);
 EM_JS_DEPS(fcmp_port_deps, "$getWasmTableEntry")
 
 // Module.fcmpPort: connect and disconnect for the page, and the link's own state beside them (link: the PortLink, 0
-// once it is gone; port: the connected MessagePort; carrier: the reply-sized buffer waiting for the next Pull).
-// A handler stays on the port it was set on and knows that port: when it is no longer the connected one, a record it
-// receives is another engine's. A record is told by its class name, not by instanceof: a port made in another realm (a
-// frame) delivers that realm's ArrayBuffer.
+// once it is gone or displaced; port: the connected MessagePort; carrier: the reply-sized buffer waiting for the next
+// Pull). A handler stays on the port it was set on and knows that port: when it is no longer the connected one, a
+// record it receives is another engine's. A record is told by its class name, not by instanceof: a port made in
+// another realm (a frame) delivers that realm's ArrayBuffer.
+//
+// Every handler and both functions reach C++ only through their own state's `link`, and only the state Module.fcmpPort
+// names ever holds one: a second link retires the first one's state before it takes the name (that link is still
+// alive: it is disconnected, with its event), and the destructor clears its own. So a state whose link is 0 stays
+// inert whatever becomes of the PortLink it named, and no closure can reach a freed one or its inbox.
 EM_JS(void, fcmp_port_install,
       (void* link, unsigned char* inbox, int capacity, FcmpPortRecordFn onRecord, FcmpPortIgnoredFn onIgnored,
        FcmpPortConnectedFn onConnected, FcmpPortDisconnectedFn onDisconnected),
@@ -59,9 +64,15 @@ EM_JS(void, fcmp_port_install,
         };
         connected(state.link, +sampleRate, maxBlock | 0);
     };
+    const previous = Module['fcmpPort'];
+    if (previous && previous.link) {
+        previous.disconnect();
+        previous.link = 0;
+    }
     Module['fcmpPort'] = state;
 })
 
+// The destructor's: a link that was displaced has no state left to clear (the installer cleared it).
 EM_JS(void, fcmp_port_remove, (void* link), {
     const state = Module['fcmpPort'];
     if (!state || state.link !== link) return;

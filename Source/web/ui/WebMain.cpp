@@ -12,9 +12,11 @@
 //                             and pixels {frames, largest, over2, samples}: one frame drawn through the host's sink
 //                             and read back in the same call (the page cannot read the canvas afterwards: the browser
 //                             clears the drawing buffer once it has presented it), against SoftRaster's image of the
-//                             same PrimList. frames is 1 when that frame was drawn and read, else 0; largest is the
-//                             largest channel difference, over2 the samples that differ by more than 2, samples the
-//                             channel samples compared
+//                             same PrimList (where the device pixel ratio gave the canvas a rounded side, both are
+//                             drawn from that frame at the nearest proportional size: drawAndCompare below). frames
+//                             is 1 when that frame was drawn and read, else 0; largest is the largest channel
+//                             difference, over2 the samples that differ by more than 2, samples the channel samples
+//                             compared
 //   Module.fcmpResetEngine()  WebFacade::resetEngine(): a new source
 //   Module.fcmpShutdown()     the teardown below. Every name above stays callable afterwards: the port and the reset
 //                             do nothing, the status says `ok` 0 with the reason, the self-test draws no frame
@@ -24,14 +26,15 @@
 // What main() sets up, in order (gpu/Editor.cpp is the native counterpart):
 // - Preferences in localStorage, before the Panel exists: a Panel reads them as it is built (keys "FCompressor.<key>").
 // - The link and the facade; the facade's environment is "WEB" and the browser's name (the settings screen's FORMAT).
-// - ADR-85's QUALITY and LOOKAHEAD for new instances, applied as the processor's constructor applies them: the page
-//   load is the new instance, and the settings rows write the two preferences into localStorage.
+// - ADR-85's QUALITY and LOOKAHEAD for new instances, applied as the processor's constructor applies them (a stored
+//   value outside the three choices is ignored): the page load is the new instance, and the settings rows write the
+//   two preferences into localStorage.
 // - The Panel with the asynchronous preview: there is no thread here, so PreviewWorker's no-thread path computes a
 //   request once it has rested, and a control that moves stays smooth.
 // - The WebHost: the native editor's zoom steps, default and preference key; fit margins measured from where the
-//   canvas lies on the page; setUiAttached forwarded; no batch hooks (the Panel's HostProxy already brackets the
-//   facade, Editor.h); beforeTick pulls the telemetry, so a Pull follows the host's cadence (60 Hz, 12 Hz idle, none
-//   while the document is hidden).
+//   canvas lies on the page (what must fit in the window is the canvas, not what the page holds below it);
+//   setUiAttached forwarded; no batch hooks (the Panel's HostProxy already brackets the facade, Editor.h); beforeTick
+//   pulls the telemetry, so a Pull follows the host's cadence (60 Hz, 12 Hz idle, none while the document is hidden).
 // - The DISPLAY row's facts (RenderInfo): "WEBGL2", no overflow count (a lost context is not a full buffer).
 //
 // Teardown (Editor::~Editor's order, then the members the native editor does not own): the render-info source goes,
@@ -64,11 +67,13 @@
 #include <emscripten/html5.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -85,11 +90,17 @@ EM_JS(int, fcmp_ui_param, (const char* name, char* out, int size), {
 })
 
 // The browser's name and major version: the brand the browser gives where it gives one, else from the user agent.
+// The brand list has no order to rely on (Chromium permutes it by version) and holds a made-up entry ("Not?A_Brand",
+// "Not A;Brand": GREASE) that is never the browser: the name is the first brand that is neither that nor "Chromium"
+// (the browser's own: Google Chrome, Microsoft Edge); otherwise "Chromium" itself where it is listed (a Chromium with
+// no brand of its own); otherwise the list says nothing and the user agent is read.
 EM_JS(void, fcmp_ui_browser, (char* out, int size), {
     const data = navigator.userAgentData;
     let name = "";
     if (data && data.brands) {
-        const brand = data.brands.find((b) => !b.brand.includes("Not") && b.brand !== "Chromium") || data.brands[0];
+        const grease = new RegExp("Not.A.Brand");
+        const named = Array.from(data.brands).filter((b) => b && typeof b.brand === "string" && !grease.test(b.brand));
+        const brand = named.find((b) => b.brand !== "Chromium") || named.find((b) => b.brand === "Chromium");
         if (brand) name = brand.brand + " " + brand.version;
     }
     if (!name) {
@@ -99,12 +110,17 @@ EM_JS(void, fcmp_ui_browser, (char* out, int size), {
     stringToUTF8(name, out, size);
 })
 
-// The page around the canvas, in CSS px: what lies left of and above it, twice (the same again on the far sides).
+// The page around the canvas, in CSS px, for the zoom's fit: what must fit in the window is the canvas. Across: what
+// lies left of it, twice (the same again on its right). Down: what lies above it, and under it a margin as wide as the
+// one on its left; what the page holds below the canvas is not counted (it is scrolled to). No element of the page is
+// named. A known limit: the host's margins are fixed numbers, so this is measured once, as main() runs, and a page
+// that loads in a narrow window (its header wrapped, the canvas lower) keeps that larger margin when it is widened.
 EM_JS(int, fcmp_ui_margin, (const char* selector, int vertical), {
     const canvas = document.querySelector(UTF8ToString(selector));
     if (!canvas) return 0;
     const box = canvas.getBoundingClientRect();
-    return Math.ceil(2 * (vertical ? box.top + window.scrollY : box.left + window.scrollX));
+    const left = box.left + window.scrollX;
+    return Math.ceil(vertical ? box.top + window.scrollY + left : 2 * left);
 })
 
 // The page-facing names, the pagehide rule, and last the page's own signal.
@@ -221,32 +237,68 @@ namespace
     };
 
     // One frame through the host (a tick, the Panel's draw, the sink) and, in the same task, the canvas's pixels
-    // against SoftRaster's image of the list that frame recorded, at one sample per pixel as the sink draws. The two
-    // sizes come from the same dpi and can differ by a rounded pixel at the far edges: the common area is compared.
+    // against SoftRaster's image of the list that frame recorded, at one sample per pixel as the sink draws.
+    //
+    // The two are comparable only where they scale alike. SoftRaster scales both axes by info.dpi, which the host
+    // sets to the buffer's height over the Panel's; the sink stretches the Panel over the whole buffer, so across it
+    // scales by the buffer's width over the Panel's. That is one number while the buffer is proportional to the Panel
+    // (the canvas's CSS size times the device pixel ratio is whole both ways: ratio 1, 1.25, 1.5, 2). Where a side
+    // was rounded (ratio 1.3333: 1280 x 853 for a 960 x 640 Panel) the sink's picture is up to half a pixel narrower
+    // or wider than SoftRaster's by its right edge, every edge on the way differs by most of a channel's range, and
+    // the difference says nothing about the sink. A proportional frame is judged then: a copy of the list with its
+    // dpi set for the largest height not above the buffer's that gives a whole proportional size (an even height here,
+    // the width 3/2 of it) goes through the same sink at exactly that size and is read back, and SoftRaster draws the
+    // same copy: one list and one scale for both. The host's own list is then submitted again at the host's size, so
+    // the canvas presents the frame it would have.
+    //
+    // What the two really draw differently stays in the verdict. Measured in Chrome (ANGLE on Metal): a frame
+    // recorded below about 0.8 device px per logical px (a browser zoomed far out) differs by a few levels in some
+    // tens of samples, at exact ratios too; and on the characteristics screen about 2 inexact ratios in 100 leave one
+    // sample one level over the tolerance.
     Pixels drawAndCompare(funkgui::WebHost& host)
     {
         Pixels p;
         if (!host.frame(emscripten_performance_now()).submitted)
             return p;                                    // a hidden document, no context, or a lost one
-        const funkgui::Image gl = host.sink().readPixels();
-        const funkgui::Image soft = funkgui::rasterise(host.lastFrame(), funkgui::FontService::get().atlas(), 1);
-        const int w = std::min(gl.w, soft.w), h = std::min(gl.h, soft.h);
-        if (w <= 0 || h <= 0 || std::abs(gl.w - soft.w) > 1 || std::abs(gl.h - soft.h) > 1)
+        const funkgui::FontAtlasSdf& atlas = funkgui::FontService::get().atlas();
+        const funkgui::PrimList& frame = host.lastFrame();
+        const funkgui::WebHost::Diagnostics d = host.diagnostics();
+        const int logicalW = frame.info.logicalW, logicalH = frame.info.logicalH;
+        if (logicalW <= 0 || logicalH <= 0 || d.physW <= 0 || d.physH <= 0)
             return p;
-        for (int y = 0; y < h; ++y)
+        funkgui::Image gl, soft;
+        if (static_cast<long long>(d.physW) * logicalH == static_cast<long long>(d.physH) * logicalW)
         {
-            const std::uint8_t* a = gl.rgba.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(gl.w) * 4u;
-            const std::uint8_t* b = soft.rgba.data()
-                                  + static_cast<std::size_t>(y) * static_cast<std::size_t>(soft.w) * 4u;
-            for (int i = 0; i < w * 4; ++i)
-            {
-                const int delta = std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i]));
-                p.largest = std::max(p.largest, delta);
-                if (delta > kPixelTolerance)
-                    ++p.over2;
-            }
+            gl = host.sink().readPixels();
+            soft = funkgui::rasterise(frame, atlas, 1);
         }
-        p.samples = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4u;
+        else
+        {
+            const int unit = std::gcd(logicalW, logicalH);
+            const int n = d.physH / (logicalH / unit);   // the buffer: n times the Panel's size in lowest terms
+            const int w = n * (logicalW / unit), h = n * (logicalH / unit);
+            funkgui::PrimList copy = frame;
+            copy.info.dpi = static_cast<float>(h) / static_cast<float>(logicalH);
+            if (n > 0 && host.sink().submit(copy, w, h) == funkgui::WebGlSink::Result::submitted)
+            {
+                gl = host.sink().readPixels();
+                soft = funkgui::rasterise(copy, atlas, 1);
+            }
+            host.sink().submit(frame, d.physW, d.physH);
+        }
+        if (gl.w <= 0 || gl.h <= 0 || gl.w != soft.w || gl.h != soft.h)
+            return p;                                    // nothing was read back, or not at the size asked for
+        const std::size_t samples = static_cast<std::size_t>(gl.w) * static_cast<std::size_t>(gl.h) * 4u;
+        if (gl.rgba.size() != samples || soft.rgba.size() != samples)
+            return p;
+        for (std::size_t i = 0; i < samples; ++i)
+        {
+            const int delta = std::abs(static_cast<int>(gl.rgba[i]) - static_cast<int>(soft.rgba[i]));
+            p.largest = std::max(p.largest, delta);
+            if (delta > kPixelTolerance)
+                ++p.over2;
+        }
+        p.samples = samples;
         p.frames = 1;
         return p;
     }
@@ -296,9 +348,11 @@ int main()
 
     // ADR-85: a new instance starts from the machine's QUALITY and LOOKAHEAD for new instances, when set
     // (Processor's constructor). Here the machine is this browser's localStorage and the instance is the page load.
+    // As there (newInstancePref), a stored value that is not one of the three choices leaves the default: it is read
+    // over the whole range of an int, since getInt clamps what it reads into the range it is given.
     for (const auto& [pid, key] : { std::pair{ fcdsp::Pid::quality, fcmp::kPrefNewQuality },
                                     std::pair{ fcdsp::Pid::labudget, fcmp::kPrefNewLookahead } })
-        if (const int v = funkgui::UiPreferences::get().getInt(key, -1, -1, 2); v >= 0)
+        if (const int v = funkgui::UiPreferences::get().getInt(key, -1, INT_MIN, INT_MAX); v >= 0 && v <= 2)
             app->facade.port(pid).setValue01(static_cast<float>(v) / 2.0f);
 
     fcmp::ui::PanelOptions options;
