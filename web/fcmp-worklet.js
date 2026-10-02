@@ -1,148 +1,202 @@
-// fcmp-worklet.js (SCOUT SCRATCH): the AudioWorklet side of the demo. Plain JavaScript, a classic worklet script.
+// web/fcmp-worklet.js: the audio thread of the browser demo (ADR-93, web Sprint D). Plain JavaScript and an ES module
+// (audioWorklet.addModule always loads one; web/package.json makes node read it the same way, so
+// web/tests/worklet.mjs runs this very file).
 //
-// The node is made with
-//   new AudioWorkletNode(ctx, 'fcmp-engine', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+// The page makes the node with
+//   new AudioWorkletNode(context, 'fcmp-engine', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
 //       channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
-//       processorOptions: { wasm: <ArrayBuffer of fcmp-engine.wasm> } })
-// Port, to the worklet:   { b: ArrayBuffer, n }   one WebProtocol record in b's first n bytes (b is transferred)
-//                         { q: 'selfcheck' | 'stats' | 'gate', ... }   the page's own questions
-// Port, from the worklet: { ready: 1, abi, latency, rate, cap } once, or { error: text } once
-//                         { b, n }                the reply to a Pull, in the buffer that carried it (transferred back)
-//                         { refused: code, n }    fcmp_web_post said no (a negative PostError)
-//                         { q: ..., ... }         the answers
-'use strict';
+//       processorOptions: { wasm: <the bytes of fcmp-engine.wasm, an ArrayBuffer> } })
+// (without outputChannelCount an unconnected node has one output channel; with the explicit count of 2 a mono source
+// arrives as two channels and a stopped one as none).
+//
+// The constructor compiles the engine (Source/web/engine/WebEngine.h: a standalone module, nothing imported),
+// creates one engine at its default values, configures it at the context's rate for 128-frame calls, and makes its
+// views on the module's memory once: that memory never grows (cmake/FcmpWeb.cmake: ALLOW_MEMORY_GROWTH=0), so they
+// stay valid. Then it says { fcmp: 'ready', abi, latency, sampleRate }, or { fcmp: 'error', error }.
+//
+// process() is the audio thread's callback: it copies the input in, calls fcmp_web_process and copies the output out.
+// NOTHING IN IT ALLOCATES: no array or object literal, no closure, no spread, no destructuring, no subarray(); it
+// posts no message, calls no console function and never throws (an engine that trapped is silence from then on, and
+// the next message on the port says so). Any frame count; no input, a mono input or an empty one; one or two output
+// channels.
+//
+// The port (docs/sprints/web-d.md, "The seam between the module and the page"):
+//   an ArrayBuffer      one WebProtocol record, from the editor module. A script only moves its bytes: at most 140
+//                       are copied to the engine's inbox and posted with n = Header::bytes, the u32 at offset 8 and the
+//                       one field read here (a Pull arrives in a carrier as large as the largest reply, so the
+//                       buffer's own length is not the record's), and never with more than was copied. When
+//                       fcmp_web_post returns r > 0, the first r bytes of the reply are copied into the same buffer,
+//                       which is transferred back. Otherwise nothing is sent; a negative r (a refusal) is counted,
+//                       and so is a reply its buffer cannot hold.
+//   { fcmp: 'stats' }       answered with { fcmp: 'stats', ok, quanta, oddQuanta, lastFrames, inChannels,
+//                           outChannels, records, replies, refused, lastRefusal, latency }
+//   { fcmp: 'selfcheck' }   answered with { fcmp: 'selfcheck', rc, hash, ms }: the engine's self-check, 30 to 60 ms on
+//                           this thread, so it runs only on this request and never while a source plays (the last
+//                           quantum had an input channel): then rc is -2 and nothing ran.
 
-const CAP = 128;            // frames per fcmp_web_process call; a larger quantum is processed in chunks
-const MSG_BYTES = 140;      // WebProtocol kMaxMessageBytes
+const QUANTUM = 128;            // frames per fcmp_web_process call; any other quantum goes through in pieces of it
+const MESSAGE_BYTES = 140;      // WebProtocol.h kMaxMessageBytes: the largest record the engine accepts
+const HEADER_BYTES = 16;        // sizeof(Header)
+const BYTES_FIELD = 8;          // offsetof(Header, bytes)
+const BAD_ARGUMENT = -1;        // WebEngine.h kPostBadArgument
+const BAD_SIZE = -5;            // WebEngine.h kPostBadSize
+const SELFCHECK_BUSY = -2;
+
+const hex8 = (value) => value.toString(16).padStart(8, '0');
 
 class FcmpEngineProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.ok = false;
+    this.fault = null;          // what stopped the engine inside process(): said by the next message, never from there
     this.quanta = 0;
-    this.oddQuanta = 0;       // quanta whose frame count was not CAP
+    this.oddQuanta = 0;         // quanta of another frame count than QUANTUM
     this.lastFrames = 0;
-    this.inChannels = -1;
-    this.outChannels = -1;
-    this.clockMs = 0;         // Date.now() differences around process(), summed (an unbiased estimate over many)
-    this.clockOn = false;
+    this.inChannels = 0;        // of the last quantum: 0 is no source
+    this.outChannels = 0;
+    this.records = 0;
+    this.replies = 0;
     this.refused = 0;
     this.lastRefusal = 0;
-    this.isBuffer = (m) => Object.prototype.toString.call(m) === '[object ArrayBuffer]';
+    this.latency = 0;
+    this.port.onmessage = (event) => this.receive(event.data);
     try {
-      const t0 = Date.now();
-      const wasm = options.processorOptions.wasm;
-      const module = new WebAssembly.Module(wasm);                 // synchronous: allowed off the main thread
-      const x = new WebAssembly.Instance(module, {}).exports;
+      const x = new WebAssembly.Instance(new WebAssembly.Module(options.processorOptions.wasm), {}).exports;
       x._initialize();
-      this.compileMs = Date.now() - t0;
       this.x = x;
       this.engine = x.fcmp_web_create();
       if (this.engine === 0) throw new Error('fcmp_web_create failed');
-      const audio = x.malloc(4 * CAP * 4);
-      this.msg = x.malloc(MSG_BYTES);
-      this.hash = x.malloc(8);
-      if (audio === 0 || this.msg === 0 || this.hash === 0) throw new Error('malloc failed');
+      const audio = x.malloc(4 * QUANTUM * 4);
+      this.pMessage = x.malloc(MESSAGE_BYTES);
+      this.pHash = x.malloc(8);
+      if (audio === 0 || this.pMessage === 0 || this.pHash === 0) throw new Error('the engine module is out of memory');
       this.pInL = audio;
-      this.pInR = audio + CAP * 4;
-      this.pOutL = audio + 2 * CAP * 4;
-      this.pOutR = audio + 3 * CAP * 4;
-      // The module's memory never grows (ALLOW_MEMORY_GROWTH=0), so these views stay valid for its life.
-      const buffer = x.memory.buffer;
-      this.vInL = new Float32Array(buffer, this.pInL, CAP);
-      this.vInR = new Float32Array(buffer, this.pInR, CAP);
-      this.vOutL = new Float32Array(buffer, this.pOutL, CAP);
-      this.vOutR = new Float32Array(buffer, this.pOutR, CAP);
-      this.bytes = new Uint8Array(buffer);
-      this.words = new Uint32Array(buffer);
-      this.latency = x.fcmp_web_configure(this.engine, sampleRate, CAP);
-      if (this.latency < 0) throw new Error('fcmp_web_configure failed');
+      this.pInR = audio + QUANTUM * 4;
+      this.pOutL = audio + 2 * QUANTUM * 4;
+      this.pOutR = audio + 3 * QUANTUM * 4;
+      const memory = x.memory.buffer;
+      this.inL = new Float32Array(memory, this.pInL, QUANTUM);
+      this.inR = new Float32Array(memory, this.pInR, QUANTUM);
+      this.outL = new Float32Array(memory, this.pOutL, QUANTUM);
+      this.outR = new Float32Array(memory, this.pOutR, QUANTUM);
+      this.heap = new Uint8Array(memory);
+      this.words = new Uint32Array(memory);
+      this.latency = x.fcmp_web_configure(this.engine, sampleRate, QUANTUM);
+      if (this.latency < 0) throw new Error(`fcmp_web_configure failed at ${sampleRate} Hz`);
+      this.pReply = x.fcmp_web_reply(this.engine);
       this.ok = true;
-      this.port.onmessage = (e) => this.onMessage(e.data);
-      this.port.postMessage({ fcmp: 'ready', abi: x.fcmp_web_abi_version(), latency: this.latency, rate: sampleRate,
-                              cap: CAP, compileMs: this.compileMs, wasmBytes: wasm.byteLength,
-                              hasPerformance: typeof performance !== 'undefined',
-                              globals: Object.getOwnPropertyNames(globalThis).filter((k) => /current|sample|render|port|register/i.test(k)).join(',') });
+      this.port.postMessage({ fcmp: 'ready', abi: x.fcmp_web_abi_version(), latency: this.latency, sampleRate });
     } catch (error) {
       this.port.postMessage({ fcmp: 'error', error: String(error) });
     }
   }
 
-  onMessage(m) {
-    const x = this.x;
-    if (this.isBuffer(m)) {
-      // A record at its exact size, or a carrier whose first Header::bytes bytes are the record (a Pull in a
-      // reply-sized buffer). Header::bytes, a u32 at offset 8, is the one field this script reads.
-      const copied = Math.min(m.byteLength, MSG_BYTES);
-      this.bytes.set(new Uint8Array(m, 0, copied), this.msg);
-      const n = Math.min(this.words[(this.msg >> 2) + 2], copied);
-      const r = x.fcmp_web_post(this.engine, this.msg, n);
-      if (r > 0 && m.byteLength >= r) {
-        const p = x.fcmp_web_reply(this.engine);
-        new Uint8Array(m, 0, r).set(this.bytes.subarray(p, p + r));
-        this.port.postMessage(m, [m]);
-      } else if (r !== 0) {
-        this.refused += 1;
-        this.lastRefusal = r > 0 ? -5 : r;
+  // ---- the port: between two quanta, on the audio thread ------------------------------------------------------------
+  receive(data) {
+    try {
+      if (this.fault !== null) {
+        this.port.postMessage({ fcmp: 'error', error: String(this.fault) });
+        this.fault = null;
       }
-      return;
-    }
-    m = { q: m.fcmp, on: m.on };
-    if (m.q === 'selfcheck') {
-      const t0 = Date.now();
-      const rc = x.fcmp_web_selfcheck(this.hash);
-      const hex8 = (v) => v.toString(16).padStart(8, '0');
-      this.port.postMessage({ fcmp: 'selfcheck', rc, hash: hex8(this.words[this.hash / 4 + 1]) + hex8(this.words[this.hash / 4]),
-                              ms: Date.now() - t0 });
-    } else if (m.q === 'stats') {
-      this.port.postMessage({ fcmp: 'stats', refused: this.refused, lastRefusal: this.lastRefusal, quanta: this.quanta, oddQuanta: this.oddQuanta, lastFrames: this.lastFrames,
-                              inChannels: this.inChannels, outChannels: this.outChannels, clockMs: this.clockMs,
-                              latency: x.fcmp_web_latency(this.engine), frame: currentFrame, time: currentTime });
-    } else if (m.q === 'clock') {
-      this.clockOn = !!m.on;
-      this.clockMs = 0;
-      this.quanta = 0;
-    } else if (m.q === 'gate') {
-      x.fcmp_web_set_gate(this.engine, m.on ? 1 : 0);
+      if (data instanceof ArrayBuffer) this.record(data);
+      else if (data && data.fcmp === 'stats') this.stats();
+      else if (data && data.fcmp === 'selfcheck') this.selfcheck();
+    } catch (error) {
+      this.ok = false;
+      this.port.postMessage({ fcmp: 'error', error: String(error) });
     }
   }
 
+  record(buffer) {
+    this.records += 1;
+    if (!this.ok) {
+      this.refuse(BAD_ARGUMENT);
+      return;
+    }
+    const bytes = new Uint8Array(buffer);
+    const copied = Math.min(bytes.length, MESSAGE_BYTES);
+    this.heap.set(copied === bytes.length ? bytes : bytes.subarray(0, copied), this.pMessage);
+    // Never more than was copied: what lies behind it in the inbox is an earlier record's.
+    const said = copied >= HEADER_BYTES ? this.words[(this.pMessage + BYTES_FIELD) >> 2] : copied;
+    const r = this.x.fcmp_web_post(this.engine, this.pMessage, Math.min(said, copied));
+    if (r > 0 && r <= bytes.length) {
+      bytes.set(this.heap.subarray(this.pReply, this.pReply + r));
+      this.port.postMessage(buffer, [buffer]);
+      this.replies += 1;
+    } else if (r !== 0) {
+      this.refuse(r > 0 ? BAD_SIZE : r);
+    }
+  }
+
+  refuse(code) {
+    this.refused += 1;
+    this.lastRefusal = code;
+  }
+
+  stats() {
+    this.port.postMessage({ fcmp: 'stats', ok: this.ok, quanta: this.quanta, oddQuanta: this.oddQuanta,
+                            lastFrames: this.lastFrames, inChannels: this.inChannels, outChannels: this.outChannels,
+                            records: this.records, replies: this.replies, refused: this.refused,
+                            lastRefusal: this.lastRefusal,
+                            latency: this.ok ? this.x.fcmp_web_latency(this.engine) : 0 });
+  }
+
+  selfcheck() {
+    if (!this.ok || this.inChannels > 0) {
+      this.port.postMessage({ fcmp: 'selfcheck', rc: this.ok ? SELFCHECK_BUSY : BAD_ARGUMENT, hash: '', ms: 0 });
+      return;
+    }
+    const t0 = Date.now();                                   // the worklet's scope has no performance.now()
+    const rc = this.x.fcmp_web_selfcheck(this.pHash);
+    const at = this.pHash >> 2;
+    this.port.postMessage({ fcmp: 'selfcheck', rc, hash: hex8(this.words[at + 1]) + hex8(this.words[at]),
+                            ms: Date.now() - t0 });
+  }
+
+  // ---- the audio callback: see the rules at the top -----------------------------------------------------------------
   process(inputs, outputs) {
     const out = outputs[0];
+    if (!this.ok || out === undefined || out.length === 0) return true;     // silence: the arrays arrive zeroed
     const outL = out[0];
-    if (!this.ok || outL === undefined) return true;      // silence (the arrays arrive zeroed)
-    const outR = out.length > 1 ? out[1] : undefined;
-    const input = inputs[0];
-    const inL = input !== undefined && input.length > 0 ? input[0] : undefined;
-    const inR = input !== undefined && input.length > 1 ? input[1] : undefined;
+    const outR = out.length > 1 ? out[1] : null;
     const frames = outL.length;
-    const t0 = this.clockOn ? Date.now() : 0;
-    const x = this.x;
-    if (frames === CAP) {
-      if (inL !== undefined) this.vInL.set(inL);
-      if (inR !== undefined) this.vInR.set(inR);
-      x.fcmp_web_process(this.engine, inL !== undefined ? this.pInL : 0, inR !== undefined ? this.pInR : 0,
-                         this.pOutL, outR !== undefined ? this.pOutR : 0, CAP);
-      outL.set(this.vOutL);
-      if (outR !== undefined) outR.set(this.vOutR);
-    } else {
-      // Any other quantum: chunks of at most CAP, copied by index (no view is made here).
-      for (let at = 0; at < frames; at += CAP) {
-        const n = Math.min(CAP, frames - at);
-        if (inL !== undefined) for (let i = 0; i < n; i += 1) this.vInL[i] = inL[at + i];
-        if (inR !== undefined) for (let i = 0; i < n; i += 1) this.vInR[i] = inR[at + i];
-        x.fcmp_web_process(this.engine, inL !== undefined ? this.pInL : 0, inR !== undefined ? this.pInR : 0,
-                           this.pOutL, outR !== undefined ? this.pOutR : 0, n);
-        for (let i = 0; i < n; i += 1) outL[at + i] = this.vOutL[i];
-        if (outR !== undefined) for (let i = 0; i < n; i += 1) outR[at + i] = this.vOutR[i];
+    const input = inputs[0];
+    const channels = input === undefined ? 0 : input.length;
+    // No channel is no source and one is mono; a channel of another length than the output is not read.
+    const inL = channels > 0 && input[0].length === frames ? input[0] : null;
+    const inR = inL !== null && channels > 1 && input[1].length === frames ? input[1] : null;
+    const pInL = inL !== null ? this.pInL : 0;
+    const pInR = inR !== null ? this.pInR : 0;
+    const pOutR = outR !== null ? this.pOutR : 0;
+    try {
+      if (frames === QUANTUM) {
+        if (inL !== null) this.inL.set(inL);
+        if (inR !== null) this.inR.set(inR);
+        this.x.fcmp_web_process(this.engine, pInL, pInR, this.pOutL, pOutR, QUANTUM);
+        outL.set(this.outL);
+        if (outR !== null) outR.set(this.outR);
+      } else {
+        // Another quantum: pieces of at most QUANTUM, copied by index (set() would need a view per piece).
+        for (let at = 0; at < frames; at += QUANTUM) {
+          const n = Math.min(QUANTUM, frames - at);
+          if (inL !== null) for (let i = 0; i < n; i += 1) this.inL[i] = inL[at + i];
+          if (inR !== null) for (let i = 0; i < n; i += 1) this.inR[i] = inR[at + i];
+          this.x.fcmp_web_process(this.engine, pInL, pInR, this.pOutL, pOutR, n);
+          for (let i = 0; i < n; i += 1) outL[at + i] = this.outL[i];
+          if (outR !== null) for (let i = 0; i < n; i += 1) outR[at + i] = this.outR[i];
+        }
+        this.oddQuanta += 1;
       }
-      this.oddQuanta += 1;
+    } catch (error) {
+      this.ok = false;
+      this.fault = error;
+      outL.fill(0);
+      if (outR !== null) outR.fill(0);
     }
     this.quanta += 1;
     this.lastFrames = frames;
-    this.inChannels = input !== undefined ? input.length : -1;
+    this.inChannels = channels;
     this.outChannels = out.length;
-    if (this.clockOn) this.clockMs += Date.now() - t0;
     return true;
   }
 }

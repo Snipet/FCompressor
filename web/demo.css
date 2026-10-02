@@ -1,18 +1,71 @@
+/* web/demo.css: the demo page around the editor's canvas (ADR-93, web Sprint D). The canvas itself is the editor
+   module's: FunkGui's WebHost sets its size, so it has no border and no padding here, and the stage wraps it exactly
+   (the overlay then covers the editor and nothing else). The editor's menus are styled inline from `all: initial`:
+   nothing here reaches them. Every URL is relative and no font is loaded: the faces are the system's. */
 :root { color-scheme: dark; }
-body { margin: 24px; background: #101113; color: #d8d6d0; font: 12px/1.6 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; letter-spacing: 0.06em; }
+[hidden] { display: none !important; }
+body {
+  margin: 24px;
+  background: #101113;
+  color: #d8d6d0;
+  font: 12px/1.6 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+}
 h1, h2 { font-size: 12px; font-weight: normal; letter-spacing: 0.14em; margin: 0; }
-header { margin: 0 0 16px 0; } header p { margin: 0; color: #8d8b86; }
-#fcmp-stage { position: relative; display: inline-block; line-height: 0; }
-#fcmp-canvas { display: block; background: #17181b; }
-#fcmp-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(16, 17, 19, 0.92); line-height: 1.6; text-align: center; }
-#fcmp-overlay[hidden] { display: none; }
-button, .button { font: inherit; letter-spacing: 0.14em; color: #101113; background: #d8d6d0; border: 0; padding: 6px 14px; cursor: pointer; display: inline-block; }
+p { margin: 0; }
+a { color: inherit; }
+header { margin: 0 0 16px 0; }
+header p, #fcmp-notes, footer { color: #8d8b86; }
+#fcmp-notes h2, footer a { color: #d8d6d0; }
+
+/* The stage: as large as the canvas once the editor has sized it; the editor's size at 100 % until then, and for good
+   when the page refuses (the canvas then keeps a browser's default size and is not shown). */
+#fcmp-stage { position: relative; display: inline-block; line-height: 0; vertical-align: top; }
+#fcmp-stage.waiting { width: 960px; max-width: 100%; height: 640px; background: #17181b; outline: 1px solid #2a2b2f; }
+#fcmp-stage.waiting #fcmp-canvas { visibility: hidden; }
+#fcmp-canvas { display: block; border: 0; padding: 0; background: #17181b; }
+#fcmp-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(16, 17, 19, 0.86);
+  line-height: 1.6;
+  text-align: center;
+}
+#fcmp-status { max-width: 640px; }
+
+button {
+  font: inherit;
+  letter-spacing: 0.14em;
+  color: #101113;
+  background: #d8d6d0;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 14px;
+  cursor: pointer;
+}
 button:disabled { opacity: 0.4; cursor: default; }
+button:focus-visible, a:focus-visible { outline: 1px solid #d8d6d0; outline-offset: 3px; }
 #fcmp-start { padding: 12px 36px; }
-#fcmp-status { max-width: 520px; margin: 16px 0 0 0; }
-#fcmp-source { margin: 12px 0; } #fcmp-source > * { margin-right: 12px; }
-#fcmp-notice { color: #e8795e; min-height: 1.6em; margin: 6px 0 0 0; }
-#fcmp-differs { margin: 20px 0; max-width: 960px; color: #8d8b86; } #fcmp-differs ul { padding-left: 18px; margin: 6px 0; }
-footer { color: #8d8b86; max-width: 960px; } footer a, #fcmp-differs a { color: #d8d6d0; }
+
+#fcmp-source {
+  margin: 12px 0 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  max-width: 960px;
+}
+#fcmp-source-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#fcmp-notice { flex-basis: 100%; min-height: 1.6em; color: #e8795e; }
+#fcmp-notes { margin: 12px 0 20px 0; max-width: 960px; }
+#fcmp-notes h2 { margin: 12px 0 0 0; }
+#fcmp-notes ul { margin: 0; padding: 0 0 0 18px; }
+footer { max-width: 960px; }
 body.dragging #fcmp-stage { outline: 1px dashed #d8d6d0; outline-offset: 6px; }
-pre { white-space: pre-wrap; }
+#funkgui-log { margin: 20px 0 0 0; white-space: pre-wrap; overflow-wrap: anywhere; letter-spacing: 0; }

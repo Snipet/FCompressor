@@ -1,54 +1,68 @@
 <!doctype html>
 <html lang="en">
 <head>
-<link rel="icon" href="data:,">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FCompressor: web demo</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="demo.css">
 </head>
 <body>
-<header><h1>FCOMPRESSOR</h1><p>THE PLUGIN'S OWN DSP AND EDITOR, RUNNING IN THIS BROWSER</p></header>
-<div id="fcmp-stage">
-  <canvas id="fcmp-canvas"></canvas>
-  <div id="fcmp-overlay">
-    <button id="fcmp-start" type="button" data-click>START</button>
-    <p id="fcmp-status">A DRUM LOOP PLAYS THROUGH THE COMPRESSOR. SOUND STARTS WHEN YOU CLICK.</p>
-  </div>
+<header>
+<h1>FCOMPRESSOR</h1>
+<p>THE PLUGIN'S OWN DSP AND EDITOR, RUNNING IN THIS BROWSER.</p>
+</header>
+<main>
+<div id="fcmp-stage" class="waiting">
+<canvas id="fcmp-canvas" aria-label="FCOMPRESSOR EDITOR"></canvas>
+<div id="fcmp-overlay">
+<button id="fcmp-start" type="button" hidden>START</button>
+<p id="fcmp-status" role="status"
+   data-file="THE DEMO DOES NOT RUN FROM A FILE. SERVE THIS FOLDER OVER HTTPS, OR FROM LOCALHOST."></p>
+<noscript><p>THE DEMO NEEDS JAVASCRIPT.</p></noscript>
+</div>
 </div>
 <div id="fcmp-source">
-  <span id="fcmp-source-name">SOURCE   BUILT-IN LOOP</span>
-  <button id="fcmp-loop" type="button" disabled>BUILT-IN LOOP</button>
-  <label class="button">OPEN AN AUDIO FILE<input id="fcmp-file" type="file" accept="audio/*" hidden></label>
-  <span>OR DROP ONE ON THE PAGE. IT STAYS IN YOUR BROWSER.</span>
-  <p id="fcmp-notice" role="status"></p>
+<span id="fcmp-source-name">SOURCE: BUILT-IN LOOP</span>
+<button id="fcmp-loop" type="button" disabled>BUILT-IN LOOP</button>
+<button id="fcmp-open" type="button" disabled>OPEN AN AUDIO FILE</button>
+<input id="fcmp-file" type="file" accept="audio/*" hidden>
+<span>OR DROP ONE ON THE PAGE. IT STAYS IN THIS BROWSER.</span>
+<p id="fcmp-notice" role="status"></p>
 </div>
-<section id="fcmp-differs">
+<section id="fcmp-notes">
+<h2>TO COMPARE</h2>
+<p>BYPASS, IN THE DISPLAY ROW, PLAYS THE DRY SOUND AT THE SAME LATENCY, AS IN THE PLUGIN.</p>
 <h2>WHAT DIFFERS FROM THE PLUGIN</h2>
 <ul>
-<li>BYPASS, IN THE DISPLAY ROW, COMPARES WITH THE DRY LOOP AT THE SAME LATENCY, AS IN THE PLUGIN.</li>
 <li>NO PRESET IMPORT OR EXPORT. YOUR OWN PRESETS LAST UNTIL THE PAGE IS CLOSED.</li>
 <li>NO SIDE-CHAIN KEY INPUT.</li>
 <li>THE DSP LOAD IN SETTINGS SHOWS A DASH.</li>
-<li>WITH NATURAL SCROLLING ON A MAC, THE WHEEL TURNS A VALUE THE OTHER WAY. A NOTCHED WHEEL MOVES A STEPPED CONTROL ABOUT TWO STEPS.</li>
-<li>TYPED VALUES TAKE PLAIN KEYS ONLY (NO INPUT METHOD, NO DEAD KEYS).</li>
-<li>A QUALITY OR LOOKAHEAD CHANGE MAY CLICK ONCE: THE ENGINE IS REBUILT ON THE AUDIO THREAD.</li>
-<li>DESKTOP BROWSERS WITH WEBGL2. NO SCREEN READER SUPPORT.</li>
+<li>WITH NO INPUT THE ENGINE IDLES AND THE METERS STOP.</li>
+<li>A QUALITY OR LOOKAHEAD CHANGE REBUILDS THE ENGINE ON THE AUDIO THREAD (THE PLUGIN USES ANOTHER THREAD) AND MAY
+CLICK.</li>
+<li>WHERE THE SYSTEM REVERSES THE SCROLL DIRECTION, THE WHEEL TURNS A VALUE THE OTHER WAY. A NOTCHED WHEEL MOVES A
+STEPPED CONTROL ABOUT TWO STEPS.</li>
+<li>TYPED VALUES TAKE PLAIN KEYS ONLY: NO INPUT METHOD, NO DEAD KEYS.</li>
+<li>NO HOST PARAMETER MENU ON A RIGHT-CLICK.</li>
+<li>DESKTOP BROWSERS WITH WEBGL2 ONLY, AND NOTHING FOR A SCREEN READER IN THE EDITOR.</li>
 </ul>
 </section>
+</main>
 <footer>
-<p>FCOMPRESSOR IS FREE SOFTWARE UNDER THE <a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>. THE TYPEFACE IS JETBRAINS MONO, UNDER THE <a href="licences/JetBrainsMono-OFL.txt">SIL OPEN FONT LICENSE 1.1</a>.</p>
-<p id="fcmp-built">SOURCE: <a href="https://github.com/Snipet/FCompressor">GITHUB.COM/SNIPET/FCOMPRESSOR</a></p>
+<p>FCOMPRESSOR IS FREE SOFTWARE UNDER THE <a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>.
+THE TYPEFACE IS JETBRAINS MONO, UNDER THE <a href="licences/JetBrainsMono-OFL.txt">SIL OPEN FONT LICENSE 1.1</a>.
+THE BUILD TOOLS' LIBRARIES HAVE <a href="licences/THIRD-PARTY.txt">THEIR OWN LICENCES</a>.</p>
+<p>THE <a href="https://github.com/Snipet/FCompressor">SOURCE CODE</a>.<span id="fcmp-built"></span></p>
 </footer>
 <pre id="funkgui-log" hidden></pre>
 <script>
-  // The editor module: it calls Module.fcmpReady() when its main() is done; an abort is the page's to show.
-  var fcmpEditorState = '';
-  var Module = { fcmpReady: () => { fcmpEditorState = 'ready'; if (window.fcmpEditor) window.fcmpEditor.done(); },
-                 onAbort: (what) => { fcmpEditorState = 'the editor stopped: ' + what; if (window.fcmpEditor) window.fcmpEditor.fail(new Error(fcmpEditorState)); } };
+  // A module script does not load from a file: address, so main.js never runs there and the refusal is said here.
+  if (location.protocol === 'file:') {
+    var fcmpStatus = document.getElementById('fcmp-status');
+    fcmpStatus.textContent = fcmpStatus.dataset.file;
+  }
 </script>
-<script src="loop.js"></script>
-<script src="main.js"></script>
-<script src="fcmp-ui.js" onerror="Module.onAbort('fcmp-ui.js did not load')"></script>
+<script type="module" src="main.js"></script>
 </body>
 </html>
