@@ -170,6 +170,7 @@ try {
   };
   for (const [index, group] of groups.entries()) {
     if (!session.alive()) throw new Error(`the browser went away (before the group ${group.name})`);
+    if (!await u.there()) throw new Error(`the browser took the page's tab away (before the group ${group.name})`);
     report.enter(group.name);
     try {
       if (group.page === 'new' || (group.page === 'continue' && !(passed && await running()))) {

@@ -442,19 +442,42 @@ export async function user(browser, base) {
   };
 
   // ---- hidden and shown ---------------------------------------------------------------------------------------------
-  // Another tab in front hides this one (Page.setWebLifecycleState would leave it hidden for good).
+  // Another tab in front hides this one, as a user hides it (Page.setWebLifecycleState would leave it hidden for
+  // good). How the document is hidden is the driver's business, and only a hidden document is judged: should the
+  // new tab not have hidden it within 2 s (seen once in some forty runs, on a desktop where other browsers ran, and
+  // in none of 3,000 hides afterwards), its window is minimised instead. Answers how it was hidden; an error when it
+  // is not.
   let other = null;
+  let minimised = null;                               // the window's id, while it is minimised
+  const hiddenSoon = async () => (await u.until((s) => s.hidden === true, 2000)).ok;
   u.hide = async () => {
     const made = await browser.send('Target.createTarget', { url: 'about:blank' });
     other = made.targetId;
     await browser.send('Target.activateTarget', { targetId: other });
+    if (await hiddenSoon()) return 'another tab is in front';
+    // Why not is worth a line: the new tab may have gone to another window than this page's.
+    const { windowId } = await browser.send('Browser.getWindowForTarget', { targetId: p.targetId });
+    const others = await browser.send('Browser.getWindowForTarget', { targetId: other }).catch(() => ({}));
+    const why = `the new tab did not hide it: that tab is in ${others.windowId === windowId ? 'the same window'
+                                                                                           : 'another window'}`;
+    await browser.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+    minimised = windowId;
+    if (await hiddenSoon()) return `its window is minimised (${why})`;
+    throw new Error(`the document could not be hidden, by another tab in front or by minimising its window (${why})`);
   };
   u.show = async () => {
+    if (minimised !== null) {
+      await browser.send('Browser.setWindowBounds', { windowId: minimised, bounds: { windowState: 'normal' } })
+        .catch(() => {});
+    }
+    minimised = null;
     await browser.send('Target.activateTarget', { targetId: p.targetId });
     await p.s('Page.bringToFront');
     if (other !== null) await browser.send('Target.closeTarget', { targetId: other }).catch(() => {});
     other = null;
   };
+  // Whether the user's tab is still there (a browser may take a tab away: it discards one under memory pressure).
+  u.there = async () => (await browser.send('Target.getTargets')).targetInfos.some((t) => t.targetId === p.targetId);
 
   // ---- files and pictures -------------------------------------------------------------------------------------------
   // A file dropped on the page at client (x, y): the browser's own drag events, with the file's path.

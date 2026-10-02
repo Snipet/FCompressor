@@ -1,8 +1,9 @@
 // Scripts/web/scenario/hidden.mjs: the tab hidden behind another one and shown again. The editor pulls telemetry once
 // a frame that ticks, and a hidden document ticks none: the pulls must stop and the audio must not.
 //
-//   hidden.hidden   another tab in front: the document is hidden, the editor draws no frame and posts no record,
-//                   and the worklet goes on rendering; the page still runs
+//   hidden.hidden   another tab in front (or, should that not hide it, the window minimised: driver.mjs): the
+//                   document is hidden, the editor draws no frame and posts no record, and the worklet goes on
+//                   rendering; the page still runs
 //   hidden.shown    in front again: frames, records and replies move again, and nothing was refused meanwhile
 //   hidden.edit     an edit made then reaches the engine
 //   hidden.resume   the audio paused as a browser pauses it (the context suspended: nothing a user does, so it is
@@ -20,8 +21,8 @@ export async function run({ u, row }) {
   const visible = await u.ledger();
 
   let h1 = null;
-  await u.hide();
   try {
+    const how = await u.hide();
     const hid = await u.until((s) => s.hidden === true);
     // The frame that was under way has ended once two looks agree.
     let seen = -1;
@@ -37,9 +38,10 @@ export async function run({ u, row }) {
     h1 = await u.ledger();
     row(hid.ok && settled.ok && quiet.ok && h1.worklet.quanta >= h0.worklet.quanta + 30 && h1.worklet.ok
         && h1.worklet.records === h0.worklet.records, 'hidden',
-        `the document is ${quiet.s.hidden ? 'hidden' : 'VISIBLE'}: ${quiet.s.status.frames - h0.status.frames} frames `
-        + `drawn, ${quiet.s.status.posted - h0.status.posted} records posted, ${h1.worklet.quanta - h0.worklet.quanta} `
-        + `quanta rendered meanwhile; the page is ${quiet.s.state}, the context ${quiet.s.context}`);
+        `${how}, the document is ${quiet.s.hidden ? 'hidden' : 'VISIBLE'}: `
+        + `${quiet.s.status.frames - h0.status.frames} frames drawn, ${quiet.s.status.posted - h0.status.posted} `
+        + `records posted, ${h1.worklet.quanta - h0.worklet.quanta} quanta rendered meanwhile; the page is `
+        + `${quiet.s.state}, the context ${quiet.s.context}`);
   } finally {
     await u.show();                                   // whatever happened: no group after this one starts hidden
   }
