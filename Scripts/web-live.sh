@@ -44,7 +44,9 @@
 # node on PATH) and Chrome. Nothing is built: a tree that is not a web build, or has no built site, is refused (the
 # verify-web-live target of a web build builds first, then runs this script). No lock: headless Chrome takes no
 # window. It is never part of `verify`. Chrome's flags are fixed, and it is always muted; FCMP_WEB_LIVE_NO_SANDBOX=1
-# in the environment starts it without its sandbox, for a container that gives it no user namespace.
+# in the environment starts it without its sandbox, for a container that gives it no user namespace. On a machine
+# with no audio device, where no AudioContext renders, the Chrome of the running-context rows is started with the
+# browser's null sink (--disable-audio-output), and a NOTE says so.
 #
 # Exit: 0 every row passed; 1 a view differs or a row failed; 2 usage, no node 22 or later, no Chrome, no verdict.
 set -u
