@@ -100,6 +100,11 @@ const toolStarted = performance.now();
 const toolRun = new Promise((done) => {
   const child = spawn(process.execPath, [tool, '--site', site, '--live', live, '--out', expectDir],
                       { stdio: ['ignore', 'pipe', 'pipe'] });
+  // However this test ends (a row that stops it, an error thrown): no tool left running, no directory left behind.
+  process.on('exit', () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    rmSync(expectDir, { recursive: true, force: true });
+  });
   let said = '';
   child.stdout.on('data', (chunk) => { said += chunk; });
   child.stderr.on('data', (chunk) => { said += chunk; });
