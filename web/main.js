@@ -12,13 +12,19 @@
 //                  place of the source. A file that is too large, too short, too long or not audio leaves the source
 //                  as it was and says so.
 //   RESUME         whenever the context is not running (no gesture yet, or the browser paused it).
-//   the footer     the commit the site was built from (built-from.txt), linked only when the tree was clean.
+//   a failure      of the engine or of the editor, whenever it comes, ends the demo and says why: THE DEMO COULD NOT
+//                  START before it runs, THE DEMO STOPPED afterwards. The editor fails in three ways and only abort()
+//                  tells Module.onAbort: an exception or a trap in its main() or in a frame is an uncaught error.
+//   the status     what the overlay says (#fcmp-status) is a live region, so it is never display: none and never
+//                  holds an old word: while the demo plays the overlay is away and the line says PLAYING.
+//   the footer     the commit the site was built from (built-from.txt), linked only when the build was that commit.
 // Every URL here is relative, so the site works from any path, and nothing is loaded from another origin
 // (web/tests/size.mjs fails otherwise). What the page says is upper case, as the editor speaks.
 //
 // ?selftest=1, and the path fcmp-ui.html (which FunkGui's page runner opens): the checks of runSelftest() below.
 // document.title is RUNNING, then PASS or "FAIL: <the first failing row>", and the rows are in #funkgui-log. An
-// uncaught error or an unhandled rejection is a FAIL at once, and no PASS replaces it.
+// uncaught error or an unhandled rejection is a FAIL at once, and no PASS replaces it. When this file never runs
+// (it or loop.js is missing or does not parse), index.html says so itself, until boot() sets fcmpBooted.
 //
 // Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest. It
 // never pulls (the module does, once a frame), and it calls neither Module.fcmpResetEngine (a new source runs into
@@ -41,6 +47,7 @@ export const PROTOCOL = { magic: 0x50574346, version: 1, attach: 2, attachBytes:
                           replyGated: 1 << 3, replyConfigured: 1 << 4, replyAttached: 1 << 5 };
 const FADE_SECONDS = 0.005;                           // both ends of a file: its seam when it loops
 const SWAP_SECONDS = 0.03;                            // the old source out, then the new one in
+const EDITOR_MS = 60000;                              // START waits this long for the editor: 1.4 MB on a slow line
 const REPOSITORY = 'https://github.com/Snipet/FCompressor';   // a link to follow, never a load
 
 // ---- what the page says ---------------------------------------------------------------------------------------------
@@ -49,6 +56,7 @@ export const SAY = {
   resume: 'RESUME',
   idle: 'A LOOP PLAYS THROUGH THE COMPRESSOR. SOUND STARTS WHEN YOU PRESS START.',
   loading: 'LOADING',
+  playing: 'PLAYING',
   paused: 'AUDIO IS PAUSED BY THE BROWSER. PRESS RESUME.',
   noWebAssembly: 'THIS BROWSER HAS NO WEBASSEMBLY, WHICH THE DEMO IS MADE OF. TRY A CURRENT DESKTOP BROWSER.',
   insecure: 'THE DEMO NEEDS HTTPS (OR LOCALHOST): ON THIS ADDRESS THE BROWSER GIVES A PAGE NO AUDIO WORKLET.',
@@ -66,7 +74,7 @@ export const SAY = {
   failed: (why) => `THE DEMO COULD NOT START: ${why}`,
   stopped: (why) => `THE DEMO STOPPED: ${why} RELOAD THE PAGE TO START IT AGAIN.`,
   built: (commit, day) => ` BUILT FROM COMMIT ${commit} ON ${day}.`,
-  builtDirty: (commit, day) => ` BUILT FROM COMMIT ${commit} PLUS UNCOMMITTED CHANGES ON ${day}.`,
+  builtDirty: (commit, day) => ` BUILT FROM COMMIT ${commit} PLUS LOCAL CHANGES ON ${day}.`,
 };
 
 // What the browser lacks, as the key of what to say ('' when nothing; 'file' is said by index.html itself, where a
@@ -79,6 +87,31 @@ export function missing(has) {
   if (!has.worklet) return 'noWorklet';
   if (!has.webgl2) return 'noWebgl2';
   return '';
+}
+
+// The editor's status once it is ready (Module.fcmpStatus(), parsed), as what the page does about it: '' (go on: it
+// draws, or its context is lost for the moment, which is `ok` 0 with no error: the sink restores it by itself),
+// 'noWebgl2' (the canvas was given no context: FunkGui's WebGlSink says "the browser gave no WebGL2 context for
+// ...", and SAY.noWebgl2 is true), or the sink's own reason (a shader that did not compile, a program that did not
+// link, ...), which the page says as it is: the browser has WebGL2 then, and the reason is what diagnoses it.
+export function statusFault(status) {
+  const error = String(status.error || '');
+  if (status.ok || error === '') return '';
+  return /no WebGL2 context/.test(error) ? 'noWebgl2' : error;
+}
+
+// An uncaught error or an unhandled rejection as the editor's failure: its reason, or '' when it is not the editor's.
+// `what` is an ErrorEvent, or { error: a rejection's reason }. Until Module.fcmpReady has run, anything uncaught is
+// the editor's: the glue leaves a main() that threw or trapped by throwing again, and the page's own promises are all
+// caught. Afterwards only a wasm trap is, and what was thrown in the editor's two files (a frame, an EM_JS body).
+export function editorFault(ready, what) {
+  const error = what.error;
+  const reason = error && error.message ? `${error.name || 'Error'}: ${error.message}`
+                                        : String(what.message || error || 'no reason given');
+  if (!ready) return reason;
+  const trap = typeof WebAssembly === 'object' && error instanceof WebAssembly.RuntimeError;
+  const from = `${what.filename || ''} ${(error && error.stack) || ''}`;
+  return trap || /\bfcmp-ui\.(?:js|wasm)\b/.test(from) ? reason : '';
 }
 
 // A file the page will not play, as the key of what to say ('' when it may be decoded, or played).
@@ -100,7 +133,8 @@ export function fadeEnds(samples, sampleRate) {
 }
 
 // built-from.txt's line, "site <sha|none> <clean|dirty> <UTC time>" (cmake/FcmpBuiltFrom.cmake), as what the footer
-// says. A link only for a clean tree: `none` has no commit, and a dirty tree is not the commit it names.
+// says. A link only for `clean`: `none` has no commit, and `dirty` is not the commit it names (the tree had
+// uncommitted changes, or the FunkGui the modules were linked from was not the pinned one).
 export function builtFrom(line) {
   const m = /^site ([0-9a-f]{40}) (clean|dirty) (\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}Z\s*$/.exec(line);
   if (!m) return null;
@@ -150,6 +184,7 @@ export class Verdict {
 
 // ---- the page -------------------------------------------------------------------------------------------------------
 function boot() {
+  globalThis.fcmpBooted = true;                       // index.html's "the page did not load" stands down
   const $ = (id) => document.getElementById(id);
   const selftest = new URLSearchParams(location.search).get('selftest') === '1'
                 || location.pathname.split('/').pop() === 'fcmp-ui.html';
@@ -185,12 +220,24 @@ function boot() {
   let loopBuffer = null;
   let engine = null;                                  // the bytes of fcmp-engine.wasm, fetched once
   let opening = 0;                                    // the latest file asked for: an older, slower one is dropped
+  let fault = null;                                   // what went wrong while START was loading: start() ends on it
 
+  // The status line is a live region: a change is announced only when the region is in the accessibility tree before
+  // its text changes. So the overlay is never hidden: while the demo plays it is `away` (demo.css: out of sight, and
+  // still rendered), and the line says so. The same words are not written twice (that could be announced twice).
+  const say = (text) => {
+    if ($('fcmp-status').textContent !== text) $('fcmp-status').textContent = text;
+  };
   const overlay = (text, button = '') => {
-    $('fcmp-status').textContent = text;
+    $('fcmp-overlay').classList.remove('away');
+    say(text);
     $('fcmp-start').textContent = button;
     $('fcmp-start').hidden = button === '';
-    $('fcmp-overlay').hidden = false;
+  };
+  const overlayAway = (text) => {
+    say(text);
+    $('fcmp-start').hidden = true;
+    $('fcmp-overlay').classList.add('away');
   };
   const notice = (text) => {
     $('fcmp-notice').textContent = text;
@@ -217,26 +264,46 @@ function boot() {
   // ---- the editor module --------------------------------------------------------------------------------------------
   // The page's half of the seam: Module.fcmpReady and Module.onAbort exist before fcmp-ui.js runs. That file is a
   // classic script reading the global Module, so the object goes on globalThis first and the script is added after.
-  let editorGone = null;                              // an abort while START is loading: start() ends on it
-  const editor = new Promise((ready, abort) => {
+  let editorReady = false;                            // Module.fcmpReady has run
+  let editorGone = null;                              // why the editor is no more
+  let editorLost = null;
+  const editor = new Promise((ready, lost) => {
+    // The editor is no more. Said once (abort() calls onAbort and then throws, which is an uncaught error as well).
+    // While START is loading, start() ends on it after its next await.
+    editorLost = (error) => {
+      if (editorGone !== null) return;
+      editorGone = error;
+      lost(error);
+      if (state === 'running') stop(error);
+      else if (state === 'idle') fail(error);
+    };
     globalThis.Module = {
-      fcmpReady: ready,
-      onAbort: (what) => {
-        editorGone = new Error(`the editor stopped (${what})`);
-        abort(editorGone);
-        if (state === 'running') stop(editorGone);
-        else if (state === 'idle') fail(editorGone);
+      fcmpReady: () => {
+        editorReady = true;
+        ready();
       },
+      onAbort: (what) => editorLost(new Error(`the editor stopped (${what || 'no reason given'})`)),
     };
   }).then(() => {
-    // The probe above said WebGL2 exists; the editor's own canvas may still have been refused a context.
-    if (!JSON.parse(Module.fcmpStatus()).ok) throw new Refusal(SAY.noWebgl2);
+    // The probe above said WebGL2 exists; the editor's own canvas may still have been refused a context, and the
+    // sink has other reasons not to draw.
+    const reason = statusFault(JSON.parse(Module.fcmpStatus()));
+    if (reason !== '') throw reason === 'noWebgl2' ? new Refusal(SAY.noWebgl2) : new Error(reason);
     $('fcmp-stage').classList.remove('waiting');
   });
   editor.catch((error) => {
     if (state === 'idle') fail(error);
   });
   const loadEditor = () => {
+    // Only abort() reaches Module.onAbort: an exception or a trap in the editor's main() or in one of its frames is
+    // an uncaught error or an unhandled rejection (editorFault says which are the editor's). Beside the self-test's
+    // own listeners, which make any of them its FAIL.
+    const uncaught = (what) => {
+      const reason = editorFault(editorReady, what);
+      if (reason !== '') editorLost(new Error(`the editor ${editorReady ? 'stopped' : 'did not start'} (${reason})`));
+    };
+    window.addEventListener('error', uncaught);
+    window.addEventListener('unhandledrejection', (event) => uncaught({ error: event.reason }));
     const script = document.createElement('script');
     script.src = 'fcmp-ui.js';
     script.onerror = () => Module.onAbort('fcmp-ui.js did not load');
@@ -345,32 +412,58 @@ function boot() {
     }
     const resumed = context.resume().catch(() => {});
     context.onstatechange = contextChanged;
-    await context.audioWorklet.addModule('fcmp-worklet.js');
-    const made = await makeNode(context, await engineBytes());
-    node = made.node;
-    node.onprocessorerror = () => stop(new Error('the audio processor stopped'));
-    node.port.addEventListener('message', (event) => {
-      if (event.data && event.data.fcmp === 'error') stop(new Error(`the engine stopped (${event.data.error})`));
-    });
-    node.connect(context.destination);
-    const loop = synthLoop(context.sampleRate);
-    loopBuffer = context.createBuffer(2, loop.frames, context.sampleRate);
-    loopBuffer.copyToChannel(loop.left, 0);
-    loopBuffer.copyToChannel(loop.right, 1);
-    await editor;                                      // drawing since the page loaded; the port is all it lacks
-    if (editorGone !== null) throw editorGone;
-    Module.fcmpPort.connect(node.port, context.sampleRate, QUANTUM);
-    play(loopBuffer, SAY.loop);
-    await Promise.race([resumed, sleep(250)]);         // a context that is about to run shows no RESUME on the way
-    state = 'running';
-    $('fcmp-open').disabled = false;
-    contextChanged();
-    return made.ready;
+    // Asked after every await. A failure of the engine or the editor that came meanwhile ends this start (the worklet
+    // says its error once, and stop() acts only on a demo that runs, so it is remembered: `fault`). And a start that
+    // was given up meanwhile (fail(), after the self-test's time limit) goes no further.
+    const wanted = () => {
+      if (fault !== null) throw fault;
+      if (editorGone !== null) throw editorGone;
+      return state === 'loading';
+    };
+    let connected = false;
+    try {
+      await context.audioWorklet.addModule('fcmp-worklet.js');
+      if (!wanted()) return;
+      const wasm = await engineBytes();
+      if (!wanted()) return;
+      const made = await makeNode(context, wasm);
+      if (!wanted()) return;
+      node = made.node;
+      node.onprocessorerror = () => stop(new Error('the audio processor stopped'));
+      node.port.addEventListener('message', (event) => {
+        if (event.data && event.data.fcmp === 'error') stop(new Error(`the engine stopped (${event.data.error})`));
+      });
+      node.connect(context.destination);
+      const loop = synthLoop(context.sampleRate);
+      loopBuffer = context.createBuffer(2, loop.frames, context.sampleRate);
+      loopBuffer.copyToChannel(loop.left, 0);
+      loopBuffer.copyToChannel(loop.right, 1);
+      // Drawing since the page loaded, as a rule: the port is all it lacks. Bounded, for an editor that never says
+      // it is ready and never fails either.
+      await within(EDITOR_MS, 'the editor', editor);
+      if (!wanted()) return;
+      Module.fcmpPort.connect(node.port, context.sampleRate, QUANTUM);
+      connected = true;
+      play(loopBuffer, SAY.loop);
+      await Promise.race([resumed, sleep(250)]);       // a context that is about to run shows no RESUME on the way
+      if (!wanted()) return;
+      state = 'running';
+      $('fcmp-open').disabled = false;
+      contextChanged();
+      return made.ready;
+    } finally {
+      // Not running after all: an editor that lives must not go on posting to an engine nobody hears.
+      if (connected && state !== 'running' && editorGone === null) Module.fcmpPort.disconnect();
+    }
   };
   function contextChanged() {
     if (state !== 'running') return;
-    if (context.state === 'running') $('fcmp-overlay').hidden = true;
-    else overlay(SAY.paused, SAY.resume);              // suspended (no gesture yet, or by the browser) or interrupted
+    if (context.state === 'running') {
+      overlayAway(SAY.playing);
+    } else {                                           // suspended (no gesture yet, or by the browser) or interrupted
+      overlay(SAY.paused, SAY.resume);
+      $('fcmp-start').focus();                         // the way on: by then the focus is on nothing (START is gone)
+    }
   }
   const silence = () => {
     $('fcmp-loop').disabled = true;
@@ -384,6 +477,7 @@ function boot() {
     silence();
   }
   function stop(error) {
+    if (state === 'loading' && fault === null) fault = error;      // START is loading: start() ends on it
     if (state !== 'running') return;
     state = 'stopped';
     overlay(SAY.stopped(`${upper(error)}.`));
@@ -528,6 +622,20 @@ function boot() {
     const started = state === 'running';
     if (!row(started, 'page.start', started ? `${context.sampleRate} Hz, the context is ${context.state}`
                                             : $('fcmp-status').textContent)) return;
+    // What the page says of itself is true and can be heard: the status line is rendered (a live region that is
+    // display: none announces nothing) and says PLAYING while the context runs; otherwise it says how to go on, and
+    // the button that does has the focus.
+    {
+      const status = $('fcmp-status');
+      const heard = status.getClientRects().length > 0 && getComputedStyle(status).visibility === 'visible';
+      const runs = context.state === 'running';
+      const button = $('fcmp-start');
+      const focused = document.activeElement === button;
+      row(heard && (runs ? status.textContent === SAY.playing && button.hidden
+                         : status.textContent === SAY.paused && !button.hidden && focused),
+          'page.status', `the status line says "${status.textContent}" and is ${heard ? '' : 'NOT '}rendered; `
+          + (button.hidden ? 'no button' : `${button.textContent} ${focused ? 'has' : 'has NOT'} the focus`));
+    }
     // The editor's own check (the seam's Module.fcmpSelftest): the atlas it draws with is the committed bake, and one
     // frame through the WebGL2 sink, read back inside that call, is SoftRaster's within 2 of 255 a channel.
     if (typeof Module.fcmpSelftest !== 'function') {
@@ -562,8 +670,8 @@ function boot() {
         `${after.frames - before.frames} frames drawn while watched (${after.frames} in all), ${after.fps} fps, `
         + `zoom ${after.zoom}`);
     row(after.replies > before.replies && after.refused === 0 && after.prepared === 1
-        && after.rate === context.sampleRate && (after.flags & linked) === linked && live.replies > 0
-        && live.refused === 0, 'editor.link',
+        && after.rate === context.sampleRate && (after.flags & linked) === linked && live.ok === true
+        && live.replies > 0 && live.refused === 0, 'editor.link',
         `${after.replies - before.replies} replies while watched (${after.replies} in all), `
         + `flags 0x${after.flags.toString(16)}, ${after.rate} Hz; the worklet took ${live.records} records, `
         + `refused ${live.refused}`);

@@ -15,9 +15,13 @@
 //                  toolchain's texts whole
 //   wording.*      what the page says is upper case, in the HTML and in main.js's table; the differences are listed
 //                  and BYPASS is the editor's own
-//   refusals.*     what the browser lacks, in the order a reader can act on
+//   refusals.*     what the browser lacks, in the order a reader can act on; and index.html's own script, run here
+//                  against a stand-in document: it says that the page did not load when main.js never runs (and
+//                  gives the self-test its FAIL), and nothing once main.js has booted
+//   editor.*       what the editor's status means to the page (no WebGL2 only when the sink says so, any other reason
+//                  as it is, a lost context nothing), and which uncaught errors are the editor's failure
 //   files.*        the limits of a dropped file, and the fades at its ends
-//   built_from.*   the footer's line: a link only for a clean tree, nothing for `none` or an unreadable line
+//   built_from.*   the footer's line: a link only for `clean`, nothing for `none` or an unreadable line
 //   verdict.*      the self-test's title: RUNNING, then PASS or FAIL: <the first failing row>; an uncaught error is a
 //                  FAIL at once; no PASS ever replaces a FAIL
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
@@ -149,7 +153,7 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
   // The text a reader sees: the body without its scripts and tags, and the texts its attributes carry.
   const body = found(index, /<body>([\s\S]*)<\/body>/) || '';
   const shown = body.replace(/<script\b[\s\S]*?<\/script>/g, ' ').replace(/<[^>]*>/g, ' ')
-              + [...body.matchAll(/\b(?:data-file|aria-label)="([^"]*)"/g)].map((m) => m[1]).join(' ');
+              + [...body.matchAll(/\b(?:data-[a-z]+|aria-label)="([^"]*)"/g)].map((m) => m[1]).join(' ');
   const lower = shown.match(/[^\s]*[a-z][^\s]*/g) || [];
   row(shown.trim().length > 400 && lower.length === 0, 'wording.html',
       lower.length === 0 ? 'the page\'s text is upper case' : `not upper case: ${lower.slice(0, 6).join(' ')}`);
@@ -163,7 +167,7 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
 
   const list = found(index, /WHAT DIFFERS FROM THE PLUGIN<\/h2>\s*<ul>([\s\S]*?)<\/ul>/) || '';
   const differs = [...list.matchAll(/<li>/g)].length;
-  row(differs === 9 && body.includes('BYPASS') && !/<button[^>]*>[^<]*BYPASS/.test(body), 'wording.differences',
+  row(differs === 10 && body.includes('BYPASS') && !/<button[^>]*>[^<]*BYPASS/.test(body), 'wording.differences',
       `${differs} differences listed; BYPASS is named in the text, and the page has no button of its own for it`);
 }
 
@@ -182,6 +186,129 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
       wrong.length === 0 ? 'no WebAssembly, then a file: address, an insecure context, no AudioWorklet, no WebGL2; '
                            + 'each has its text'
                          : `wrong for: ${wrong.map(([want]) => want || 'nothing missing').join(', ')}`);
+
+  // index.html's own words. Its classic script, the module tag's onerror and the nomodule script are run as a browser
+  // would, against a document that is one status element and a title.
+  const scripts = [...index.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+                    .map((m) => ({ tag: m[1], code: m[2] }));
+  const moduleAt = scripts.findIndex((s) => /\btype="module"/.test(s.tag) && /\bsrc="main\.js"/.test(s.tag));
+  const classic = scripts.slice(0, Math.max(moduleAt, 0)).map((s) => s.code).join('\n');
+  const onerror = moduleAt < 0 ? undefined : found(scripts[moduleAt].tag, /\bonerror="([^"]*)"/);
+  const nomodule = (scripts.find((s) => /\bnomodule\b/.test(s.tag)) || {}).code;
+  const data = (name) => found(index, new RegExp(`id="fcmp-status"[^>]*\\bdata-${name}="([^"]*)"`));
+  const visit = (protocol, pathname, search, steps) => {
+    const status = { textContent: '', getAttribute: (name) => found(index, new RegExp(`\\b${name}="([^"]*)"`)) };
+    const doc = { title: 'FCompressor: web demo', getElementById: (id) => (id === 'fcmp-status' ? status : null) };
+    const listeners = [];
+    const win = { addEventListener: (type, heard) => type === 'error' && listeners.push(heard) };
+    let threw = '';
+    try {
+      const own = new Function('window', 'document', 'location', `${classic}
+        return { lost: fcmpLost, booted: function () { fcmpBooted = true; } };`)(win, doc,
+                                                                                { protocol, pathname, search });
+      const run = (code) => new Function('fcmpLost', code)(own.lost);
+      steps({ tag: () => run(onerror),
+              old: () => run(nomodule),
+              window: () => listeners.forEach((heard) => heard({})),
+              boot: () => {
+                own.booted();
+                status.textContent = 'MAIN';
+                doc.title = 'RUNNING';
+              } });
+    } catch (error) {
+      threw = ` (${error})`;
+    }
+    return `${status.textContent} | ${doc.title}${threw}`;
+  };
+  const lost = `${data('lost')} | `;
+  const plain = 'FCompressor: web demo';
+  const fail = 'FAIL: the page did not load';
+  const visits = [
+    ['while it loads', visit('https:', '/demo/index.html', '', () => {}), `${page.SAY.loading} | ${plain}`],
+    ['main.js or an import is not there', visit('https:', '/demo/', '', (v) => v.tag()), lost + plain],
+    ['main.js does not parse', visit('https:', '/index.html', '', (v) => v.window()), lost + plain],
+    ['the self-test, by its path', visit('http:', '/fcmp-ui.html', '', (v) => v.tag()), lost + fail],
+    ['the self-test, a parse error', visit('http:', '/a/fcmp-ui.html', '', (v) => v.window()), lost + fail],
+    ['the self-test, by the query', visit('http:', '/index.html', '?a=b&selftest=1', (v) => v.tag()), lost + fail],
+    ['another query', visit('http:', '/index.html', '?selftest=10', (v) => v.tag()), lost + plain],
+    ['a browser without module scripts', visit('https:', '/index.html', '', (v) => v.old()),
+     `${data('old')} | ${plain}`],
+    ['a file: address', visit('file:', '/Users/x/site/index.html', '', () => {}), `${data('file')} | ${plain}`],
+    ['a file: address, the tag\'s error', visit('file:', '/site/index.html', '', (v) => v.tag()),
+     `${data('file')} | ${plain}`],
+    ['once main.js has booted', visit('http:', '/fcmp-ui.html', '', (v) => {
+      v.boot();
+      v.tag();
+      v.window();
+      v.old();
+    }), 'MAIN | RUNNING'],
+  ];
+  const off = visits.filter(([, got, want]) => got !== want);
+  const boots = /\nfunction boot\(\) \{\n\s*globalThis\.fcmpBooted = true;/.test(read(source, 'web/main.js'));
+  row(moduleAt > 0 && !!onerror && !!nomodule && !!data('lost') && !!data('old') && !!data('file') && boots
+      && off.length === 0, 'refusals.not_loaded',
+      off.length === 0 ? `index.html says "${data('lost')}" by itself in ${visits.length} cases (a missing or broken `
+                         + 'main.js or import, a browser without module scripts, a file: address), the self-test\'s '
+                         + `title is "${fail}", and it says nothing once main.js has booted (boot() says so first: `
+                         + `${boots})`
+                       : off.map(([name, got, want]) => `${name}: "${got}", want "${want}"`).join('; '));
+}
+
+// ---- the editor's status and its failures --------------------------------------------------------------------------
+{
+  const context = 'the browser gave no WebGL2 context for \'#fcmp-canvas\'';       // FunkGui's WebGlSink.cpp
+  const shader = 'the fragment shader did not compile: ERROR: 0:7: syntax error';
+  const cases = [['', { ok: 1, error: '' }], ['', { ok: 1, error: 'stale' }], ['', { ok: 0, error: '' }],
+                 ['', { ok: 0 }], ['noWebgl2', { ok: 0, error: context }], [shader, { ok: 0, error: shader }],
+                 ['the program did not link: x', { ok: 0, error: 'the program did not link: x' }],
+                 ['no canvas matches \'#fcmp-canvas\'', { ok: 0, error: 'no canvas matches \'#fcmp-canvas\'' }]];
+  const wrong = cases.filter(([want, status]) => page.statusFault(status) !== want)
+                     .map(([, status]) => `${JSON.stringify(status)} -> ${JSON.stringify(page.statusFault(status))}`);
+  // The words statusFault() looks for are the sink's, in the FunkGui this build used.
+  const build = dirname(site);
+  const cache = existsSync(join(build, 'CMakeCache.txt')) ? read(build, 'CMakeCache.txt') : '';
+  const funkgui = found(cache, /^FunkGui_SOURCE_DIR:STATIC=(.+)$/m);
+  const sinkFile = funkgui ? join(funkgui, 'src/web/WebGlSink.cpp') : '';
+  const sink = sinkFile && existsSync(sinkFile) ? read(sinkFile) : '';
+  const sinkSays = sink.includes('"the browser gave no WebGL2 context for \'"');
+  row(wrong.length === 0 && sinkSays, 'editor.status',
+      wrong.length === 0 ? 'no WebGL2 only for the sink\'s "no WebGL2 context" (the build\'s WebGlSink.cpp '
+                           + `${sinkSays ? 'says it' : 'DOES NOT SAY IT'}); any other reason is said as it is; ok 0 `
+                           + 'without an error (a lost context) stops nothing'
+                         : `wrong: ${wrong.join('; ')}`);
+
+  const trap = new WebAssembly.RuntimeError('unreachable');
+  const thrown = new TypeError('x is not a function');
+  const at = (message, where) => Object.assign(new Error(message), { stack: `Error: ${message}\n    at ${where}` });
+  const glue = at('in a frame', 'http://h/demo/fcmp-ui.js:1:2');
+  const wasm = at('in wasm', 'http://h/fcmp-ui.wasm:wasm-function[7]:0x1');
+  const own = at('the page', 'http://h/demo/main.js:1:2');
+  const exit = { name: 'ExitStatus', message: 'Program terminated with exit(1)', status: 1 };
+  const faults = [
+    ['TypeError: x is not a function', false, { message: 'Uncaught TypeError: x is not a function', error: thrown }],
+    ['Error: the page', false, { error: own }],
+    ['ExitStatus: Program terminated with exit(1)', false, { error: exit }],
+    ['a string', false, { error: 'a string' }],
+    ['Script error.', false, { message: 'Script error.', error: null }],
+    ['no reason given', false, { error: undefined }],
+    ['RuntimeError: unreachable', true, { error: trap }],
+    ['Error: in a frame', true, { error: glue }],
+    ['Error: in wasm', true, { error: wasm }],
+    ['TypeError: x is not a function', true, { message: 'Uncaught', filename: 'http://h/a/fcmp-ui.js', error: thrown }],
+    ['Script error.', true, { message: 'Script error.', filename: 'http://h/fcmp-ui.js?v=2', error: null }],
+    ['', true, { error: own }],
+    ['', true, { message: 'Uncaught', filename: 'http://h/demo/main.js', error: thrown }],
+    ['', true, { message: 'Uncaught', filename: 'http://h/not-fcmp-ui.json', error: 'a string' }],
+    ['', true, { error: undefined }],
+  ];
+  const missed = faults.filter(([want, ready, what]) => page.editorFault(ready, what) !== want)
+                       .map(([want, ready, what]) => `${ready ? 'after' : 'before'} ready, want "${want}", got `
+                                                     + `"${page.editorFault(ready, what)}"`);
+  row(missed.length === 0, 'editor.uncaught',
+      missed.length === 0 ? `${faults.length} cases: before the editor is ready anything uncaught is its failure, with `
+                            + 'the reason; afterwards a wasm trap and what its two files threw, and nothing of the '
+                            + 'page\'s own'
+                          : missed.join('; '));
 }
 
 // ---- files ---------------------------------------------------------------------------------------------------------
@@ -218,8 +345,8 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
   const others = ['', `probes ${sha} clean ${when}`, '<html>404</html>', `site ${sha} clean`].map(page.builtFrom);
   row(!!clean && clean.href === `https://github.com/Snipet/FCompressor/tree/${sha}`
       && clean.text.includes('7319AC752200') && clean.text.includes('2026-10-02') && !!dirty && dirty.href === ''
-      && dirty.text.includes('UNCOMMITTED') && none === null && others.every((o) => o === null),
-      'built_from.link_only_when_clean',
+      && dirty.text === ' BUILT FROM COMMIT 7319AC752200 PLUS LOCAL CHANGES ON 2026-10-02.' && none === null
+      && others.every((o) => o === null), 'built_from.link_only_when_clean',
       `clean: "${clean && clean.text.trim()}" -> ${clean && clean.href}; dirty: "${dirty && dirty.text.trim()}", `
       + `${(dirty && dirty.href) || 'no link'}; none: ${none === null ? 'nothing' : JSON.stringify(none)}`);
 }

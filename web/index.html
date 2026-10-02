@@ -18,7 +18,9 @@
 <div id="fcmp-overlay">
 <button id="fcmp-start" type="button" hidden>START</button>
 <p id="fcmp-status" role="status"
-   data-file="THE DEMO DOES NOT RUN FROM A FILE. SERVE THIS FOLDER OVER HTTPS, OR FROM LOCALHOST."></p>
+   data-file="THE DEMO DOES NOT RUN FROM A FILE. SERVE THIS FOLDER OVER HTTPS, OR FROM LOCALHOST."
+   data-lost="THE DEMO DID NOT LOAD. RELOAD THE PAGE."
+   data-old="THIS BROWSER IS TOO OLD FOR THE DEMO. TRY A CURRENT DESKTOP BROWSER."></p>
 <noscript><p>THE DEMO NEEDS JAVASCRIPT.</p></noscript>
 </div>
 </div>
@@ -46,6 +48,8 @@ STEPPED CONTROL ABOUT TWO STEPS.</li>
 <li>TYPED VALUES TAKE PLAIN KEYS ONLY: NO INPUT METHOD, NO DEAD KEYS.</li>
 <li>NO HOST PARAMETER MENU ON A RIGHT-CLICK.</li>
 <li>DESKTOP BROWSERS WITH WEBGL2 ONLY, AND NOTHING FOR A SCREEN READER IN THE EDITOR.</li>
+<li>ON THE CHARACTERISTICS SCREEN THE ATTACK AND RELEASE CURVES FOLLOW A CONTROL ONCE IT RESTS, NOT WHILE IT
+MOVES.</li>
 </ul>
 </section>
 </main>
@@ -57,12 +61,25 @@ THE BUILD TOOLS' LIBRARIES HAVE <a href="licences/THIRD-PARTY.txt">THEIR OWN LIC
 </footer>
 <pre id="funkgui-log" hidden></pre>
 <script>
-  // A module script does not load from a file: address, so main.js never runs there and the refusal is said here.
-  if (location.protocol === 'file:') {
-    var fcmpStatus = document.getElementById('fcmp-status');
-    fcmpStatus.textContent = fcmpStatus.dataset.file;
+  // What the page says until main.js runs, and when it never does: a module script that fails says nothing by itself.
+  // A file that is not there (main.js, or loop.js, which it imports) is an error event on the tag, and so is a file:
+  // address, where a module never loads; a file that does not parse is one on the window; a browser without module
+  // scripts runs the nomodule script instead. On the self-test path the title is the verdict a runner waits for.
+  // main.js sets fcmpBooted first thing: from then on the words and the verdict are its own.
+  var fcmpBooted = false;
+  function fcmpLost(words) {
+    if (fcmpBooted) return;
+    var status = document.getElementById('fcmp-status');
+    status.textContent = status.getAttribute(location.protocol === 'file:' ? 'data-file' : words);
+    if (/[?&]selftest=1(&|$)/.test(location.search) || /(^|\/)fcmp-ui\.html$/.test(location.pathname)) {
+      document.title = 'FAIL: the page did not load';
+    }
   }
+  document.getElementById('fcmp-status').textContent = 'LOADING';
+  if (location.protocol === 'file:') fcmpLost('data-file');
+  window.addEventListener('error', function () { fcmpLost('data-lost'); });
 </script>
-<script type="module" src="main.js"></script>
+<script type="module" src="main.js" onerror="fcmpLost('data-lost')"></script>
+<script nomodule>fcmpLost('data-old');</script>
 </body>
 </html>

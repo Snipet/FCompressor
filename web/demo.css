@@ -38,6 +38,19 @@ header p, #fcmp-notes, footer { color: #8d8b86; }
   text-align: center;
 }
 #fcmp-status { max-width: 640px; }
+/* While the demo plays the overlay is away, and never display: none (nor [hidden]): its status line is a live region,
+   and a change of its text is announced only when the region was rendered before the change. Out of sight, then. */
+#fcmp-overlay.away {
+  inset: auto;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  background: none;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 button {
   font: inherit;

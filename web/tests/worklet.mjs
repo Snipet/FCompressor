@@ -11,9 +11,11 @@
 //      module that cannot be compiled is an error message and silence, never a throw;
 //   2. the self-check: only on request, the engine's constant, and refused while a source plays;
 //   3. the wire rule: a Pull's reply comes back in its carrier (the record's length is Header::bytes, not the
-//      buffer's), other records have no reply, a refusal is counted and nothing is sent, the inbox's old bytes are
-//      never posted, anything else on the port is ignored;
-//   4. process(): bit-equal to the module driven directly, for any frame count and every shape of input and output;
+//      buffer's): the very buffer the Pull arrived in, transferred, which only the processor's end of the port can
+//      tell from a copy; no byte of a carrier lands behind the 140-byte inbox; other records have no reply, a refusal
+//      is counted and nothing is sent, the inbox's old bytes are never posted, anything else on the port is ignored;
+//   4. process(): bit-equal to the module driven directly, for any frame count and every shape of input and output,
+//      and when a source that played stops (the tail, then zeros: never the last quantum's samples again);
 //      it posts nothing, calls no console function, survives an engine that traps, and ALLOCATES NOTHING: V8's
 //      sampling heap profiler at an interval of one byte attributes every allocation to a call stack, and no byte may
 //      be allocated under a frame of fcmp-worklet.js over 20,000 quanta of every path.
@@ -29,6 +31,7 @@ const MAGIC = 0x50574346;                          // WebProtocol.h: kMagic, kVe
 const VERSION = 1;
 const KIND = { params: 1, attach: 2, reset: 3, pull: 4, reply: 0x8000 };
 const PARAMS_BYTES = 140;
+const INBOX_BYTES = 140;                           // kMaxMessageBytes: the worklet's inbox, a block of exactly that
 const REPLY_FIXED_BYTES = 320;
 const REPLY_BYTES = 320 + 32 * 512;                // sizeof(Reply): the carrier
 const Q = 128;
@@ -57,7 +60,10 @@ if (!workletPath || !enginePath || !loopPath) {
 
 // ---- the stand-in scope ---------------------------------------------------------------------------------------------
 // The processor's port is one end of a real MessageChannel; `page` is the other. Everything the processor posts is
-// counted where it posts it (`posted`), and arrives at `page` as a browser would deliver it.
+// counted where it posts it (`posted`), and arrives at `page` as a browser would deliver it. At `page` a buffer that
+// was transferred, one that was cloned and a new one look the same, so a buffer is judged where it is posted:
+// `buffers` counts them, `same` those that are the object receive() was last handed, `listed` those whose transfer
+// list is that one object, `gone` those detached by the post.
 let nextPort = null;
 const registered = {};
 globalThis.AudioWorkletProcessor = class {
@@ -72,11 +78,20 @@ globalThis.sampleRate = 48000;
 
 function construct(rate, wasm) {
   const channel = new MessageChannel();
-  const side = { posted: 0, inbox: [], waiting: null, page: channel.port2 };
+  const side = { posted: 0, inbox: [], waiting: null, page: channel.port2, received: null, buffers: 0, same: 0,
+                 listed: 0, gone: 0 };
   const post = channel.port1.postMessage.bind(channel.port1);
   channel.port1.postMessage = (message, transfer) => {
     side.posted += 1;
+    const whole = message instanceof ArrayBuffer;
+    const same = whole && message === side.received;
+    const listed = whole && Array.isArray(transfer) && transfer.length === 1 && transfer[0] === message;
     post(message, transfer);
+    if (!whole) return;
+    side.buffers += 1;
+    side.same += same ? 1 : 0;
+    side.listed += listed ? 1 : 0;
+    side.gone += message.byteLength === 0 ? 1 : 0;
   };
   channel.port2.on('message', (data) => {
     side.inbox.push(data);
@@ -85,8 +100,19 @@ function construct(rate, wasm) {
   nextPort = channel.port1;
   globalThis.sampleRate = rate;
   side.processor = new registered['fcmp-engine']({ processorOptions: { wasm } });
+  // The port's handler calls this.receive(...) by name, so an own property is what it finds from here on.
+  const receive = side.processor.receive;
+  side.processor.receive = function (data) {
+    side.received = data instanceof ArrayBuffer ? data : null;
+    return receive.call(this, data);
+  };
   return side;
 }
+// Every buffer the processor posted so far was the one it had just received, transferred back: `count` of them.
+const handedBack = (side, count) => side.buffers === count && side.same === count && side.listed === count
+                                 && side.gone === count;
+const handedBackText = (side) => `of ${side.buffers} buffer(s) posted, ${side.same} the received one, `
+                               + `${side.listed} in the transfer list, ${side.gone} detached by it`;
 // The next message from the processor (they arrive in the order they were posted), or null after a second.
 function next(side) {
   return new Promise((done) => {
@@ -218,7 +244,8 @@ const p = side.processor;
   row(r.before.length === 0 && !!r.stats && r.stats.records === 1 && r.stats.replies === 0 && r.stats.refused === 0,
       'attach.no_reply', JSON.stringify(r.stats));
 
-  // Pull in its carrier: the record is the first Header::bytes = 16 bytes of 16,704.
+  // Pull in its carrier: the record is the first Header::bytes = 16 bytes of 16,704, and the reply is posted in the
+  // buffer the Pull came in (carrier.byteLength === 0 is this test's own transfer; handedBack() is the processor's).
   const carrier = record(KIND.pull, 16, 42, REPLY_BYTES);
   r = await exchange(side, carrier, [carrier]);
   const back = r.before[0];
@@ -226,10 +253,10 @@ const p = side.processor;
   row(carrier.byteLength === 0 && r.before.length === 1 && !!v && back.byteLength === REPLY_BYTES
       && v.getUint32(0, true) === MAGIC && v.getUint16(6, true) === KIND.reply && v.getUint32(12, true) === 42
       && v.getUint32(8, true) === REPLY_FIXED_BYTES + 32 * v.getUint32(24, true) && !!r.stats && r.stats.replies === 1
-      && r.stats.refused === 0, 'pull.reply_in_its_carrier',
+      && r.stats.refused === 0 && handedBack(side, 1), 'pull.reply_in_its_carrier',
       v ? `${back.byteLength} bytes back, Header::bytes ${v.getUint32(8, true)}, `
           + `flags 0x${v.getUint32(16, true).toString(16)}, latency ${v.getUint32(20, true)}, `
-          + `columns ${v.getUint32(24, true)}; refused ${r.stats && r.stats.refused}`
+          + `columns ${v.getUint32(24, true)}; refused ${r.stats && r.stats.refused}; ${handedBackText(side)}`
         : `no reply; refused ${r.stats && r.stats.refused}, last ${r.stats && r.stats.lastRefusal}`);
 
   // The same buffer goes round again and again: 60 pulls, one carrier.
@@ -241,8 +268,32 @@ const p = side.processor;
     carried = await next(side);
     if (carried instanceof ArrayBuffer && new DataView(carried).getUint32(12, true) === 100 + i) rounds += 1;
   }
-  row(rounds === 60, 'pull.carrier_goes_round',
-      `${rounds} of 60 replies came back in the one buffer, each with its Pull's tag`);
+  row(rounds === 60 && handedBack(side, 61), 'pull.carrier_goes_round',
+      `${rounds} of 60 replies came back with their Pull's tag; ${handedBackText(side)}`);
+
+  // The inbox is 140 bytes of the module's memory, with the module's other blocks right behind it: of a 16,704-byte
+  // carrier no byte may land there. The carrier is 0xFF from byte 16 on (zeros would not show on memory that is
+  // zero), and no quantum runs between the two looks at the memory.
+  const heap = new Uint8Array(p.x.memory.buffer);
+  const behind = heap.slice(p.pMessage + INBOX_BYTES, p.pMessage + REPLY_BYTES);
+  const loud = record(KIND.pull, 16, 77, REPLY_BYTES);
+  new Uint8Array(loud).fill(0xff, 16);
+  r = await exchange(side, loud, [loud]);
+  let changed = 0;
+  let firstChanged = -1;
+  for (let i = 0; i < behind.length; i += 1) {
+    if (heap[p.pMessage + INBOX_BYTES + i] === behind[i]) continue;
+    if (changed === 0) firstChanged = INBOX_BYTES + i;
+    changed += 1;
+  }
+  const answer = r.before[0] instanceof ArrayBuffer ? new DataView(r.before[0]) : null;
+  row(Number.isInteger(p.pMessage) && p.pMessage > 0 && behind.length === REPLY_BYTES - INBOX_BYTES && changed === 0
+      && r.before.length === 1 && !!answer && answer.getUint16(6, true) === KIND.reply
+      && answer.getUint32(12, true) === 77 && !!r.stats && r.stats.replies === 62 && r.stats.refused === 0,
+      'pull.nothing_behind_the_inbox',
+      `a Pull in a carrier of 0xFF: ${changed} of the ${behind.length} bytes behind the ${INBOX_BYTES}-byte inbox `
+      + `changed${changed ? ` (the first at inbox + ${firstChanged})` : ''}; the reply is `
+      + `${answer && answer.getUint32(12, true) === 77 ? 'its own' : 'NOT its own'}`);
 
   // Refusals: nothing is sent, the count and the engine's code say what happened.
   const said = [];
@@ -406,6 +457,65 @@ const hushConsole = (on) => {
   }
   row(ok && threw === '', 'process.every_shape',
       `${said.join('; ')}; no output channel, no output, no frames: ${threw || 'no throw'}`);
+}
+
+{
+  // A source that stops. ONE processor plays the loop and is then given a shape whose input is not read; the module
+  // is given the same quanta and then pointer 0 (its own input blocks still hold the last quantum, as the script's
+  // do). Every quantum is compared: the tail, then exact zeros. On a fresh processor the input blocks are zeros and a
+  // script that handed the engine its block again, or made no call at all, would pass; here it cannot.
+  const PLAYED = 300;
+  const AFTER = 600;
+  const stops = [
+    ['no source', Q, () => [[]], false],
+    ['no input at all', Q, () => [], false],
+    ['an input of another length', Q, (l, r) => [[l.subarray(0, 64), r.subarray(0, 64)]], false],
+    ['no source, in 300-frame quanta', 300, () => [[]], false],
+    ['mono', Q, (l) => [[l]], true],
+    ['mono, in 300-frame quanta', 300, (l) => [[l]], true],
+  ];
+  const said = [];
+  let ok = true;
+  for (const [name, frames, after, mono] of stops) {
+    const a = construct(48000, wasm).processor;
+    const d = direct(48000);
+    let bad = 0;
+    let played = 0;                 // the largest sample of the last quantum that played: what a stale block holds
+    let tail = 0;                   // samples of the module's output that are not zero once the source is gone
+    let lastSound = -1;             // the last quantum with one
+    for (let q = 0; q < PLAYED + AFTER; q += 1) {
+      const playing = q < PLAYED;
+      const l = loop.left.slice(q * frames, (q + 1) * frames);
+      const r = loop.right.slice(q * frames, (q + 1) * frames);
+      const outputs = [[new Float32Array(frames), new Float32Array(frames)]];
+      a.process(playing ? [[l, r]] : after(l, r), outputs);
+      if (q === PLAYED - 1) {
+        for (let i = 0; i < frames; i += 1) played = Math.max(played, Math.abs(l[i]), Math.abs(r[i]));
+      }
+      for (let piece = 0; piece < frames; piece += Q) {
+        const n = Math.min(Q, frames - piece);
+        if (playing || mono) d.f.set(l.subarray(piece, piece + n), d.inL / 4);
+        if (playing) d.f.set(r.subarray(piece, piece + n), d.inR / 4);
+        d.x.fcmp_web_process(d.engine, playing || mono ? d.inL : 0, playing ? d.inR : 0, d.outL, d.outR, n);
+        bad += equal(outputs[0][0].subarray(piece), d.f.subarray(d.outL / 4), n)
+             + equal(outputs[0][1].subarray(piece), d.f.subarray(d.outR / 4), n);
+        if (playing) continue;
+        for (let i = 0; i < n; i += 1) {
+          if (d.f[d.outL / 4 + i] === 0 && d.f[d.outR / 4 + i] === 0) continue;
+          tail += 1;
+          lastSound = q - PLAYED;
+        }
+      }
+    }
+    // Not zeros against zeros: the stale blocks hold sound, the module still sounds after the stop, and (but for
+    // mono, which plays on) it is exact zeros well before the end.
+    const real = played > 0.01 && tail > 0 && (mono ? lastSound === AFTER - 1 : lastSound < AFTER - 100);
+    ok = ok && bad === 0 && real;
+    said.push(`${name}: ${bad} differ${real ? '' : ' (AND THE COMPARISON IS EMPTY)'}, `
+              + (mono ? 'the sound goes on' : `${tail} samples of tail, the last in quantum ${lastSound + 1}`));
+  }
+  row(ok, 'process.a_source_that_stops',
+      `${PLAYED} quanta of the loop on one processor, then ${AFTER} of: ${said.join('; ')}`);
 }
 
 {
