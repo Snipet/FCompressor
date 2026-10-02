@@ -14,13 +14,15 @@
 //   presets.save-as               SAVE on a factory preset asks for a name; a typed name and Return make a preset of
 //                                 the user's, current and not modified, and post nothing
 //   presets.save                  SAVE on that preset, edited, saves over it at one press
-//   presets.menu.save             SAVE's menu (Save, Save As...): Escape dismisses it and nothing happens; Save As...
-//                                 opens the name field on the preset's name and says it is taken; typing replaces
-//                                 it, Backspace takes a character away, and Escape leaves the browser open with
-//                                 nothing saved
+//   presets.menu.save             SAVE's menu (Save, Save As...): Escape dismisses it and nothing happens; a press
+//                                 outside, on NEXT PRESET, dismisses it and goes no further; Save As... opens the
+//                                 name field on the preset's name and says it is taken; typing replaces it,
+//                                 Backspace takes a character away, and Escape leaves the browser open with nothing
+//                                 saved
 //   presets.menu.row              a row's menu (Load, Save As..., Rename..., Export... and Import... disabled,
-//                                 Delete); a press outside dismisses it and goes no further; Rename... opens the
-//                                 name field on the row's name, and Escape leaves the row as it was
+//                                 Delete); a press outside dismisses it and goes no further; Escape dismisses it
+//                                 and the browser stays; Rename... opens the name field on the row's name, and
+//                                 Escape leaves the row as it was
 //   presets.rename                RENAME with a typed name renames the row and the current preset
 //   presets.delete                DELETE arms and says so; the second press deletes
 //   presets.import-export         IMPORT and EXPORT are disabled, and the footer says why
@@ -172,7 +174,13 @@ export async function run({ u, row }) {
   const dismissed = await u.menuOpen();
   await u.key('Escape');
   const escaped = dismissed !== null && await u.menuGone();
-  const untouched = await holds(u, (s) => s.a11y.overlay === OVERLAY.none && preset(s).value === NAME && s.tap.n === n);
+  const asItWas = (s) => s.a11y.overlay === OVERLAY.none && preset(s).value === NAME && s.tap.n === n;
+  const untouched = await holds(u, asItWas);
+  await u.press('Save preset', { button: 'right' });
+  const pressedAway = await u.menuOpen();
+  await u.press('Next preset');
+  const away = pressedAway !== null && await u.menuGone();
+  const unstepped = await holds(u, asItWas);
   await u.press('Save preset', { button: 'right' });
   const saveMenu = await u.menuOpen();
   if (saveMenu !== null) await u.menuPress(saveMenu, 'Save As...');
@@ -187,11 +195,13 @@ export async function run({ u, row }) {
   await u.key('Escape');
   const kept = await u.until((s) => browser(s) && field(s) === null);
   const mine = (s) => u.find(s, 'User', { parent: 'Show' }).description;
-  row(escaped && untouched.ok && saveMenu !== null && u.menuTexts(saveMenu) === 'Save | Save As...' && again.ok
-      && free.ok && taken.ok && kept.ok && mine(kept.s) === '1 preset', 'menu.save',
+  row(escaped && untouched.ok && away && unstepped.ok && saveMenu !== null
+      && u.menuTexts(saveMenu) === 'Save | Save As...' && again.ok && free.ok && taken.ok && kept.ok
+      && mine(kept.s) === '1 preset', 'menu.save',
       `a right-click on SAVE: "${saveMenu ? u.menuTexts(saveMenu) : 'no menu'}"; Escape: the menu is `
-      + `${escaped ? 'gone' : 'STILL THERE'} and ${untouched.ok ? 'nothing happened' : 'SOMETHING CHANGED'}; Save `
-      + `As...: the field holds `
+      + `${escaped ? 'gone' : 'STILL THERE'} and ${untouched.ok ? 'nothing happened' : 'SOMETHING CHANGED'}; a press `
+      + `on NEXT PRESET: the menu is ${away ? 'gone' : 'STILL THERE'} and the preset is `
+      + `"${preset(unstepped.s).value}"${unstepped.ok ? '' : ' (SOMETHING CHANGED)'}; Save As...: the field holds `
       + `"${again.ok ? field(again.s).value : '?'}" ("${u.value(again.s, 'Status')}"); typed "${NAME}x": `
       + `"${u.value(free.s, 'Status')}"; Backspace: "${taken.ok ? field(taken.s).value : '?'}" `
       + `("${u.value(taken.s, 'Status')}"); Escape: the browser is `
@@ -204,18 +214,27 @@ export async function run({ u, row }) {
   const rowMenu = await u.menuOpen();
   await u.press('Next preset');
   const gone = await u.menuGone();
-  const unmoved = await holds(u, (s) => preset(s).value === NAME && browser(s));
+  const listed = (s) => preset(s).value === NAME && browser(s) && field(s) === null && names(s).length === 1
+                        && names(s)[0] === NAME && s.tap.n === n;
+  const unmoved = await holds(u, listed);
+  await u.clickAt(...u.centre(own), { button: 'right' });
+  const rowMenuToo = await u.menuOpen();
+  await u.key('Escape');
+  const rowMenuEscaped = rowMenuToo !== null && await u.menuGone();
+  const unclosed = await holds(u, listed);
   await u.clickAt(...u.centre(own), { button: 'right' });
   const rowMenuAgain = await u.menuOpen();
   if (rowMenuAgain !== null) await u.menuPress(rowMenuAgain, 'Rename...');
   const asked = await u.until((s) => field(s) !== null && field(s).value === NAME);
   await u.key('Escape');
   const left = await u.until((s) => browser(s) && field(s) === null && names(s).length === 1 && names(s)[0] === NAME);
-  row(shown.ok && rowMenu !== null && gone && unmoved.ok && rowMenuAgain !== null && asked.ok && left.ok
-      && u.menuTexts(rowMenu) === ROW_MENU,
+  row(shown.ok && rowMenu !== null && gone && unmoved.ok && rowMenuEscaped && unclosed.ok && rowMenuAgain !== null
+      && asked.ok && left.ok && u.menuTexts(rowMenu) === ROW_MENU,
       'menu.row', `USER shows ${JSON.stringify(names(shown.s))}; a right-click on the row: `
       + `"${rowMenu ? u.menuTexts(rowMenu) : 'no menu'}"; a press on NEXT PRESET: the menu is `
-      + `${gone ? 'gone' : 'STILL THERE'} and the preset is "${preset(unmoved.s).value}"; Rename...: the field `
+      + `${gone ? 'gone' : 'STILL THERE'} and the preset is "${preset(unmoved.s).value}"; Escape: the menu is `
+      + `${rowMenuEscaped ? 'gone' : 'STILL THERE'} and the browser `
+      + `${unclosed.ok ? 'as it was' : 'NOT as it was'}; Rename...: the field `
       + `${asked.ok ? `holds "${field(asked.s).value}"` : 'did NOT open'}; Escape: the rows `
       + `${JSON.stringify(names(left.s))}`);
 
