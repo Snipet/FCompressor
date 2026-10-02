@@ -37,7 +37,10 @@
 //                           size and the missing glyphs
 //   <view>.glyphs_missing   0 (a host name the atlas cannot draw fails this: the module's `host` pin takes plain ASCII)
 //
-// The probe needs FCMP_PREFS_DIR (CTest sets a sandbox): the Panel and the web facade's presets read UiPreferences.
+// The probe needs FCMP_PREFS_DIR (CTest sets a sandbox): the Panel's views read UiPreferences, natively from the file
+// in that directory (FunkGui's store with JUCE), so never from the user's; under node FunkGui's store is in memory, no
+// file is read and the guard below only checks the variable. The web facade reads no preference (WebPresets keeps the
+// session's user presets in the object).
 #include "ProbeRegistry.h"
 
 #include "editor/Panel.h"

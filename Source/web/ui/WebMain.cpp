@@ -19,13 +19,16 @@
 //                             compared
 //   Module.fcmpFrame()        the browser gate's settled frame (docs/sprints/web-lead.md, "The gate's contract"): it
 //                             runs frames through the host until the Panel no longer asks for the full rate, at most
-//                             600, and stops at one that was not drawn (a hidden document, a lost context); then a
-//                             text: the line `hooks dpi <g> clock <fixed|free> theme <n> dt <g> settle <n> drawn
-//                             <0|1> idle <0|1>` (the dpi, clock, theme and dt of the frame last recorded; the frames
-//                             this call ran; whether the last of them was drawn; whether the Panel is at rest) and
-//                             FrameText.h's lines for that frame. Each of its frames is the host's own, as the clock
-//                             runs them (the tick, the draw), with one Pull for the call; a second call in a row runs
-//                             one frame. Nothing in the module or the page calls it. An empty text after the shutdown
+//                             600, and stops at one that was not drawn (a hidden document, a lost context); while the
+//                             engine publishes (START pressed, the audio running) it runs one frame and stops there,
+//                             since no frame of the call gets new telemetry; then a text: the line `hooks dpi <g>
+//                             clock <fixed|free> theme <n> dt <g> settle <n> drawn <0|1> idle <0|1>` (the dpi, clock,
+//                             theme and dt of the frame last recorded; the frames this call ran; whether the last of
+//                             them was drawn; whether the Panel is at rest after it, which on a page whose audio runs
+//                             is what that one frame left: never a rest the call made) and FrameText.h's lines for
+//                             that frame. Each of its frames is the host's own, as the clock runs them (the tick, the
+//                             draw), with one Pull for the call; a second call in a row runs one frame. Nothing in the
+//                             module or the page calls it. An empty text after the shutdown
 //   Module.fcmpA11y()         a JSON text, read and nothing changed: the Panel's state (screen, overlay, scTab: the
 //                             enums' numbers; revision: a11yRevision(); fullRate; focus: the focused item's id, 0
 //                             none; focusVisible; textEntry: the sub-view whose text field is open, -1 none) and
@@ -378,18 +381,35 @@ namespace
         return text->c_str();
     }
 
+    // Whether the engine is publishing: a reply has come (the page pressed START and its worklet answers), and the
+    // UiFrame's publishCount moved within layout::band::kStaleS of Panel time (Panel::refreshFrame's `fresh`, but
+    // whatever the nolive pin says: PanelOptions::ignoreLive hides the stream from the Panel, it does not stop it).
+    // Before any reply the facade's frame of zeros is no stream: a page with no audio is never publishing.
+    bool publishing(const App& a)
+    {
+        const fcmp::ui::FrameState& f = a.panel->context().frame;
+        return a.facade.replies() != 0u && f.hasFrame && f.staleSeconds < fcmp::ui::layout::band::kStaleS;
+    }
+
     // Module.fcmpFrame(): frames through the host until the Panel rests, then the hooks line and the frame's text. A
     // frame here is the clock's frame (WebHost::frame at the performance clock's time), so the Panel is ticked and
     // drawn exactly as a frame of the page does it, and the clock goes on from wherever this leaves off: under a
-    // pinned dt each frame is that dt, otherwise the time since the frame before (the host's 1 ms at least, so
-    // without the pin kMaxSettle frames may be no more than 0.6 s to the Panel). The facade is asked once a call,
-    // by the first frame, as one frame of the page asks it: all of a call's frames are one task, no reply arrives
-    // inside it, and a Pull from each would run the facade's patience out on a page whose worklet answers (a repeated
-    // Pull and a new carrier per 30 frames). A frame that was not submitted ends the loop: a hidden document's Panel
-    // is not ticked and would never rest, and a lost context draws nothing to settle for. The text is then that of
-    // the frame last recorded, with `drawn 0` to say so (before any frame: an empty list, whose view is 0 by 0). A
-    // Panel that never rests (the meters of a page whose audio runs) gets all kMaxSettle frames and `idle 0`: the
-    // gate's pages never press START.
+    // pinned dt each frame is that dt, otherwise the time since the frame before (the host's 1 ms at least). The
+    // facade is asked once a call, by the first frame, as one frame of the page asks it: all of a call's frames are
+    // one task, no reply arrives inside it, and a Pull from each would run the facade's patience out on a page whose
+    // worklet answers (a repeated Pull and a new carrier per 30 frames).
+    //
+    // So no frame of a call after its first sees new telemetry, and on a page whose audio runs there is no rest to
+    // settle for: ticked on, the Panel would find the stream stale after kStaleS of its own time, let the meters fall,
+    // scroll HISTORY's window empty by that time and then rest, on a look the page never had (under a pinned dt that
+    // is about 330 frames, 5.5 s ahead of the page). While the engine publishes, the call therefore stops after its
+    // first frame and returns that frame as it is: `settle 1`, and `idle` whatever the Panel says of itself (0 while
+    // the meters move); the Panel's time has moved by one frame, as by one of the page's own, and HISTORY keeps what
+    // it showed. A page with no audio (the gate's capture pages never press START) settles: its frames run until the
+    // Panel rests. A frame that was not submitted ends the loop either way: a hidden document's Panel is not ticked
+    // and would never rest, and a lost context draws nothing to settle for. The text is then that of the frame last
+    // recorded, with `drawn 0` to say so (before any frame: an empty list, whose view is 0 by 0). A Panel still moving
+    // after kMaxSettle frames (without the dt pin each may be the host's 1 ms) gives `idle 0`.
     const char* frameText()
     {
         std::string& out = *text;
@@ -404,7 +424,7 @@ namespace
             app->pulled = true;
             ++frames;
             drawn = r.submitted;
-            if (!r.wantsFullRate)
+            if (!r.wantsFullRate || publishing(*app))
                 break;
         }
         app->pulled = false;
