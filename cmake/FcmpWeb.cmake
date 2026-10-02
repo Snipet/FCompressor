@@ -21,12 +21,16 @@
 #                         __attribute__((export_name("fcmp_...")))  under `#if defined(__wasm__)` (no Emscripten
 #                         header; natively the macro is empty), plus malloc and free. Nothing else: no
 #                         --export-dynamic, which would export the C++ runtime's default-visible symbols too.
-#   fcmp_web_facade_check web only (Sprint C): Source/plugin/portable and Source/web/facade compiled as wasm32 under
-#                         the warning list. Compile-only: a static library nothing links.
-#   fcmp_web_editor_check web only (Sprint C): the editor outside gpu/, the portable model code and the facade over
-#                         FunkGui's JUCE-free core, compiled as wasm32 (the CI web job's proof that the editor is
-#                         JUCE-free and 32-bit clean). The module and the probes under node are Sprint D.
-#   fcmp_web              web only: the engine, the checks and the two compile checks (the `web` build preset's target).
+#   fcmp_web_ui           web only (Sprint D): fcmp-ui.js and fcmp-ui.wasm, the editor module for a browser's main
+#                         thread: the editor outside gpu/, the portable model code, the facade and Source/web/ui
+#                         (WebMain, PortLink) over FunkGui's JUCE-free core and FunkGui::web.
+#   fcmp_web_port_check   web only (Sprint D): fcmp-port-check.mjs, PortLink and the facade as a node module, from
+#                         Tools/web/port/*.cpp; web/tests/port.mjs drives it over a MessageChannel.
+#   fcmp_web_site         web only (Sprint D): build-web/site, assembled by cmake/FcmpWebSite.cmake from web/*.html,
+#                         *.js, *.css, *.svg, the two modules, the licences and built-from.txt. A build output:
+#                         nothing publishes it.
+#   fcmp_web              web only: the engine, the checks, the editor module, the site and the probes under node
+#                         (cmake/FcmpProbes.cmake's fcmp_probe_web): the `web` build preset's target.
 # Natively, fcmp_probe_plugin links fcmp_web_engine_lib and compiles Source/web/facade/*.cpp (Sprint C), so the
 # probes proc.webnull, proc.webpresets and ui.web hold the facade to the real processor.
 # None of them exists before its directory has a source, so the skeleton configures on its own.
@@ -108,27 +112,79 @@ if(TARGET fcmp_probe_plugin)
   endif()
 endif()
 
-# ---- the editor's sources as wasm32, compile-only (Sprint C; the module and the node probes are Sprint D) ----------
-if(FCOMPRESSOR_WEB)
-  # The facade and the model code it shares with the plugin: no FunkGui source, only its include root.
-  add_library(fcmp_web_facade_check STATIC ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
-  target_include_directories(fcmp_web_facade_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
-  target_link_libraries(fcmp_web_facade_check PRIVATE fcdsp FunkGui::harness)
-  target_compile_options(fcmp_web_facade_check PRIVATE ${FCMP_WARNING_FLAGS})
-  # The whole editor over FunkGui's JUCE-free core. FunkGui's own sources compile in this target (an INTERFACE
-  # library's sources), so our warning list goes on our files only, as in fcmp_probe_plugin.
-  set(_fcmp_web_editor_own ${FCMP_EDITOR_SOURCES} ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
-  add_library(fcmp_web_editor_check STATIC ${_fcmp_web_editor_own})
-  fcmp_warn_sources(${_fcmp_web_editor_own})
-  target_include_directories(fcmp_web_editor_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
-  target_link_libraries(fcmp_web_editor_check PRIVATE fcdsp FunkGui::core)
-  funkgui_configure_product(fcmp_web_editor_check PRODUCT ${FCMP_PRODUCT_NAME} OBJC_PREFIX ${FCMP_OBJC_PREFIX}
+# ---- the editor module, the site and the node check of the port link (Sprint D) ------------------------------------
+if(FCOMPRESSOR_WEB AND FCMP_WEB_UI_SOURCES)
+  # fcmp-ui.js and fcmp-ui.wasm: the editor outside gpu/, the portable model code, the facade and Source/web/ui over
+  # FunkGui's JUCE-free core and FunkGui::web, for a browser's main thread. FunkGui's own sources compile in this
+  # target (an INTERFACE library's sources), so our warning list goes on our files only, as in fcmp_probe_plugin.
+  set(_fcmp_web_ui_own ${FCMP_EDITOR_SOURCES} ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES}
+                       ${FCMP_WEB_UI_SOURCES})
+  add_executable(fcmp_web_ui ${_fcmp_web_ui_own})
+  set_target_properties(fcmp_web_ui PROPERTIES OUTPUT_NAME fcmp-ui)
+  fcmp_warn_sources(${_fcmp_web_ui_own})
+  target_include_directories(fcmp_web_ui PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
+  target_link_libraries(fcmp_web_ui PRIVATE fcdsp FunkGui::core FunkGui::web)
+  funkgui_configure_product(fcmp_web_ui PRODUCT ${FCMP_PRODUCT_NAME} OBJC_PREFIX ${FCMP_OBJC_PREFIX}
                             ENV_PREFIX ${FCMP_ENV_PREFIX} PREFS_FOLDER ${FCMP_PREFS_FOLDER})
+  # A browser's main thread: the runtime outlives main() (the page goes on from events), memory may grow, and the
+  # stack is larger than Emscripten's 64 KB (a drag, a menu and a preview request all run on it).
+  target_link_options(fcmp_web_ui PRIVATE -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=1048576)
 endif()
+
+if(FCOMPRESSOR_WEB AND FCMP_WEB_PORT_SOURCES)
+  # fcmp-port-check.mjs: PortLink and the facade as an ES module for node (web/tests/port.mjs). Tools/web/port holds
+  # its C++ (outside the flat Tools/web glob, which also builds natively, where PortLink cannot compile).
+  set(_fcmp_web_port_own ${FCMP_WEB_PORT_SOURCES} ${FCMP_SOURCE_ROOT}/web/ui/PortLink.cpp
+                         ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES})
+  add_executable(fcmp_web_port_check ${_fcmp_web_port_own})
+  set_target_properties(fcmp_web_port_check PROPERTIES OUTPUT_NAME fcmp-port-check SUFFIX .mjs)
+  target_compile_options(fcmp_web_port_check PRIVATE ${FCMP_WARNING_FLAGS})
+  target_include_directories(fcmp_web_port_check PRIVATE ${FCMP_SOURCE_ROOT} ${FCMP_GENERATED_DIR})
+  target_link_libraries(fcmp_web_port_check PRIVATE fcdsp FunkGui::harness)
+  target_link_options(fcmp_web_port_check PRIVATE -sENVIRONMENT=node -sMODULARIZE=1 -sEXPORT_ES6=1
+                      -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=0)
+endif()
+
+if(FCOMPRESSOR_WEB AND TARGET fcmp_web_engine AND TARGET fcmp_web_ui)
+  # build-web/site: what a static server serves (cmake/FcmpWebSite.cmake). Nothing publishes it.
+  # Its inputs go through a file (<build>/site-args.cmake), so that web/tests/site.mjs can run the same script with
+  # the same inputs into a scratch directory.
+  if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)
+    set(_fcmp_site_override 1)
+  else()
+    set(_fcmp_site_override 0)
+  endif()
+  set(_fcmp_site_args "# site-args.cmake (cmake/FcmpWeb.cmake): the inputs of cmake/FcmpWebSite.cmake for this build.\n")
+  foreach(_kv "FCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}" "FCMP_SITE_DIR=${CMAKE_BINARY_DIR}/site"
+              "FCMP_ENGINE_WASM=$<TARGET_FILE:fcmp_web_engine>" "FCMP_UI_JS=$<TARGET_FILE:fcmp_web_ui>"
+              "FCMP_FUNKGUI_DIR=${FCMP_FUNKGUI_DIR}" "FCMP_FUNKGUI_SHA=${FCMP_FUNKGUI_SHA}"
+              "FCMP_FUNKGUI_OVERRIDE=${_fcmp_site_override}" "FCMP_EMSCRIPTEN_ROOT=${EMSCRIPTEN_ROOT_PATH}"
+              "FCMP_EMSCRIPTEN_VERSION=${EMSCRIPTEN_VERSION}" "GIT_EXECUTABLE=${GIT_EXECUTABLE}")
+    string(REGEX MATCH "^[^=]+" _k "${_kv}")
+    string(REGEX REPLACE "^[^=]+=" "" _v "${_kv}")
+    string(APPEND _fcmp_site_args "if(NOT DEFINED ${_k})\n  set(${_k} [==[${_v}]==])\nendif()\n")
+  endforeach()
+  file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/site-args.cmake CONTENT "${_fcmp_site_args}")
+  add_custom_target(fcmp_web_site
+      COMMAND ${CMAKE_COMMAND} -DFCMP_SITE_ARGS=${CMAKE_BINARY_DIR}/site-args.cmake
+              -P ${PROJECT_SOURCE_DIR}/cmake/FcmpWebSite.cmake
+      VERBATIM)
+  add_dependencies(fcmp_web_site fcmp_web_engine fcmp_web_ui)
+endif()
+
+# What the gate's stamp covers. fcmp_probes writes built-from-probes.txt, which Scripts/verify.sh reads before it
+# stamps a pass: it must be written only after everything a `verify` test runs has been built from the same tree. The
+# web tests run fcmp_web_check (every configuration), and in the web tree the engine, the editor module, the port
+# check and the site.
+foreach(_t fcmp_web_check fcmp_web_engine fcmp_web_ui fcmp_web_port_check fcmp_web_site)
+  if(TARGET ${_t} AND TARGET fcmp_probes)
+    add_dependencies(fcmp_probes ${_t})
+  endif()
+endforeach()
 
 if(FCOMPRESSOR_WEB)
   add_custom_target(fcmp_web)
-  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_facade_check fcmp_web_editor_check)
+  foreach(_t fcmp_web_engine fcmp_web_check fcmp_web_ui fcmp_web_port_check fcmp_web_site fcmp_probes)
     if(TARGET ${_t})
       add_dependencies(fcmp_web ${_t})
     endif()

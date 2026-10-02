@@ -1,0 +1,74 @@
+// PROTOTYPE (scout-d): WebFacade over PortLink under node, driven by porttest.mjs.
+#include "web/facade/WebFacade.h"
+#include "web/ui/PortLink.h"
+
+#include "fcdsp/params/Pid.h"
+
+#include <emscripten/em_macros.h>
+
+#include <memory>
+
+namespace
+{
+    struct Wiring final : fcmp::web::PortLink::Events
+    {
+        fcmp::web::PortLink link{ this };
+        fcmp::web::WebFacade facade{ link };
+        int connects = 0, disconnects = 0;
+
+        void connected(double sampleRate, int maxBlock) override
+        {
+            ++connects;
+            facade.setEngineSetup(sampleRate, maxBlock);
+            facade.resync();
+        }
+        void disconnected() override { ++disconnects; }
+    };
+    std::unique_ptr<Wiring> w;
+}
+
+extern "C" {
+void t_attach(int on);
+void t_pull(void);
+void t_set(int pid, float v01);
+void t_reset(void);
+int t_replies(void);
+int t_refused(void);
+int t_flags(void);
+int t_latency(void);
+double t_written(void);
+int t_publish(void);
+int t_posted(void);
+int t_dropped(void);
+int t_delivered(void);
+int t_prepared(void);
+double t_rate(void);
+int t_quality(void);
+EMSCRIPTEN_KEEPALIVE void t_attach(int on) { w->facade.setUiAttached(on != 0); }
+EMSCRIPTEN_KEEPALIVE void t_pull(void) { w->facade.pull(); }
+EMSCRIPTEN_KEEPALIVE void t_set(int pid, float v01) { w->facade.port(static_cast<fcdsp::Pid>(pid)).setValue01(v01); }
+EMSCRIPTEN_KEEPALIVE void t_reset(void) { w->facade.resetEngine(); }
+EMSCRIPTEN_KEEPALIVE int t_replies(void) { return static_cast<int>(w->facade.replies()); }
+EMSCRIPTEN_KEEPALIVE int t_refused(void) { return static_cast<int>(w->facade.repliesRefused()); }
+EMSCRIPTEN_KEEPALIVE int t_flags(void) { return static_cast<int>(w->facade.replyFlags()); }
+EMSCRIPTEN_KEEPALIVE int t_latency(void) { return w->facade.latencySamples(); }
+EMSCRIPTEN_KEEPALIVE double t_written(void) { return static_cast<double>(w->facade.history().written()); }
+EMSCRIPTEN_KEEPALIVE int t_publish(void)
+{
+    fcdsp::UiFrame f;
+    w->facade.readUiFrame(f);
+    return static_cast<int>(f.publishCount);
+}
+EMSCRIPTEN_KEEPALIVE int t_posted(void) { return static_cast<int>(w->link.counters().posted); }
+EMSCRIPTEN_KEEPALIVE int t_dropped(void) { return static_cast<int>(w->link.counters().dropped); }
+EMSCRIPTEN_KEEPALIVE int t_delivered(void) { return static_cast<int>(w->link.counters().delivered); }
+EMSCRIPTEN_KEEPALIVE int t_prepared(void) { return w->facade.diagnostics().prepared ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE double t_rate(void) { return w->facade.diagnostics().sampleRate; }
+EMSCRIPTEN_KEEPALIVE int t_quality(void) { return w->facade.diagnostics().quality; }
+}
+
+int main()
+{
+    w = std::make_unique<Wiring>();
+    return 0;
+}

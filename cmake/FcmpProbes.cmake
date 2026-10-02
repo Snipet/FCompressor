@@ -73,10 +73,13 @@ set(FCMP_BUILT_FROM_PROBES ${CMAKE_BINARY_DIR}/built-from-probes.txt)
 add_custom_target(fcmp_probes_building COMMAND ${CMAKE_COMMAND} -E rm -f ${FCMP_BUILT_FROM_PROBES} VERBATIM)
 
 # ---- fcmp_probe_dsp: fcdsp + harness, no JUCE -----------------------------------------------------------------------
-add_executable(fcmp_probe_dsp ${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_DSP_SOURCES})
-fcmp_probe_target_common(fcmp_probe_dsp)
-fcmp_warn_sources(${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_DSP_SOURCES})
-set(_fcmp_probe_exes fcmp_probe_dsp)
+set(_fcmp_probe_exes "")
+if(NOT FCOMPRESSOR_WEB)                  # the DSP probes under node are a follow-up card (ADR-93)
+  add_executable(fcmp_probe_dsp ${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_DSP_SOURCES})
+  fcmp_probe_target_common(fcmp_probe_dsp)
+  fcmp_warn_sources(${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_DSP_SOURCES})
+  list(APPEND _fcmp_probe_exes fcmp_probe_dsp)
+endif()
 
 # ---- fcmp_probe_plugin: processor + editor Panel + FunkGui core + harness; JUCE compiled once for all probes --------
 if(NOT FCOMPRESSOR_DSP_ONLY)
@@ -97,8 +100,36 @@ if(NOT FCOMPRESSOR_DSP_ONLY)
   list(APPEND _fcmp_probe_exes fcmp_probe_plugin)
 endif()
 
+# ---- fcmp_probe_web (ADR-93, web Sprint D): the editor over FunkGui's JUCE-free core, the web facade and the engine
+# wrapper, with the UI probes; a node program (NODERAWFS: it reads the goldens and writes candidates and results on the
+# host's file system). Its probe files are those of Tools/probes/plugin whose FCMP_PROBE line says layer=ui, plus the
+# helpers (no FCMP_PROBE line: FakeFacade, EngineFacade, LoopbackLink, ui_dump); the proc.* files need the JUCE
+# processor and stay native.
+if(FCOMPRESSOR_WEB)
+  set(FCMP_PROBE_WEB_SOURCES "")
+  foreach(_f IN LISTS FCMP_PROBE_PLUGIN_SOURCES)
+    file(STRINGS ${_f} _hdr LIMIT_COUNT 1 REGEX "^// FCMP_PROBE ")
+    if(NOT _hdr OR _hdr MATCHES "^// FCMP_PROBE layer=ui ")
+      list(APPEND FCMP_PROBE_WEB_SOURCES ${_f})
+    endif()
+  endforeach()
+  set(_own ${FCMP_EDITOR_SOURCES} ${FCMP_PLUGIN_PORTABLE_SOURCES} ${FCMP_WEB_FACADE_SOURCES}
+           ${FCMP_PROBE_COMMON_SOURCES} ${FCMP_PROBE_WEB_SOURCES})
+  add_executable(fcmp_probe_web ${_own})
+  fcmp_warn_sources(${_own})
+  fcmp_probe_target_common(fcmp_probe_web)
+  target_include_directories(fcmp_probe_web PRIVATE ${FCMP_SOURCE_ROOT})
+  target_link_libraries(fcmp_probe_web PRIVATE FunkGui::core fcmp_web_engine_lib)
+  funkgui_configure_product(fcmp_probe_web PRODUCT ${FCMP_PRODUCT_NAME} OBJC_PREFIX ${FCMP_OBJC_PREFIX}
+                            ENV_PREFIX ${FCMP_ENV_PREFIX} PREFS_FOLDER ${FCMP_PREFS_FOLDER})
+  target_link_options(fcmp_probe_web PRIVATE
+                      -sNODERAWFS=1 -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8388608
+                      -sENVIRONMENT=node)
+  list(APPEND _fcmp_probe_exes fcmp_probe_web)
+endif()
+
 # ---- fcmp_bench: only once Tools/bench/*.cpp exists (F4); never gating ------------------------------------------------
-if(FCMP_BENCH_SOURCES)
+if(FCMP_BENCH_SOURCES AND NOT FCOMPRESSOR_WEB)
   add_executable(fcmp_bench ${FCMP_BENCH_SOURCES})
   fcmp_probe_target_common(fcmp_bench)
   fcmp_warn_sources(${FCMP_BENCH_SOURCES})
@@ -123,8 +154,19 @@ set(FCMP_TEST_NAMES "")
 # S4 lead fix: sanitizer builds run ~5-15x slower; scale every probe timeout so TSan/ASan gates judge correctness, not speed.
 if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=" OR FCOMPRESSOR_RTSAN)
   set(FCMP_PROBE_TIMEOUT_SCALE 5)
+elseif(FCOMPRESSOR_WEB)                  # wasm under node: measured 2-4x the native wall time (ADR-93)
+  set(FCMP_PROBE_TIMEOUT_SCALE 3)
 else()
   set(FCMP_PROBE_TIMEOUT_SCALE 1)
+endif()
+# The web probes are node programs: the toolchain's emulator runs them (inside the /bin/sh wrapper, so CMake's own
+# emulator prefix, which applies to a target named as the command, never sees them).
+set(_fcmp_probe_run "")
+if(FCOMPRESSOR_WEB)
+  set(_fcmp_probe_run ${CMAKE_CROSSCOMPILING_EMULATOR})
+  if(NOT _fcmp_probe_run)
+    message(FATAL_ERROR "FcmpProbes: the Emscripten toolchain set no CMAKE_CROSSCOMPILING_EMULATOR (node)")
+  endif()
 endif()
 function(fcmp_probe_test layer exe probe mode timeout)
   math(EXPR timeout "${timeout} * ${FCMP_PROBE_TIMEOUT_SCALE}")
@@ -144,7 +186,7 @@ function(fcmp_probe_test layer exe probe mode timeout)
   # The results JSON is <results>/<probe>[.<mode>].json (Harness v2), i.e. <test name>.json.
   add_test(NAME ${name}
            COMMAND /bin/sh -c "${_fcmp_probe_sh}" fcmp-probe ${CMAKE_BINARY_DIR}/probe-results/${name}.json
-                   $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
+                   ${_fcmp_probe_run} $<TARGET_FILE:${exe}> ${layer}.${probe} ${margs}
                    --golden-root ${PROJECT_SOURCE_DIR}/tests/golden --arch ${FCMP_RUN_ARCH}
                    --bless-to ${CMAKE_BINARY_DIR}/golden-candidates --results ${CMAKE_BINARY_DIR}/probe-results)
   set(sb ${CMAKE_BINARY_DIR}/sandbox/${name})
@@ -157,7 +199,13 @@ function(fcmp_probe_test layer exe probe mode timeout)
   endif()
 endfunction()
 
+# fcmp_register_probes(<exe> <dir> <layers allowed in the directory> [<layers this executable registers>])
 function(fcmp_register_probes exe dir layers)
+  if(ARGC GREATER 3)
+    set(_take "${ARGV3}")
+  else()
+    set(_take "${layers}")
+  endif()
   file(GLOB _files CONFIGURE_DEPENDS ${FCMP_TOOLS_ROOT}/probes/${dir}/*.cpp)
   foreach(f IN LISTS _files)
     file(STRINGS ${f} _hdr LIMIT_COUNT 1 REGEX "^// FCMP_PROBE ")
@@ -165,24 +213,26 @@ function(fcmp_register_probes exe dir layers)
       continue()                               # helpers (FakeFacade.cpp, ...) carry no FCMP_PROBE line
     endif()
     set(_re "^// FCMP_PROBE layer=(dsp|proc|ui) name=([a-z0-9_]+) scope=(global|mode) timeout=([0-9]+)")
-    if(NOT _hdr MATCHES "${_re}( platform=(apple|linux))?$")
+    set(_plat "(apple|linux|web)")
+    if(NOT _hdr MATCHES "${_re}( platform=(${_plat}(,${_plat})*))?$")
       message(FATAL_ERROR "${f}: malformed FCMP_PROBE line '${_hdr}' (03 §2.9: "
                           "'// FCMP_PROBE layer=<dsp|proc|ui> name=<[a-z0-9_]+> scope=<global|mode> timeout=<s>"
-                          "[ platform=<apple|linux>]')")
+                          "[ platform=<apple|linux|web>[,...]]')")
     endif()
     set(layer ${CMAKE_MATCH_1})
     set(probe ${CMAKE_MATCH_2})
     set(scope ${CMAKE_MATCH_3})
     set(t ${CMAKE_MATCH_4})
-    set(only "${CMAKE_MATCH_6}")               # platform=apple|linux, or empty (FCMP_PLATFORM calls Apple "macos")
-    if(only STREQUAL "apple")
-      set(only macos)
-    endif()
-    if(only AND NOT only STREQUAL FCMP_PLATFORM)
-      continue()                               # another platform's probe (ADR-92)
-    endif()
+    string(REPLACE "," ";" only "${CMAKE_MATCH_6}")   # platform=apple,web ..., or empty (FCMP_PLATFORM: "macos")
+    list(TRANSFORM only REPLACE "^apple$" "macos")
     if(NOT layer IN_LIST layers)
       message(FATAL_ERROR "${f}: layer=${layer} does not belong in Tools/probes/${dir}/ (allowed: ${layers})")
+    endif()
+    if(only AND NOT FCMP_PLATFORM IN_LIST only)
+      continue()                               # another platform's probe (ADR-92)
+    endif()
+    if(NOT layer IN_LIST _take)
+      continue()                               # a layer this executable does not hold (web: the proc.* probes)
     endif()
     if(scope STREQUAL "mode")
       foreach(key IN LISTS FCMP_MODE_KEYS)
@@ -195,30 +245,37 @@ function(fcmp_register_probes exe dir layers)
   set(FCMP_TEST_NAMES ${FCMP_TEST_NAMES} PARENT_SCOPE)
 endfunction()
 
-fcmp_register_probes(fcmp_probe_dsp dsp "dsp")
-if(NOT FCOMPRESSOR_DSP_ONLY)
-  fcmp_register_probes(fcmp_probe_plugin plugin "proc;ui")
+if(FCOMPRESSOR_WEB)
+  fcmp_register_probes(fcmp_probe_web plugin "proc;ui" "ui")
+else()
+  fcmp_register_probes(fcmp_probe_dsp dsp "dsp")
+  if(NOT FCOMPRESSOR_DSP_ONLY)
+    fcmp_register_probes(fcmp_probe_plugin plugin "proc;ui")
+  endif()
 endif()
 
 # ---- lints (no probe executable; exit code only) --------------------------------------------------------------------
 add_test(NAME lint.deps COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}
                                 -P ${PROJECT_SOURCE_DIR}/cmake/LintDeps.cmake)
-# lint.headers hands check-headers.sh FcmpArch.cmake's warning list; the script fails if its own copy differs (R-B0 #6).
-# FCMP_HEADER_CHECK_JUCE_FLAGS: FcmpPlatform.cmake's JUCE 8.0.4 workaround, for the headers that include JUCE (ADR-92).
-# FCMP_HEADER_CHECK_TARGET_FLAGS: on Linux, whose builds always target the host, the ISA flags (an x86-64 fcdsp header
-# needs -mfma: Simd.h refuses to compile without it); macOS keeps checking for the host, which lead-x86 does not target.
-string(JOIN " " _fcmp_hdr_flags ${FCMP_HEADER_CHECK_FLAGS})
-string(JOIN " " _fcmp_hdr_juce_flags ${FCMP_JUCE804_WORKAROUND})
-set(_fcmp_hdr_target_flags "")
-if(NOT APPLE)
-  string(JOIN " " _fcmp_hdr_target_flags ${FCMP_ISA_FLAGS})
+if(NOT FCOMPRESSOR_WEB)                  # check-headers.sh compiles for the host with the native flag list
+  # lint.headers hands check-headers.sh FcmpArch.cmake's warning list; the script fails if its own copy differs (R-B0 #6).
+  # FCMP_HEADER_CHECK_JUCE_FLAGS: FcmpPlatform.cmake's JUCE 8.0.4 workaround, for the headers that include JUCE (ADR-92).
+  # FCMP_HEADER_CHECK_TARGET_FLAGS: on Linux, whose builds always target the host, the ISA flags (an x86-64 fcdsp header
+  # needs -mfma: Simd.h refuses to compile without it); macOS keeps checking for the host, which lead-x86 does not target.
+  string(JOIN " " _fcmp_hdr_flags ${FCMP_HEADER_CHECK_FLAGS})
+  string(JOIN " " _fcmp_hdr_juce_flags ${FCMP_JUCE804_WORKAROUND})
+  set(_fcmp_hdr_target_flags "")
+  if(NOT APPLE)
+    string(JOIN " " _fcmp_hdr_target_flags ${FCMP_ISA_FLAGS})
+  endif()
+  add_test(NAME lint.headers COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
+                                     "FCMP_HEADER_CHECK_FLAGS=${_fcmp_hdr_flags}"
+                                     "FCMP_HEADER_CHECK_JUCE_FLAGS=${_fcmp_hdr_juce_flags}"
+                                     "FCMP_HEADER_CHECK_TARGET_FLAGS=${_fcmp_hdr_target_flags}"
+                                     /bin/bash ${PROJECT_SOURCE_DIR}/Scripts/check-headers.sh ${CMAKE_BINARY_DIR})
+  set_tests_properties(lint.headers PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
 endif()
-add_test(NAME lint.headers COMMAND ${CMAKE_COMMAND} -E env CXX=${CMAKE_CXX_COMPILER}
-                                   "FCMP_HEADER_CHECK_FLAGS=${_fcmp_hdr_flags}"
-                                   "FCMP_HEADER_CHECK_JUCE_FLAGS=${_fcmp_hdr_juce_flags}"
-                                   "FCMP_HEADER_CHECK_TARGET_FLAGS=${_fcmp_hdr_target_flags}"
-                                   /bin/bash ${PROJECT_SOURCE_DIR}/Scripts/check-headers.sh ${CMAKE_BINARY_DIR})
-set_tests_properties(lint.deps lint.headers PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
+set_tests_properties(lint.deps PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
 
 # ---- not in verify: bench.<key> (label bench; run alone by the lead, never while agents build) -------------------------
 if(TARGET fcmp_bench)

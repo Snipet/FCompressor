@@ -2,7 +2,8 @@
 
 // WebProtocol: the byte protocol between the editor (the page's main thread) and the engine module in the AudioWorklet
 // (ADR-93). It is defined ONCE, here, in C++: both wasm modules include this header, and JavaScript only moves bytes
-// (a MessagePort carries an ArrayBuffer from one module's memory to the other's; no script reads a field).
+// (a MessagePort carries an ArrayBuffer from one module's memory to the other's; the one field a script reads is
+// Header::bytes, the u32 at offset 8, to know how much to copy).
 //
 // Every message is one fixed-layout record: little-endian, 4-byte fields, no pointers, no padding, a versioned header
 // first. A receiver checks the magic, the version, the kind and the byte count before it reads anything else, and a

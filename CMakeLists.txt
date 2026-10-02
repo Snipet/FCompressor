@@ -127,9 +127,7 @@ if(NOT FCOMPRESSOR_DSP_ONLY)
 endif()
 
 enable_testing()
-if(NOT FCOMPRESSOR_WEB)
-  include(FcmpProbes)   # probe executables, self-registered CTest tests over Modes.def, lints, verify targets
-endif()
+include(FcmpProbes)     # probe executables, self-registered CTest tests over Modes.def, lints, verify targets
 include(FcmpWeb)        # ADR-93: the web engine and its checks (native: the check against the goldens; web: the wasm)
 
 message(STATUS "FCompressor ${PROJECT_VERSION}: ${FCMP_PLATFORM}, ${FCMP_CONFIGURATION}, ${CMAKE_BUILD_TYPE}, "

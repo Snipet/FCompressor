@@ -1,7 +1,8 @@
 // Source/web/facade/EngineLink.h: how the web facade reaches the engine module (ADR-93). The editor and the engine are
 // two wasm modules on two threads; everything between them is a WebProtocol record (web/engine/WebProtocol.h), and a
-// link only carries records: it reads no field and knows no parameter. In the browser the page's script implements it
-// over the worklet's MessagePort, moving bytes from one module's memory to the other's; in the native probes
+// link only carries records: it knows no parameter and reads nothing of a record but its header (the kind, to choose a
+// Pull's carrier; the byte count, to copy it). In the browser Source/web/ui/PortLink implements it over the worklet's
+// MessagePort, moving bytes from one module's memory to the other's; in the native probes
 // Tools/probes/plugin/LoopbackLink hands them to an engine in the same process. Nothing here knows either.
 //
 // The contract, both ways:
