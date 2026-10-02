@@ -9,8 +9,11 @@
 //
 //   NOTE web.live.fpmode ...             flush-to-zero and denormals-are-zero, on or off, on the main thread and in a
 //                                        worklet's process(), message handler and constructor, in an offline
-//                                        context and in a live one (fcmp-fpmode-worklet.js; a live context runs only
-//                                        with a gesture or Chrome's autoplay flag, else its process() did not run)
+//                                        context and in a live one (fcmp-fpmode-worklet.js). A live context runs
+//                                        only with a gesture or Chrome's autoplay flag, else its process() did not
+//                                        run (it is still suspended after 0.5 s); one that runs is waited for until
+//                                        its first process() says so, at most 5 s: "did not run within 5 s" on a
+//                                        running context is a device that never rendered, not a slow start
 //   <key> main.cost                      a row, as node's web.engine.tail judges it: the shipped engine on this
 //                                        thread with the gate off and the editor attached, 2 s of the print program
 //                                        and 10 s of zeros; no two adjacent windows of the silence may cost twice
@@ -25,7 +28,10 @@
 //   NOTE web.live.tail <key> worklet.cost   the time of each half of those two renders: silence against signal
 //                                        through the worklet, the gate as shipped
 //   NOTE web.live.load <key>             the real-time factor of 4 s of the program at STD and at HQ
-//   expect.engine, expect.print, expect.shape, modes.count   the expectation is this build's, and every Mode ran
+//   expect.engine, expect.print, expect.shape   the expectation is this build's, for the test module's Modes
+//   modes.count                          every Mode ran: the Modes the test module registers (one at least), the
+//                                        expectation's Modes and rows, the value rows judged here and the rows the
+//                                        worklet's own counters say it rendered all agree
 //
 // Pin (a query parameter, for a hand run): tick=<ms> rounds this page's clock down to that step, as a browser with a
 // coarse performance.now() would.
@@ -43,7 +49,10 @@ const NODE_WINDOW = 125;                    // quanta: 1/3 s, web.engine.tail's 
 const RUNS = 3;
 const CLOCK_STEPS = 20;                     // a timed window is at least this many steps of the clock
 const REPLY_FIXED_BYTES = 320;              // WebProtocol.h kReplyFixedBytes
+const WORKLET_ROWS = 4;                     // a Mode's rows through the worklet: program at STD and HQ, floor, tail
 const FP_MS = 15000;                        // one context's floating-point environment: then it is not measured
+const LIVE_RUN_MS = 5000;                   // a running live context's first process(): then it did not run
+const LIVE_IDLE_MS = 500;                   // a live context not running by then has no gesture and no autoplay flag
 
 const page = new Page('web.live.tail');
 
@@ -61,24 +70,38 @@ async function fpNotes() {
       await context.audioWorklet.addModule('fcmp-fpmode-worklet.js');
       const node = new AudioWorkletNode(context, 'fcmp-fpmode', { numberOfInputs: 0, numberOfOutputs: 1,
                                                                  outputChannelCount: [2] });
+      const made = performance.now();
+      let ranAt = -1;                                   // ms from the node's making to its first process()'s message
+      const processed = new Promise((ran) => node.port.addEventListener('message', (event) => {
+        if (!event.data || event.data.fcmp !== 'process') return;
+        ranAt = performance.now() - made;
+        ran();
+      }));
       node.port.start();
       node.connect(context.destination);
       if (kind === 'offline') {
         await context.startRendering();
       } else {
         context.resume().catch(() => {});                // without a gesture it stays suspended
-        for (let i = 0; i < 10 && context.state !== 'running'; i += 1) await sleep(50);
-        if (context.state === 'running') await sleep(200);
+        // Until process() says it has run: at most LIVE_RUN_MS, or LIVE_IDLE_MS while the context is not running.
+        const waiting = () => {
+          const waited = performance.now() - made;
+          return ranAt < 0 && waited < LIVE_RUN_MS && (waited < LIVE_IDLE_MS || context.state === 'running');
+        };
+        while (waiting()) await Promise.race([processed, sleep(20)]);
       }
-      return ask(node, 'fpmode');
+      return { ...await ask(node, 'fpmode'), ranAt, state: context.state };
     };
     try {
       // A NOTE, so it may not hold the page up: a context that never answers (a machine with no audio device) is
       // "not measured", not a stalled page.
       const got = await within(FP_MS, `the ${kind} context`, measure());
-      page.note(`web.live.fpmode ${kind} context: process() ${fpText(got.inProcess)}; message handler `
+      const late = kind === 'live' && got.inProcess < 0 && got.state === 'running';
+      page.note(`web.live.fpmode ${kind} context: process() `
+                + `${late ? `did not run within ${LIVE_RUN_MS / 1000} s` : fpText(got.inProcess)}; message handler `
                 + `${fpText(got.inHandler)}; constructor ${fpText(got.inConstructor)}`
-                + (kind === 'live' ? ` (the context is ${context.state})` : ''));
+                + (kind !== 'live' ? '' : ` (the context is ${got.state}${got.ranAt < 0 ? ''
+                   : `; process() first ran ${Math.round(got.ranAt)} ms after the node was made`})`));
     } catch (error) {
       page.note(`web.live.fpmode ${kind} context: not measured (${error.message || error})`);
     } finally {
@@ -191,7 +214,7 @@ async function workletRows(env, expect) {
   const equal = { tail: [], floor: [] };
   const worst = { STD: null, HQ: null };
   const ended = new Set();
-  let ran = 0;
+  const counted = { judged: 0, rendered: 0 };       // for modes.count: value rows judged, rows the worklet rendered
   for (let mode = 0; mode < print.modes.length; mode += 1) {
     const key = print.modes[mode];
     const rows = [{ mode, set: 0, ...STD, input: 'program' },
@@ -210,7 +233,8 @@ async function workletRows(env, expect) {
     if (hashes.some((h) => h.join() !== hashes[0].join())) faults.push('two renders of the same rows differ');
     page.row(faults.length === 0, `${key} worklet.ran`, faults[0] || `${rows.length} rows armed as asked in each of `
              + `${renders.length} render(s)${renders.length > 1 ? ', which agree' : ''}`);
-    ran += 1;
+    for (const context of new Set(renders[0].map((result) => result.context)))   // its counters, once a context
+      counted.rendered += context.after.quanta / Math.ceil(print.frames / context.quantum);
     ended.add(renders[0][3].context.after.inChannels);
 
     for (const [kind, k] of [['tail', 3], ['floor', 2]]) {
@@ -219,12 +243,14 @@ async function workletRows(env, expect) {
       if (hashes[0][k] === `${want.l} ${want.r}`) {
         equal[kind].push(key);
         page.row(true, `${key} ${kind}.values`, `${hashes[0][k]}: equal to the engine under node`);
+        counted.judged += 1;
       } else {
         const [lastL, denormalL] = print.tail(got.l);
         const [lastR, denormalR] = print.tail(got.r);
         page.note(`web.live.tail ${key} ${kind}.values: ${hashes[0][k]} here, ${want.l} ${want.r} under node; the `
                   + `last sample that is not a zero ${lastL}/${lastR} here, ${want.last.join('/')} under node; `
                   + `denormal samples ${denormalL}/${denormalR} here, ${want.denormal.join('/')} under node`);
+        counted.judged += 1;
       }
     }
 
@@ -253,7 +279,7 @@ async function workletRows(env, expect) {
   if (worst.STD !== null)
     page.note(`web.live.load worst: STD ${worst.STD.key} ${worst.STD.factor.toFixed(1)}x real time, HQ ${worst.HQ.key} `
               + `${worst.HQ.factor.toFixed(1)}x`);
-  return ran;
+  return counted;
 }
 
 page.run(async () => {
@@ -273,8 +299,14 @@ page.run(async () => {
   const t1 = performance.now();
   await mainCost(env);
   const t2 = performance.now();
-  const ran = await workletRows(env, expect);
-  page.row(ran === print.modes.length && ran > 0, 'modes.count', `${ran} Modes ran, ${print.modes.length} registered`);
+  const counted = await workletRows(env, expect);
+  const registered = print.modes.length;               // fcmp_print_modes(): the test module's registry
+  const expected = Object.keys(expect.rows).length;
+  page.row(registered > 0 && expect.modes.length === registered && expected === 2 * registered
+           && counted.judged === expected && counted.rendered === WORKLET_ROWS * registered, 'modes.count',
+           `${registered} Modes registered; the expectation has ${expect.modes.length} Modes and ${expected} rows; `
+           + `${counted.judged} value rows judged (want ${expected}); the worklet rendered ${counted.rendered} rows `
+           + `(want ${WORKLET_ROWS} a Mode)`);
   const t3 = performance.now();
   const s = (ms) => (ms / 1000).toFixed(1);
   page.note(`web.live.tail time: ${s(t3 - started)} s: the main thread ${s(t2 - t1)} s, the worklet ${s(t3 - t2)} s in `

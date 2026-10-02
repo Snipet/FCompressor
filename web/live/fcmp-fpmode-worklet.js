@@ -10,8 +10,9 @@
 //   denormals-are-zero   1e-310 is a denormal and 1e-310 * 1e300 is 1e-10; it is a zero only where a denormal operand
 //                        is read as zero
 // The processor asks once in its constructor, once in its first process() and in every message handler, and answers
-// any message with { fcmp: 'fpmode', inConstructor, inHandler, inProcess } (inProcess -1: process() has not run). It
-// writes no sample: its output is the silence it was handed.
+// any message with { fcmp: 'fpmode', inConstructor, inHandler, inProcess } (inProcess -1: process() has not run). Its
+// first process() also says so, once: { fcmp: 'process', inProcess }, so that a page waits for that and not for a
+// time. It writes no sample: its output is the silence it was handed.
 const OPERANDS = new Float64Array([2.2250738585072014e-308, 0.5, 1e-310, 1e300]);
 const PRODUCTS = new Float64Array(2);
 const BITS = new Uint32Array(PRODUCTS.buffer);
@@ -34,7 +35,10 @@ if (typeof AudioWorkletProcessor === 'function' && typeof registerProcessor === 
     }
 
     process() {
-      if (this.inProcess < 0) this.inProcess = fpMode();
+      if (this.inProcess < 0) {
+        this.inProcess = fpMode();
+        this.port.postMessage({ fcmp: 'process', inProcess: this.inProcess });
+      }
       return true;
     }
   });
