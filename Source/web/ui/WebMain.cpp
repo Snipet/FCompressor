@@ -108,10 +108,13 @@ using FcmpUiVoidFn = void (*)(void);
 
 EM_JS_DEPS(fcmp_ui_deps, "$UTF8ToString,$stringToUTF8,$getWasmTableEntry")
 
+// A query parameter's value into `out`, cut at a whole character where it does not fit. 0 without the parameter, else
+// 1 + the value's length in UTF-16 units: a caller that takes only a short plain value compares that with what it read,
+// so a value that was cut, or that holds a NUL (where the C string ends), is never taken for its beginning.
 EM_JS(int, fcmp_ui_param, (const char* name, char* out, int size), {
     const value = new URLSearchParams(window.location.search).get(UTF8ToString(name));
     stringToUTF8(value === null ? "" : value, out, size);
-    return value === null ? 0 : 1;
+    return value === null ? 0 : 1 + value.length;
 })
 
 // The browser's name and major version: the brand the browser gives where it gives one, else from the user agent.
@@ -206,12 +209,11 @@ namespace
         return end != value && *end == '\0' && v >= lo && v <= hi ? v : otherwise;
     }
 
-    // A pin that is on or off: on for the value "1" alone. fcmp_ui_param cuts a value that does not fit at a whole
-    // character, so the buffer holds one character of any length after the "1": a longer value still shows as longer.
+    // A pin that is on or off: on for the value "1" alone.
     bool flagParam(const char* name)
     {
-        char value[8];
-        return fcmp_ui_param(name, value, static_cast<int>(sizeof value)) != 0 && value[0] == '1' && value[1] == '\0';
+        char value[2];
+        return fcmp_ui_param(name, value, static_cast<int>(sizeof value)) == 2 && value[0] == '1';
     }
 
     // The `host` pin into `out` (a buffer of Diagnostics::host's size, which holds any valid pin). False, and `out`
@@ -219,16 +221,15 @@ namespace
     // is drawn on the settings screen, so a link to the page gets a short plain name there and nothing else.
     bool hostPin(char* out)
     {
-        char value[kHostPinMax + 5];                     // one character more than fits, of any length (4 bytes at
-                                                         // most): a longer value shows as too long or as not allowed
-        if (fcmp_ui_param("host", value, static_cast<int>(sizeof value)) == 0)
-            return false;
-        const std::string_view pin(value);
+        char value[kHostPinMax + 1];
+        const int length = fcmp_ui_param("host", value, static_cast<int>(sizeof value)) - 1;
+        const std::string_view pin(value);               // all of the value only when it is as long as `length`
         const auto allowed = [](char c) {
             return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '.'
                 || c == '_' || c == '-';
         };
-        if (pin.empty() || pin.size() > kHostPinMax || !std::all_of(pin.begin(), pin.end(), allowed))
+        if (length < 1 || pin.size() != static_cast<std::size_t>(length)
+            || !std::all_of(pin.begin(), pin.end(), allowed))
             return false;
         pin.copy(out, pin.size());
         out[pin.size()] = '\0';
