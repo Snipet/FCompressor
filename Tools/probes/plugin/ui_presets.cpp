@@ -20,6 +20,8 @@
 //               scrolling), 1:1 at the UI zoom, clamped; a row the list's edge cuts is listed by the part that shows
 //               and its primitives are clipped to the list (y 88–308); a notch glides at full rate and lands on its row;
 //               nothing is applied.
+//   scroll.clip_*  (web Sprint C, ADR-93) at a dpi where whole logical px are not device px (1.5625) the list's
+//               clip is on device px: the rows are cut at device rows 138 and 481 (88 and 308 are 137.5 and 481.25).
 //   saveas.*    the strip's SAVE opens the browser with the name pre-filled and selected (the store's unique name
 //               announced when it is taken); typing replaces it; Return is one saveAs(name, category) and the browser
 //               closes (opened for the save), the strip showing the new preset; Esc cancels and keeps the browser open;
@@ -29,8 +31,8 @@
 //               SAVE is one overwrite(current), no dialog, and clears MODIFIED; SAVED shows in the sub-line for 2 s,
 //               then goes; with a factory preset or none it is the save as, never an overwrite; a refused overwrite falls
 //               back to the save as; Return on the focused SAVE saves over, Shift-Return saves as; a11y help and the
-//               footer line name the preset saved over; headless, SAVE's popup click and showMenu open nothing; the
-//               strip's menu is Save, Save As... and runs each; the browser's SAVE saves over the current preset
+//               footer line name the preset saved over; SAVE's popup click and showMenu, left unanswered, do nothing;
+//               the strip's menu is Save, Save As... and runs each; the browser's SAVE saves over the current preset
 //               whatever row is selected and stays open ("SAVED 'MY BUS'"), is SAVE AS with a factory preset, and a
 //               refused overwrite says so and starts a save as.
 //   rename.*    RENAME on a user row edits its name in place; Return is one rename(index, name); factory rows cannot;
@@ -43,8 +45,31 @@
 //               makes one importFile per preset file (others ignored); one file is also loaded (one apply); two are
 //               not; a refused import says so.
 //   export.*, menu.*  a PresetBrowser of the probe's own over the same facade: exportTo is one exportFile(index,
-//               path); the context menu's items per row kind and background; run() of Load, Rename, Delete; headless,
-//               IMPORT / EXPORT open no chooser and call nothing.
+//               path); the context menu's items per row kind and background; run() of Load, Rename, Delete; IMPORT /
+//               EXPORT ask the host for a chooser and, left unanswered, call nothing.
+//   The host's services (web Sprint C, ADR-93): HeadlessHost shows nothing and keeps a menu or a chooser pending until
+//   the probe answers it; the requests are read from its log.
+//   menu.strip_*    SAVE's menu in PAPER at a 150 % UI zoom: (1, Save), (2, Save As...), anchored on SAVE's box in the
+//               Panel's own px, in the product's palette; Save As... opens the browser's edit; Save is one overwrite; a
+//               dismissed menu does nothing.
+//   menu.row_*, menu.background_*   a popup click on a row selects it and asks for the items of menu() with its
+//               separators, anchored on the row; Load is one apply; Delete on a user row is one remove; a row that
+//               went while the menu was open gets nothing, one that moved is found again by its uuid; a dismissed menu
+//               does nothing; a popup click on the background asks for Save As... and Import... at a 1 x 1 anchor
+//               under the pointer, and Import... asks for the chooser.
+//   saveas.category_*   the save-as category word asks for No Category, a separator and the categories in filter
+//               order, the edit's one ticked; choosing one sets it and the save takes it; an answer that comes after
+//               the edit was cancelled does nothing.
+//   export.chooser_*, import.chooser_*   EXPORT asks for a save chooser ("Export preset", *.fcmppreset, the preset's
+//               name with the extension as the suggested file name: the host makes it legal); the path the host
+//               returns (with the extension it adds) is one exportFile; a cancel, or a preset that went meanwhile,
+//               exports nothing. IMPORT asks for an openMany chooser; two paths are two importFile calls; a cancel
+//               imports nothing.
+//   services.view_gone   a PresetStrip and a PresetBrowser of the probe's own that go while their menu and chooser are
+//               open: the answers reach nobody, and nothing was dismissed from a destructor.
+//   import.no_chooser*   a host that reports no file chooser: IMPORT and EXPORT are disabled in a11y, out of the Tab
+//               order and show no hand; pressing them asks no host for anything; the row menu still opens, with
+//               Export... and Import... off.
 //   a11y.*      ids non-zero and unique with the browser open and editing; press / focus on a row; the filter radios.
 //   draw.*      every BROWSER_* primitive inside the browser's ground, the strip's inside its rectangle, no missing
 //               glyph in any state drawn here.
@@ -69,6 +94,7 @@
 #include "editor/Layout.h"
 #include "editor/Panel.h"
 #include "editor/PreviewWorker.h"
+#include "editor/ProductTheme.h"
 #include "editor/SubView.h"
 #include "editor/Tags.h"
 #include "editor/views/PresetBrowser.h"
@@ -78,13 +104,14 @@
 #include <funkgui/canvas/Prim.h>
 #include <funkgui/canvas/PrimList.h>
 #include <funkgui/canvas/Tags.h>
+#include <funkgui/core/Col.h>
+#include <funkgui/core/Theme.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 #include <funkgui/panel/HeadlessHost.h>
+#include <funkgui/panel/HostServices.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/params/GestureController.h>
 #include <funkgui/text/FontService.h>
-
-#include <juce_gui_basics/juce_gui_basics.h>
-
 
 #include <algorithm>
 #include <array>
@@ -95,6 +122,7 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -154,12 +182,13 @@ namespace
 
     struct Rig
     {
-        explicit Rig(int current = 1, std::vector<Row> rows = sampleRows(), int theme = 0) : facade("clean")
+        explicit Rig(int current = 1, std::vector<Row> rows = sampleRows(), int theme = 0, float dpi = 2.0f)
+            : facade("clean")
         {
             facade.fakePresets().setRows(std::move(rows));
             facade.fakePresets().setCurrent(current);
             panel = std::make_unique<ui::Panel>(facade, kProbeOptions);
-            host = std::make_unique<funkgui::HeadlessHost>(*panel, theme, 2.0f);
+            host = std::make_unique<funkgui::HeadlessHost>(*panel, theme, dpi);
             settled = host->settle(kMaxSettle, kDt);
             presets().resetCounts();
             facade.resetCounts();
@@ -762,8 +791,8 @@ namespace
             P.eq("save.strip_keys", b(focused && over && r.open() && editing(r) && r.presets().overwrites() == 1), 1);
         }
         {
-            // A11y: SAVE's help names the preset it saves over; press saves over; headless, a popup click or showMenu
-            // opens no menu and calls nothing.
+            // A11y: SAVE's help names the preset it saves over; press saves over; a popup click or showMenu asks the
+            // host for the menu and, left unanswered, calls nothing.
             Rig r;
             userModified(r);
             const std::vector<funkgui::A11yItem> v = r.items();
@@ -1077,7 +1106,7 @@ namespace
         P.eq("export.refused", b(!pb.exportTo(5, "/tmp/x.fcmppreset") && r.presets().count(Call::exportFile) == 2
                                  && statusOf() == "COULD NOT EXPORT 'X.FCMPPRESET'"), 1);
 
-        // Headless: IMPORT and EXPORT open no chooser and call nothing.
+        // IMPORT and EXPORT ask the host for a chooser; left unanswered, they call nothing.
         pb.a11yAction(rowId(5), funkgui::A11yAction::focus, 0.0);
         pb.a11yAction(browserId(PB::kExportLocal), funkgui::A11yAction::press, 0.0);
         pb.a11yAction(browserId(PB::kImportLocal), funkgui::A11yAction::press, 0.0);
@@ -1114,6 +1143,486 @@ namespace
                          && r.presets().calls(Call::remove)[0].index == kUserFirst + 2;
         pb.run(PB::Command::remove, 1);                          // factory: nothing
         P.eq("menu.run", b(load && factoryRename && rename && remove && r.presets().count(Call::remove) == 1), 1);
+    }
+
+    // ---- the list's clip on device px (web Sprint C, ADR-93) --------------------------------------------------------
+
+    // A browser's dpi is physical height / logical height: 1.5625 is 1000 physical px for the Panel's 640. There 88
+    // and 308 are device rows 137.5 and 481.25, and an unsnapped clip would cut through the pixel centres.
+    void clipSnap(Probe& P)
+    {
+        constexpr float kDpi = 1.5625f;
+        Rig r(1, sampleRows(), 0, kDpi);
+        openBrowser(r);
+        funkgui::WheelEvent w;
+        w.x = 500.0f;
+        w.y = 200.0f;
+        w.dy = -30.0f / 512.0f;                                  // the list up by 30 px: rows are cut at both edges
+        w.smooth = true;
+        const bool used = r.panel->wheel(w);
+        r.host->tick(1, kDt);
+        float top = 1.0e9f, bottom = -1.0e9f;
+        int rowPrims = 0;
+        for (const funkgui::Prim& p : r.host->draw().prims)
+            if (p.tag == ui::tag::browserRow || p.tag == ui::tag::browserCurrent)
+            {
+                ++rowPrims;
+                top = std::min(top, p.y0);
+                bottom = std::max(bottom, p.y1);
+            }
+        P.eq("scroll.clip_rows_drawn", b(used && rowPrims > 0), 1);
+        P.near("scroll.clip_top_device_px", static_cast<double>(top) * static_cast<double>(kDpi), 138.0, 1.0e-3);
+        P.near("scroll.clip_bottom_device_px", static_cast<double>(bottom) * static_cast<double>(kDpi), 481.0, 1.0e-3);
+    }
+
+    // ---- the host's services: menus and file choosers (web Sprint C, ADR-93) ----------------------------------------
+
+    funkgui::Mods popupMods()
+    {
+        funkgui::Mods m;
+        m.ctrl = true;                                           // a ctrl-click is a popup click (HeadlessHost)
+        return m;
+    }
+
+    // A request's items as one line: "id:label" with "(off)" and "(x)" for a disabled and a ticked one, "|" for a
+    // separator.
+    std::string menuLine(const funkgui::MenuRequest& m)
+    {
+        std::string s;
+        for (const funkgui::MenuItem& it : m.items)
+            s += it.separator ? std::string("|")
+                              : std::to_string(it.id) + ":" + it.label + (it.enabled ? "" : "(off)")
+                                    + (it.checked ? "(x)" : "") + ";";
+        return s;
+    }
+
+    bool sameRect(const funkgui::Rect& a, const funkgui::Rect& c)
+    {
+        return a.x == c.x && a.y == c.y && a.w == c.w && a.h == c.h;
+    }
+
+    bool sameCol(funkgui::Col a, funkgui::Col c) { return a.r == c.r && a.g == c.g && a.b == c.b && a.a == c.a; }
+
+    // The product's PAPER (ProductTheme.h: ink100 0B0C0E): not FunkGui's, and not a request's default GRAPHITE.
+    bool isProductPaper(const funkgui::Theme& t)
+    {
+        const funkgui::Theme want = ui::productTheme(ui::kThemePaper);
+        return sameCol(t.ground, want.ground) && sameCol(t.ink100, want.ink100) && sameCol(t.ink70, want.ink70)
+            && sameCol(t.ink52, want.ink52) && sameCol(t.ink32, want.ink32) && sameCol(t.ink16, want.ink16)
+            && sameCol(t.accent, want.accent) && sameCol(t.accentDim, want.accentDim) && sameCol(t.signal, want.signal)
+            && t.textGamma == want.textGamma && sameCol(t.ink100, funkgui::Col{ 0x0B, 0x0C, 0x0E });
+    }
+
+    // The sample list without the rows whose uuid is given: another process changed the store.
+    std::vector<Row> rowsWithout(std::string_view uuid)
+    {
+        std::vector<Row> rows = sampleRows();
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [uuid](const Row& r) { return r.uuid == uuid; }),
+                   rows.end());
+        return rows;
+    }
+
+    // A host that serves less than HeadlessHost: every call goes on to it, except that services() loses the `without`
+    // bits and a call for a service that is not reported refuses, as HostServices' defaults do (`refused` counts
+    // them). While it lives the Panel is attached to it; input, ticks and frames stay the HeadlessHost's.
+    class LesserHost final : public funkgui::HostServices
+    {
+    public:
+        LesserHost(ui::Panel& panel, funkgui::HeadlessHost& inner, unsigned without)
+            : panel_(panel), inner_(inner), without_(without)
+        {
+            panel_.attach(*this);
+        }
+        ~LesserHost() override { panel_.attach(inner_); }
+
+        LesserHost(const LesserHost&) = delete;
+        LesserHost& operator=(const LesserHost&) = delete;
+
+        void   setUnboundedDrag(bool on) override { inner_.setUnboundedDrag(on); }
+        void   showParamMenu(funkgui::ParamPort& p, float x, float y) override { inner_.showParamMenu(p, x, y); }
+        void   nudgeFullRate() override { inner_.nudgeFullRate(); }
+        double nowSeconds() const override { return inner_.nowSeconds(); }
+        void   beginBatch() override { inner_.beginBatch(); }
+        void   endBatch() override { inner_.endBatch(); }
+        int    themeIndex() const override { return inner_.themeIndex(); }
+        int    zoomPercent() const override { return inner_.zoomPercent(); }
+        void   setZoomPercent(int percent) override { inner_.setZoomPercent(percent); }
+        std::span<const int> zoomSteps() const override { return inner_.zoomSteps(); }
+        bool   zoomFits(int percent) const override { return inner_.zoomFits(percent); }
+        unsigned services() const override { return inner_.services() & ~without_; }
+        bool   showMenu(const funkgui::MenuRequest& request, funkgui::MenuCallback done) override
+        {
+            return serves(funkgui::hostservice::menus) && inner_.showMenu(request, std::move(done));
+        }
+        void   dismissMenus() override { inner_.dismissMenus(); }
+        bool   chooseFiles(const funkgui::FileRequest& request, funkgui::FilesCallback done) override
+        {
+            return serves(funkgui::hostservice::fileChooser) && inner_.chooseFiles(request, std::move(done));
+        }
+        bool   copyText(std::string_view utf8) override
+        {
+            return serves(funkgui::hostservice::clipboard) && inner_.copyText(utf8);
+        }
+        bool   commandKeyIsMeta() const override { return inner_.commandKeyIsMeta(); }
+
+        int refused = 0;
+
+    private:
+        bool serves(unsigned service)
+        {
+            if ((without_ & service) == 0u)
+                return true;
+            ++refused;
+            return false;
+        }
+
+        ui::Panel&             panel_;
+        funkgui::HeadlessHost& inner_;
+        unsigned               without_;
+    };
+
+    void stripMenu(Probe& P)
+    {
+        {
+            // The request, in PAPER at a 150 % UI zoom (the anchor stays in the Panel's own px: the host scales it).
+            Rig r(1, sampleRows(), ui::kThemePaper);
+            userModified(r);
+            r.host->setZoom({ 100, 150 }, 150);
+            r.click(bounds(r, stripId(PS::kSaveLocal)), popupMods());
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            P.eq("menu.strip_request", b(m != nullptr && r.host->log.menuRequests == 1
+                                         && menuLine(*m) == "1:Save;2:Save As...;"), 1);
+            P.eq("menu.strip_anchor", b(m != nullptr && sameRect(m->anchor, { 556.0f, 21.0f, 44.0f, 18.0f })), 1);
+            P.eq("menu.strip_theme", b(m != nullptr && isProductPaper(m->theme)), 1);
+            // Save As...: the browser's edit, whatever is current; nothing is saved over.
+            const bool chosen = r.host->chooseMenuItem("Save As...");
+            r.host->tick(1, kDt);
+            P.eq("menu.strip_save_as", b(chosen && r.open() && editing(r)
+                                         && value(r, browserId(PB::kEditLocal)) == "My Bus"
+                                         && r.presets().overwrites() == 0 && r.presets().saves() == 0), 1);
+        }
+        {
+            // A dismissed menu does nothing; Save is the click's overwrite (here from a11y showMenu).
+            Rig r;
+            userModified(r);
+            r.a11y(stripId(PS::kSaveLocal), funkgui::A11yAction::showMenu);
+            const bool cancelled = r.host->cancelMenu();
+            r.host->tick(1, kDt);
+            P.eq("menu.strip_cancel", b(cancelled && r.presets().overwrites() == 0 && !r.open()
+                                        && stripValue(r) == "My Bus, modified"), 1);
+            r.a11y(stripId(PS::kSaveLocal), funkgui::A11yAction::showMenu);
+            const bool chosen = r.host->chooseMenuItem(1);
+            r.host->tick(1, kDt);
+            P.eq("menu.strip_save", b(chosen && r.presets().overwrites() == 1 && !r.open()
+                                      && stripValue(r) == "My Bus"), 1);
+        }
+    }
+
+    void browserMenus(Probe& P)
+    {
+        {
+            // A popup click on a factory row, in PAPER at a 150 % UI zoom: the items of menu() with its separators,
+            // anchored on the row.
+            Rig r(1, sampleRows(), ui::kThemePaper);
+            openBrowser(r);
+            r.host->setZoom({ 100, 150 }, 150);
+            const funkgui::Rect row = bounds(r, rowId(5));       // "Mix Bus Glue"
+            r.click(row, popupMods());
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            const char* factoryRow = "1:Load;|2:Save As...;3:Rename...(off);4:Export...;5:Import...;|6:Delete(off);";
+            P.eq("menu.row_request", b(m != nullptr && r.host->log.menuRequests == 1 && menuLine(*m) == factoryRow), 1);
+            P.eq("menu.row_anchor", b(m != nullptr && row.w > 0.0f && sameRect(m->anchor, row)), 1);
+            P.eq("menu.row_theme", b(m != nullptr && isProductPaper(m->theme)), 1);
+            // Dismissed: nothing. The popup click selected the row: Return loads it and closes.
+            const bool cancelled = r.host->cancelMenu();
+            r.host->tick(1, kDt);
+            const bool nothing = r.presets().applies() == 0 && r.open() && !editing(r);
+            r.keys("return");
+            r.settle();
+            P.eq("menu.row_cancel", b(cancelled && nothing), 1);
+            P.eq("menu.row_selects", b(r.presets().applies() == 1 && r.presets().current() == 5 && !r.open()), 1);
+        }
+        {
+            // Load is one apply of the row and keeps the browser open; a disabled item cannot be chosen.
+            Rig r;
+            openBrowser(r);
+            r.click(bounds(r, rowId(7)), popupMods());
+            const bool off = !r.host->chooseMenuItem("Delete");
+            const bool chosen = r.host->chooseMenuItem("Load");
+            r.host->tick(1, kDt);
+            P.eq("menu.row_load", b(off && chosen && r.presets().applies() == 1 && r.presets().current() == 7
+                                    && r.open() && r.presets().count(Call::remove) == 0), 1);
+        }
+        {
+            // Delete on a user row (a11y showMenu): the menu choice is the confirmation, one remove.
+            Rig r;
+            openBrowser(r);
+            selectRow(r, kUserFirst);                            // "Kick Room", brought into view
+            r.a11y(rowId(kUserFirst), funkgui::A11yAction::showMenu);
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            const bool items = m != nullptr
+                            && menuLine(*m) == "1:Load;|2:Save As...;3:Rename...;4:Export...;5:Import...;|6:Delete;"
+                            && sameRect(m->anchor, bounds(r, rowId(kUserFirst)));
+            const bool chosen = r.host->chooseMenuItem("Delete");
+            r.host->tick(1, kDt);
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::remove);
+            P.eq("menu.row_delete", b(items && chosen && calls.size() == 1 && calls[0].index == kUserFirst
+                                      && calls[0].ok && status(r) == "DELETED 'KICK ROOM'"), 1);
+        }
+        {
+            // The row went while the menu was open (another process changed the store): the answer does nothing, not
+            // even for a command that needs no row (Save As... would start an edit).
+            Rig r;
+            openBrowser(r);
+            selectRow(r, kUserFirst);
+            r.click(bounds(r, rowId(kUserFirst)), popupMods());
+            r.presets().setRows(rowsWithout("u-00"));
+            r.presets().resetCounts();
+            const bool answered = r.host->chooseMenuItem("Save As...");
+            r.host->tick(1, kDt);
+            P.eq("menu.row_gone", b(answered && !editing(r) && r.open() && r.presets().count() == 14
+                                    && r.presets().saves() == 0 && r.presets().applies() == 0), 1);
+        }
+        {
+            // The row moved while the menu was open: it is found again by its uuid.
+            Rig r;
+            openBrowser(r);
+            selectRow(r, kUserFirst + 1);                        // "My Bus", u-01
+            r.click(bounds(r, rowId(kUserFirst + 1)), popupMods());
+            r.presets().setRows(rowsWithout("u-00"));            // "My Bus" is row 12 now
+            r.presets().resetCounts();
+            const bool answered = r.host->chooseMenuItem("Delete");
+            r.host->tick(1, kDt);
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::remove);
+            P.eq("menu.row_refound", b(answered && calls.size() == 1 && calls[0].index == kUserFirst && calls[0].ok
+                                       && status(r) == "DELETED 'MY BUS'"), 1);
+        }
+        {
+            // The background (here the filter column, under the filters): Save As... and Import..., a 1 x 1 anchor
+            // under the pointer. Import... asks for the chooser.
+            Rig r;
+            openBrowser(r);
+            r.host->click(100.0f, 300.0f, popupMods());
+            r.host->tick(1, kDt);
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            P.eq("menu.background_request", b(m != nullptr && menuLine(*m) == "2:Save As...;5:Import...;"
+                                              && sameRect(m->anchor, { 100.0f, 300.0f, 1.0f, 1.0f })), 1);
+            const bool chosen = r.host->chooseMenuItem("Import...");
+            const funkgui::FileRequest* f = r.host->pendingFiles();
+            P.eq("menu.background_import", b(chosen && f != nullptr && f->mode == funkgui::FileRequest::Mode::openMany
+                                             && r.presets().count(Call::importFile) == 0), 1);
+        }
+    }
+
+    void categoryMenu(Probe& P)
+    {
+        const funkgui::Rect kWord { 618.0f, 67.0f, 180.0f, 18.0f };   // the category word of the save-as line
+        {
+            // The request, in PAPER at a 150 % UI zoom: No Category, a separator, the categories in filter order, the
+            // edit's one ticked.
+            Rig r(1, sampleRows(), ui::kThemePaper);
+            openBrowser(r);
+            r.host->setZoom({ 100, 150 }, 150);
+            r.click(bounds(r, browserId(PB::kSaveAsLocal)));
+            r.click(bounds(r, browserId(PB::kCategoryLocal)));
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            P.eq("saveas.category_menu",
+                 b(m != nullptr && editing(r)
+                   && menuLine(*m) == "1:No Category;|100:Bus(x);101:Drums;102:Init;103:Master;104:Vocal;"), 1);
+            P.eq("saveas.category_anchor", b(m != nullptr && sameRect(m->anchor, kWord)), 1);
+            P.eq("saveas.category_theme", b(m != nullptr && isProductPaper(m->theme)), 1);
+            // Choosing one sets the edit's category, and the save takes it.
+            const bool chosen = r.host->chooseMenuItem("Drums");
+            r.host->tick(1, kDt);
+            const bool shown = value(r, browserId(PB::kCategoryLocal)) == "Drums" && editing(r);
+            r.keys("K,i,t");
+            r.keys("return");
+            const Row saved = r.presets().row(r.presets().count() - 1);
+            P.eq("saveas.category_chosen", b(chosen && shown && r.presets().saves() == 1 && saved.name == "Kit"
+                                             && saved.category == "Drums"), 1);
+        }
+        {
+            // No Category (from a11y press on the word), with "Drums" ticked after the filter gave it.
+            Rig r;
+            openBrowser(r);
+            for (const funkgui::A11yItem& it : r.items())
+                if (it.role == funkgui::A11yRole::radioButton && it.title == "Drums")
+                    r.click(it.bounds);
+            r.click(bounds(r, browserId(PB::kSaveAsLocal)));
+            r.a11y(browserId(PB::kCategoryLocal), funkgui::A11yAction::press);
+            const funkgui::MenuRequest* m = r.host->pendingMenu();
+            const bool ticked = m != nullptr
+                             && menuLine(*m) == "1:No Category;|100:Bus;101:Drums(x);102:Init;103:Master;104:Vocal;";
+            const bool chosen = r.host->chooseMenuItem(1);
+            r.host->tick(1, kDt);
+            P.eq("saveas.category_none", b(ticked && chosen && value(r, browserId(PB::kCategoryLocal)) == "None"), 1);
+        }
+        {
+            // The edit was cancelled while the menu was open: the answer changes nothing and asks for no frame.
+            Rig r;
+            openBrowser(r);
+            r.click(bounds(r, browserId(PB::kSaveAsLocal)));
+            r.click(bounds(r, browserId(PB::kCategoryLocal)));
+            const bool pending = r.host->pendingMenu() != nullptr;
+            r.keys("escape");
+            const int nudges = r.host->log.nudges;
+            const uint32_t rev = r.panel->a11yRevision();
+            const bool answered = r.host->chooseMenuItem("Drums");
+            P.eq("saveas.category_stale", b(pending && answered && !editing(r) && r.open()
+                                            && r.host->log.nudges == nudges && r.panel->a11yRevision() == rev
+                                            && r.presets().saves() == 0), 1);
+        }
+    }
+
+    void choosers(Probe& P)
+    {
+        {
+            // EXPORT: a save chooser named after the selected preset; the host makes the name legal and gives the
+            // chosen path the extension.
+            Rig r;
+            openBrowser(r);
+            selectRow(r, 4);                                     // "Master -1 dBTP"
+            r.click(bounds(r, browserId(PB::kExportLocal)));
+            const funkgui::FileRequest* f = r.host->pendingFiles();
+            P.eq("export.chooser_request", b(f != nullptr && r.host->log.fileRequests == 1
+                                             && f->mode == funkgui::FileRequest::Mode::save
+                                             && f->title == "Export preset" && f->pattern == "*.fcmppreset"
+                                             && f->suggestedName == "Master -1 dBTP.fcmppreset"
+                                             && r.presets().count(Call::exportFile) == 0), 1);
+            const bool returned = r.host->returnFiles({ "/tmp/x" });
+            r.host->tick(1, kDt);
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::exportFile);
+            P.eq("export.chooser_result", b(returned && calls.size() == 1 && calls[0].index == 4
+                                            && calls[0].text == "/tmp/x.fcmppreset" && r.host->pendingFiles() == nullptr
+                                            && status(r) == "EXPORTED 'X.FCMPPRESET'"), 1);
+            // Cancelled: nothing more is exported and nothing is said.
+            r.host->tick(200, kDt);                              // the message lapses (3 s)
+            const std::string before = status(r);
+            r.click(bounds(r, browserId(PB::kExportLocal)));
+            const bool cancelled = r.host->pendingFiles() != nullptr && r.host->cancelFiles();
+            r.host->tick(1, kDt);
+            P.eq("export.chooser_cancel", b(cancelled && r.presets().count(Call::exportFile) == 1
+                                            && status(r) == before && before.find("EXPORTED") == std::string::npos), 1);
+        }
+        {
+            // The preset went while the chooser was open: nothing is exported, and the browser says so.
+            Rig r;
+            openBrowser(r);
+            selectRow(r, kUserFirst);
+            r.a11y(browserId(PB::kExportLocal), funkgui::A11yAction::press);
+            const bool pending = r.host->pendingFiles() != nullptr
+                              && r.host->pendingFiles()->suggestedName == "Kick Room.fcmppreset";
+            r.presets().setRows(rowsWithout("u-00"));
+            const bool returned = r.host->returnFiles({ "/tmp/Kick Room.fcmppreset" });
+            r.host->tick(1, kDt);
+            P.eq("export.chooser_gone", b(pending && returned && r.presets().count(Call::exportFile) == 0
+                                          && status(r) == "THAT PRESET IS GONE"), 1);
+        }
+        {
+            // IMPORT: an openMany chooser; two paths are two importFile calls; a cancel imports nothing.
+            Rig r;
+            openBrowser(r);
+            r.click(bounds(r, browserId(PB::kImportLocal)));
+            const funkgui::FileRequest* f = r.host->pendingFiles();
+            P.eq("import.chooser_request", b(f != nullptr && r.host->log.fileRequests == 1
+                                             && f->mode == funkgui::FileRequest::Mode::openMany
+                                             && f->title == "Import presets" && f->pattern == "*.fcmppreset"
+                                             && f->suggestedName.empty()), 1);
+            const bool cancelled = r.host->cancelFiles();
+            r.host->tick(1, kDt);
+            P.eq("import.chooser_cancel", b(cancelled && r.presets().count(Call::importFile) == 0
+                                            && r.presets().count() == 15 && r.host->pendingFiles() == nullptr), 1);
+            r.click(bounds(r, browserId(PB::kImportLocal)));
+            const bool returned = r.host->returnFiles({ "/tmp/One.fcmppreset", "/tmp/Two.fcmppreset" });
+            r.settle();
+            const std::vector<FakePresets::CallLog>& calls = r.presets().calls(Call::importFile);
+            P.eq("import.chooser_result", b(returned && calls.size() == 2 && calls[0].text == "/tmp/One.fcmppreset"
+                                            && calls[1].text == "/tmp/Two.fcmppreset" && r.presets().applies() == 0
+                                            && status(r) == "IMPORTED 2 PRESETS"), 1);
+        }
+    }
+
+    // Views of the probe's own over the Panel's host, gone while their menu and chooser are open: the host still
+    // holds the callbacks, and the answers reach nobody (the weak `alive` guards). No destructor called a service.
+    void viewsGone(Probe& P)
+    {
+        Rig r;
+        userModified(r);
+        const ui::PanelOptions options = kProbeOptions;
+        ui::HistoryStore history;
+        ui::PreviewWorker worker(true);
+        ui::PanelContext ctx(*r.panel, r.facade, options, funkgui::FontService::get().atlas(), history, worker);
+        ctx.host = r.host.get();
+        ctx.frame = r.panel->context().frame;
+        ctx.overlay = ui::Overlay::presetBrowser;
+        const int dismissals = r.host->log.menuDismissals;
+        bool pending = true;
+        {
+            PS ps(ctx);
+            ps.a11yAction(stripId(PS::kSaveLocal), funkgui::A11yAction::showMenu, 0.0);
+            pending = pending && r.host->pendingMenu() != nullptr;
+        }
+        const bool stripAnswered = r.host->chooseMenuItem("Save");
+        const bool stripNothing = r.presets().overwrites() == 0;
+        {
+            PB pb(ctx);
+            pb.a11yAction(rowId(kUserFirst), funkgui::A11yAction::showMenu, 0.0);
+            pb.a11yAction(browserId(PB::kImportLocal), funkgui::A11yAction::press, 0.0);
+            pending = pending && r.host->pendingMenu() != nullptr && r.host->pendingFiles() != nullptr;
+        }
+        const bool menuAnswered = r.host->chooseMenuItem("Delete");
+        const bool filesAnswered = r.host->returnFiles({ "/tmp/One.fcmppreset" });
+        P.eq("services.view_gone", b(pending && stripAnswered && stripNothing && menuAnswered && filesAnswered
+                                     && r.presets().count(Call::remove) == 0
+                                     && r.presets().count(Call::importFile) == 0
+                                     && r.host->log.menuDismissals == dismissals), 1);
+    }
+
+    void noChooser(Probe& P)
+    {
+        Rig r;
+        LesserHost lesser(*r.panel, *r.host, funkgui::hostservice::fileChooser);
+        openBrowser(r);
+        selectRow(r, kUserFirst);
+        // The cells: disabled in a11y, no hand over them, and not Tab stops (SAVE AS still is).
+        const funkgui::Rect imp = bounds(r, browserId(PB::kImportLocal)), exp = bounds(r, browserId(PB::kExportLocal));
+        const bool off = !enabled(r, browserId(PB::kImportLocal)) && !enabled(r, browserId(PB::kExportLocal))
+                      && enabled(r, browserId(PB::kSaveAsLocal)) && enabled(r, browserId(PB::kDeleteLocal));
+        const auto cursorOver = [&r](const funkgui::Rect& cell) {
+            r.host->move(cell.centreX(), cell.centreY());
+            r.host->tick(1, kDt);
+            return r.panel->cursor();
+        };
+        const bool noHand = cursorOver(imp) == funkgui::Cursor::normal && cursorOver(exp) == funkgui::Cursor::normal
+                         && cursorOver(bounds(r, browserId(PB::kSaveAsLocal))) == funkgui::Cursor::pointingHand;
+        bool tabbed = false, saveAsStop = false;
+        for (int k = 0; k < 40; ++k)
+        {
+            r.keys("tab");
+            tabbed = tabbed || r.ctx().focus == browserId(PB::kImportLocal)
+                  || r.ctx().focus == browserId(PB::kExportLocal);
+            saveAsStop = saveAsStop || r.ctx().focus == browserId(PB::kSaveAsLocal);
+        }
+        P.eq("import.no_chooser", b(off && noHand && !tabbed && saveAsStop), 1);
+        // Pressing them (a click, a11y) asks no host for a chooser and calls nothing.
+        selectRow(r, kUserFirst);
+        r.click(imp);
+        r.click(exp);
+        r.a11y(browserId(PB::kImportLocal), funkgui::A11yAction::press);
+        r.a11y(browserId(PB::kExportLocal), funkgui::A11yAction::press);
+        P.eq("import.no_chooser_press", b(lesser.refused == 0 && r.host->log.fileRequests == 0
+                                          && r.presets().count(Call::importFile) == 0
+                                          && r.presets().count(Call::exportFile) == 0), 1);
+        // Menus are not gated: the row's menu opens, with Export... and Import... off.
+        r.a11y(rowId(kUserFirst), funkgui::A11yAction::showMenu);
+        const funkgui::MenuRequest* m = r.host->pendingMenu();
+        P.eq("import.no_chooser_menu",
+             b(m != nullptr
+               && menuLine(*m) == "1:Load;|2:Save As...;3:Rename...;4:Export...(off);5:Import...(off);|6:Delete;"), 1);
+        // A dropped file still imports: that is the Panel's, not the chooser's.
+        r.panel->filesDropped({ "/tmp/Snare Room.fcmppreset" });
+        r.settle();
+        P.eq("import.no_chooser_drop", r.presets().count(Call::importFile), 1);
     }
 
     // ---- a11y, drawing, writes ------------------------------------------------------------------------------------------
@@ -1433,7 +1942,7 @@ namespace
 
 FCMP_PROBE(ui, presets)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // what FontService needs before it bakes the atlas
     P.eq("font.ok", b(funkgui::FontService::get().atlas().baked() && funkgui::FontService::get().ok()), 1);
     strip(P);
     browser(P);
@@ -1445,5 +1954,12 @@ FCMP_PROBE(ui, presets)
     exportAndMenus(P);
     a11yAndDraw(P, pngDir());
     focus(P);
+    clipSnap(P);
+    stripMenu(P);
+    browserMenus(P);
+    categoryMenu(P);
+    choosers(P);
+    viewsGone(P);
+    noChooser(P);
     return P.finish();
 }
