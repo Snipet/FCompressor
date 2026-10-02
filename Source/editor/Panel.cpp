@@ -157,10 +157,14 @@ namespace fcmp::ui
     // ---- HostServices proxy: batches reach the facade (K2 #23) ----------------------------------------------------------
 
     // Everything else is the host's: FunkGui v0.7.1's themeIndex() (the Theme the next draw receives, valid at once after
-    // a THEME click) and ownerComponent() (the juce::Component a PopupMenu or FileChooser anchors to; nullptr headless)
-    // are forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the defaults. So is v0.8.0's UI
-    // zoom (UF1b; ADR-68, ADR-68a), for the Footer's ZOOM cells: zoomPercent(), setZoomPercent(), zoomSteps() and
-    // zoomFits(). Without them the Panel would always see 100 %, no steps and every step fitting.
+    // a THEME click) is forwarded, so a sub-view asking PanelContext::host gets the host's answer, never the default.
+    // So is v0.8.0's UI zoom (UF1b; ADR-68, ADR-68a), for the Footer's ZOOM cells: zoomPercent(), setZoomPercent(),
+    // zoomSteps() and zoomFits(). Without them the Panel would always see 100 %, no steps and every step fitting. And
+    // so are v0.12.0's services (web Sprint C, ADR-93), which the preset views, A | B and COPY REPORT ask for:
+    // services(), showMenu(), dismissMenus(), chooseFiles(), copyText() and commandKeyIsMeta(). Without them a sub-view
+    // would see a host that serves nothing (IMPORT and EXPORT off, no menu, nothing copied) and the compile platform's
+    // command key. ownerComponent() is not forwarded any more: no view anchors a menu or a chooser on a
+    // juce::Component, and nothing under Source/editor outside gpu/ names JUCE in its code.
     class Panel::HostProxy final : public funkgui::HostServices
     {
     public:
@@ -171,11 +175,22 @@ namespace fcmp::ui
         void   nudgeFullRate() override { host_.nudgeFullRate(); }
         double nowSeconds() const override { return host_.nowSeconds(); }
         int    themeIndex() const override { return host_.themeIndex(); }
-        juce::Component* ownerComponent() override { return host_.ownerComponent(); }
         int    zoomPercent() const override { return host_.zoomPercent(); }
         void   setZoomPercent(int percent) override { host_.setZoomPercent(percent); }
         std::span<const int> zoomSteps() const override { return host_.zoomSteps(); }
         bool   zoomFits(int percent) const override { return host_.zoomFits(percent); }
+        unsigned services() const override { return host_.services(); }
+        bool   showMenu(const funkgui::MenuRequest& request, funkgui::MenuCallback done) override
+        {
+            return host_.showMenu(request, std::move(done));
+        }
+        void   dismissMenus() override { host_.dismissMenus(); }
+        bool   chooseFiles(const funkgui::FileRequest& request, funkgui::FilesCallback done) override
+        {
+            return host_.chooseFiles(request, std::move(done));
+        }
+        bool   copyText(std::string_view utf8) override { return host_.copyText(utf8); }
+        bool   commandKeyIsMeta() const override { return host_.commandKeyIsMeta(); }
         void   beginBatch() override
         {
             facade_.beginBatch();
@@ -697,8 +712,10 @@ namespace fcmp::ui
 
     bool Panel::key(const funkgui::KeyEvent& e)
     {
-        // The platform's command key and Z (Cmd on macOS, Ctrl elsewhere: EditControls::commandOnly, ADR-92).
-        const bool undoChord = e.key == funkgui::Key::character && EditControls::commandOnly(e.mods)
+        // The command key and Z (Cmd on macOS, Ctrl elsewhere: EditControls::commandOnly, ADR-92), where the host says
+        // which key that is (ADR-93: in a browser the compile platform says nothing).
+        const bool commandKeyIsMeta = ctx_.host != nullptr && ctx_.host->commandKeyIsMeta();
+        const bool undoChord = e.key == funkgui::Key::character && EditControls::commandOnly(e.mods, commandKeyIsMeta)
                                && (e.ch == U'z' || e.ch == U'Z');
         // ADR-89: an open typed-value field takes the keys (Return and Tab set the value, Esc cancels); a Tab that set
         // it then moves the focus on, also from a control a click focused. Cmd-Z takes the typing back (the field

@@ -64,7 +64,7 @@
 #include <funkgui/prefs/UiPreferences.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 
 #include <algorithm>
@@ -856,7 +856,7 @@ namespace
 
 FCMP_PROBE(ui, chrome)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const fcdsp::ModeEntry* entry = fcdsp::byKey(C.key);
     if (entry == nullptr || entry->desc == nullptr)
     {

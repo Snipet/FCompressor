@@ -24,7 +24,10 @@
 //   diag.*      the fifteen DIAGNOSTICS rows are staticTexts in order with the FakeFacade's fixed values; after HQ is
 //               chosen, OVERSAMPLING, LATENCY and the QUALITY help follow within one refresh (0.25 s); a key bus the host
 //               routes is named; the DISPLAY row is HEADLESS; report() is a title line then "KEY: value" per row.
-//   copy.*      headless, COPY REPORT copies nothing and keeps its title.
+//   copy.*      (web Sprint C, ADR-93) COPY REPORT hands report() to the host (HostServices::copyText; HeadlessHost
+//               logs the text and touches no clipboard): one copy of exactly the report; its a11y title reads "Copied"
+//               and is "Copy report" again after layout::settings::kCopiedS; a click and Return on the focused cell
+//               copy too; over a host without a clipboard nothing is copied and the title stays.
 //   cover.*     while open, the slot grid's and the band's items are not visible to accessibility, the footer's are.
 #include "ProbeRegistry.h"
 
@@ -44,18 +47,20 @@
 #include <funkgui/a11y/A11yItem.h>
 #include <funkgui/canvas/PrimList.h>
 #include <funkgui/core/Ease.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 #include <funkgui/panel/HeadlessHost.h>
+#include <funkgui/panel/HostServices.h>
 #include <funkgui/panel/Input.h>
 #include <funkgui/prefs/UiPreferences.h>
-
-#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -425,6 +430,72 @@ namespace
 
     // ---- report and COPY REPORT (a Settings of the probe's own over the Panel's context) -----------------------------
 
+    // A host that serves less than HeadlessHost: every call goes on to it, except that services() loses the `without`
+    // bits and a call for a service that is not reported refuses, as HostServices' defaults do (`refused` counts
+    // them). While it lives the Panel is attached to it; input, ticks and frames stay the HeadlessHost's.
+    class LesserHost final : public funkgui::HostServices
+    {
+    public:
+        LesserHost(ui::Panel& panel, funkgui::HeadlessHost& inner, unsigned without)
+            : panel_(panel), inner_(inner), without_(without)
+        {
+            panel_.attach(*this);
+        }
+        ~LesserHost() override { panel_.attach(inner_); }
+
+        LesserHost(const LesserHost&) = delete;
+        LesserHost& operator=(const LesserHost&) = delete;
+
+        void   setUnboundedDrag(bool on) override { inner_.setUnboundedDrag(on); }
+        void   showParamMenu(funkgui::ParamPort& p, float x, float y) override { inner_.showParamMenu(p, x, y); }
+        void   nudgeFullRate() override { inner_.nudgeFullRate(); }
+        double nowSeconds() const override { return inner_.nowSeconds(); }
+        void   beginBatch() override { inner_.beginBatch(); }
+        void   endBatch() override { inner_.endBatch(); }
+        int    themeIndex() const override { return inner_.themeIndex(); }
+        int    zoomPercent() const override { return inner_.zoomPercent(); }
+        void   setZoomPercent(int percent) override { inner_.setZoomPercent(percent); }
+        std::span<const int> zoomSteps() const override { return inner_.zoomSteps(); }
+        bool   zoomFits(int percent) const override { return inner_.zoomFits(percent); }
+        unsigned services() const override { return inner_.services() & ~without_; }
+        bool   showMenu(const funkgui::MenuRequest& request, funkgui::MenuCallback done) override
+        {
+            return serves(funkgui::hostservice::menus) && inner_.showMenu(request, std::move(done));
+        }
+        void   dismissMenus() override { inner_.dismissMenus(); }
+        bool   chooseFiles(const funkgui::FileRequest& request, funkgui::FilesCallback done) override
+        {
+            return serves(funkgui::hostservice::fileChooser) && inner_.chooseFiles(request, std::move(done));
+        }
+        bool   copyText(std::string_view utf8) override
+        {
+            return serves(funkgui::hostservice::clipboard) && inner_.copyText(utf8);
+        }
+        bool   commandKeyIsMeta() const override { return inner_.commandKeyIsMeta(); }
+
+        int refused = 0;
+
+    private:
+        bool serves(unsigned service)
+        {
+            if ((without_ & service) == 0u)
+                return true;
+            ++refused;
+            return false;
+        }
+
+        ui::Panel&             panel_;
+        funkgui::HeadlessHost& inner_;
+        unsigned               without_;
+    };
+
+    std::string copyTitle(const Rig& r)
+    {
+        const std::vector<funkgui::A11yItem> v = r.items();
+        const funkgui::A11yItem* c = item(v, sid(ui::Settings::kCopyLocal));
+        return c != nullptr ? c->title : std::string("<missing>");
+    }
+
     void reportRows(Probe& P)
     {
         Rig r;
@@ -438,12 +509,45 @@ namespace
         for (const char ch : rep)
             lines += ch == '\n' ? 1 : 0;
         P.eq("report.line_count", lines, 1 + ui::Settings::kDiagRows);
-        P.eq("copy.headless_copies_nothing", b(!own.copyReport()), 1);
+
+        // COPY REPORT through the host: one copy, of exactly the report.
+        const bool copied = own.copyReport();
+        P.eq("copy.report_copied", b(copied && r.host.log.copies == 1 && r.host.log.lastCopy == own.report()
+                                     && r.host.log.lastCopy.rfind("FCompressor diagnostics\n", 0) == 0
+                                     && r.host.log.lastCopy.find("SAMPLE RATE: 48 000 HZ\n") != std::string::npos), 1);
+        // The Panel's own cell (a11y press): it says COPIED, for kCopiedS of panel time.
+        const bool before = copyTitle(r) == "Copy report";
         r.panel.a11yAction(sid(ui::Settings::kCopyLocal), funkgui::A11yAction::press, 0.0);
         r.host.tick(1, kDt);
-        const std::vector<funkgui::A11yItem> v = r.items();
-        const funkgui::A11yItem* c = item(v, sid(ui::Settings::kCopyLocal));
-        P.eq("copy.title_kept", b(c != nullptr && c->title == "Copy report"), 1);
+        P.eq("copy.title_copied", b(before && r.host.log.copies == 2 && copyTitle(r) == "Copied"
+                                    && r.panel.wantsFullRate()), 1);
+        r.host.tick(static_cast<int>(L::settings::kCopiedS * 60.0) + 2, kDt);
+        P.eq("copy.title_back", b(copyTitle(r) == "Copy report" && r.host.log.copies == 2), 1);
+        // A click on the cell, and Return on it focused, copy too.
+        funkgui::Rect cell{};
+        for (const funkgui::A11yItem& it : r.items())
+            if (it.id == sid(ui::Settings::kCopyLocal))
+                cell = it.bounds;
+        r.click(cell);
+        const bool clicked = r.host.log.copies == 3 && copyTitle(r) == "Copied";
+        r.panel.a11yAction(sid(ui::Settings::kCopyLocal), funkgui::A11yAction::focus, 0.0);
+        r.keys("return");
+        P.eq("copy.click_and_key", b(clicked && r.host.log.copies == 4 && r.host.log.lastCopy == own.report()), 1);
+    }
+
+    // A host without a clipboard: nothing is copied and nothing is said (what a headless run did before the host
+    // served the clipboard).
+    void noClipboardRows(Probe& P)
+    {
+        Rig r;
+        LesserHost lesser(r.panel, r.host, funkgui::hostservice::clipboard);
+        r.openByGear();
+        ui::Settings own(const_cast<ui::PanelContext&>(r.ctx()));
+        const bool refused = !own.copyReport();
+        r.panel.a11yAction(sid(ui::Settings::kCopyLocal), funkgui::A11yAction::press, 0.0);
+        r.host.tick(1, kDt);
+        P.eq("copy.no_clipboard", b(refused && lesser.refused == 2 && r.host.log.copies == 0
+                                    && r.host.log.lastCopy.empty() && copyTitle(r) == "Copy report"), 1);
     }
 
     // ---- what the overlay covers ----------------------------------------------------------------------------------------
@@ -477,7 +581,7 @@ namespace
 FCMP_PROBE(ui, settings)
 {
     (void) C;
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // what FontService needs before it bakes the atlas
     openRows(P);
     gearRows(P);
     keyRows(P);
@@ -486,6 +590,7 @@ FCMP_PROBE(ui, settings)
     newRows(P);
     diagRows(P);
     reportRows(P);
+    noClipboardRows(P);
     coverRows(P);
     return P.finish();
 }

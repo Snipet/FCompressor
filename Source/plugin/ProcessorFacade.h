@@ -106,7 +106,7 @@ struct Diagnostics {
 class ProcessorFacade {
 public:
     virtual ~ProcessorFacade() = default;
-    // parameters: 29 ports in Pid order, OWNED BY THE PROCESSOR, so they outlive every editor (K2 #27)
+    // parameters: 30 ports in Pid order, OWNED BY THE PROCESSOR, so they outlive every editor (K2 #27)
     virtual funkgui::ParamPort& port(fcdsp::Pid) = 0;
     virtual fcdsp::RawParams currentRaw() const = 0;               // relaxed loads + the configured lookahead budget
     // telemetry (01 §6)

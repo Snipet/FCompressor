@@ -44,15 +44,17 @@
 #include <funkgui/params/GestureController.h>
 #include <funkgui/text/FontService.h>
 
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <funkgui/panel/HeadlessGuiScope.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -240,7 +242,7 @@ namespace
             for (; ticks < 2000 && (async.pending() || async.result().key != 43); ++ticks)
             {
                 async.tick(kDt);
-                juce::Thread::sleep(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             P.eq("skeleton.preview.async", async.result().key == 43 && !async.pending() ? 1 : 0, 1);
             async.stop();
@@ -280,7 +282,7 @@ namespace
 
 FCMP_PROBE(ui, geometry)
 {
-    const juce::ScopedJuceInitialiser_GUI juceInit;               // FontService bakes the atlas through JUCE's fonts
+    const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
     const fcdsp::ModeEntry* entry = fcdsp::byKey(C.key);
     if (entry == nullptr || entry->desc == nullptr)
     {

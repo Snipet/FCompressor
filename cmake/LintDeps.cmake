@@ -33,10 +33,19 @@
 #                   funkgui/params/ParamPort.h (ProcessorFacade.h's own), and from plugin/ only plugin/portable/* and
 #                   plugin/ProcessorFacade.h
 #   product         Source/** never uses JucePlugin_* (product constants come from the generated FcmpProduct.h)
+#   editor.juce     Source/editor/** outside gpu/ is JUCE-free (ADR-93, web Sprint C): no JUCE header, no FunkGui
+#                   header that needs JUCE (funkgui/juce/*, funkgui/presets/*, JuceParamPort.h), and no juce::,
+#                   JUCE_*, jassert, MenuLook or ownerComponent token (a `#if JUCE_MAC` would turn silently false
+#                   once the include is gone; a menu, a chooser and the clipboard are HostServices calls). The same
+#                   sources build for the browser.
 #   web.juce        Source/web/** includes no JUCE header (ADR-93: the browser demo has no JUCE)
 #   web.engine      Source/web/engine/** is portable C++ over fcdsp alone: no Emscripten header, no funkgui/*, nothing
 #                   under plugin/ or editor/ (the same sources build natively for the checks, and the module is
 #                   standalone wasm with no JavaScript glue)
+#   web.facade      Source/web/facade/** is the browser's ProcessorFacade, portable C++: no Emscripten header, nothing
+#                   under editor/, from plugin/ only plugin/portable/* and plugin/ProcessorFacade.h, from funkgui/ only
+#                   funkgui/params/ParamPort.h, from web/engine/ only WebProtocol.h (the engine is reached through an
+#                   EngineLink that moves bytes), and no EngineHost token
 # Zero files is fine: Sprint 0 starts with an empty Source/fcdsp.
 cmake_minimum_required(VERSION 3.30)
 
@@ -183,10 +192,13 @@ foreach(_f IN LISTS _files)
   set(_in_portable FALSE)
   set(_in_web FALSE)
   set(_in_web_engine FALSE)
+  set(_in_web_facade FALSE)
   if(_rel MATCHES "^web/")
     set(_in_web TRUE)
     if(_rel MATCHES "^web/engine/")
       set(_in_web_engine TRUE)
+    elseif(_rel MATCHES "^web/facade/")
+      set(_in_web_facade TRUE)
     endif()
   endif()
   if(_rel MATCHES "^fcdsp/")
@@ -252,6 +264,17 @@ foreach(_f IN LISTS _files)
       if(NOT _in_editor_gpu AND _inc MATCHES "(^|/)(funkgui/gpu|bgfx|bx|bimg)/")
         _lint_fail("${_f}" ${_n} editor.gpu "GPU headers only under Source/editor/gpu/: ${_code}")
       endif()
+      if(NOT _in_editor_gpu)
+        if(_inc MATCHES "(^|/)(juce_[^/]*|JuceHeader\\.h)(/|$)")
+          _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ is JUCE-free: ${_code}")
+        endif()
+        if(_inc MATCHES "(^|/)funkgui/(juce|presets)/" OR _inc MATCHES "(^|/)funkgui/params/JuceParamPort\\.h$")
+          _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ includes no FunkGui header that needs JUCE: ${_code}")
+        endif()
+        if(_code MATCHES "(^|[^A-Za-z0-9_])(juce::|namespace[ \t]+juce([^A-Za-z0-9_]|$)|JUCE_[A-Z0-9_]+|jassert|MenuLook|ownerComponent)")
+          _lint_fail("${_f}" ${_n} editor.juce "editor/ outside gpu/ names nothing of JUCE's (juce::, JUCE_*, jassert, MenuLook, ownerComponent): ${_code}")
+        endif()
+      endif()
     elseif(_in_plugin)
       if(_inc MATCHES "(^|/)editor/" AND NOT _base STREQUAL "CreateEditorGpu.cpp")
         _lint_fail("${_f}" ${_n} plugin.editor "plugin/ never includes editor/ (only CreateEditorGpu.cpp): ${_code}")
@@ -277,6 +300,26 @@ foreach(_f IN LISTS _files)
       endif()
       if(_inc MATCHES "(^|/)(funkgui|plugin|editor)/")
         _lint_fail("${_f}" ${_n} web.engine "the engine wrapper is fcdsp alone (no funkgui/, plugin/, editor/): ${_code}")
+      endif()
+    endif()
+    if(_in_web_facade)
+      if(_inc MATCHES "(^|/)emscripten(/|\\.h$)" OR _inc MATCHES "^(wasm_simd128|emscripten)")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade includes no Emscripten header: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)editor/")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade never includes editor/: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)plugin/" AND NOT _inc MATCHES "(^|/)plugin/(portable/[^/]+|ProcessorFacade\\.h)$")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade includes only plugin/portable/* and plugin/ProcessorFacade.h from plugin/: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)funkgui/" AND NOT _inc MATCHES "(^|/)funkgui/params/ParamPort\\.h$")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade includes no FunkGui header but ParamPort.h: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)web/engine/" AND NOT _inc MATCHES "(^|/)web/engine/WebProtocol\\.h$")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade shares only web/engine/WebProtocol.h with the engine: ${_code}")
+      endif()
+      if(_inc MATCHES "(^|/)fcdsp/engine/EngineHost\\.h$" OR _code MATCHES "(^|[^A-Za-z0-9_])EngineHost([^A-Za-z0-9_]|$)")
+        _lint_fail("${_f}" ${_n} web.facade "the web facade reaches the engine only through an EngineLink, never fcdsp::EngineHost: ${_code}")
       endif()
     endif()
   endforeach()
