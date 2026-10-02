@@ -9,16 +9,15 @@
 // 20 % larger than its entry, raw and gzip each. To re-measure (after the modules or the page change on purpose): run
 // this test, and replace the table with the "measured now" lines it prints at the end.
 //
-// Measured at web Sprint D's base 7319ac7 plus card U-2's page, Emscripten 6.0.3, with the BASE's editor module (U-1's
-// prototype): fcmp-ui.js and fcmp-ui.wasm are re-measured by the lead once U-1 is merged. index.html, fcmp-ui.html and
-// main.js are as measured after the review's fixes (they grew past their 20 %); the other entries are as they were.
+// Measured at web Sprint D's merge (the three cards with their review fixes, FunkGui v0.14.0), Emscripten 6.0.3, on
+// arm64 macOS. The modules' bytes are the same on every host (wasm32, one toolchain); built-from.txt is one line.
 const MEASURED = {
   'built-from.txt': [73, 89],
-  'demo.css': [2811, 1249],
+  'demo.css': [3240, 1418],
   'fcmp-engine.wasm': [545704, 136515],
   'fcmp-ui.html': [4144, 2077],
-  'fcmp-ui.js': [54618, 15827],
-  'fcmp-ui.wasm': [1317406, 445224],
+  'fcmp-ui.js': [55707, 16119],
+  'fcmp-ui.wasm': [1323756, 447506],
   'fcmp-worklet.js': [10548, 3556],
   'index.html': [4144, 2077],
   'licences/GPL-3.0.txt': [35149, 12091],

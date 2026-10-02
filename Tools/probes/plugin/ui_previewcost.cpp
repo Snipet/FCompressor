@@ -92,13 +92,6 @@
 #include <thread>
 #include <vector>
 
-namespace fcmp::ui
-{
-    // PreviewWorker.cpp's switch for this probe. PreviewWorker.h is frozen and does not declare it; the product never
-    // calls it. While it is on no worker's thread starts, as on a system that refuses one; it returns what it was.
-    bool previewWorkerRefuseThread(bool) noexcept;
-}
-
 namespace
 {
     using funkgui::test::Probe;

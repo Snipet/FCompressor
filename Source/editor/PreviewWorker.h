@@ -114,4 +114,10 @@ namespace fcmp::ui
         struct Impl;                                             // the thread, the queue and the two buffers
         std::unique_ptr<Impl> impl_;
     };
+
+    // A probe's way to the no-thread path in a build that has threads (ui.previewcost; web Sprint D, additive): while
+    // it is on, a worker that has no thread yet is refused one, as a system can refuse it, so the path a web build
+    // always takes runs natively too (where no thread can exist it changes nothing). It returns what it was. The
+    // product never calls it. Message thread.
+    bool previewWorkerRefuseThread(bool refuse) noexcept;
 }

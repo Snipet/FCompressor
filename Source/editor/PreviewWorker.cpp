@@ -158,11 +158,6 @@ namespace fcmp::ui
         std::thread thread;                                      // joined by stop(), which the destructor calls
     };
 
-    // The probes' way to the no-thread path in a build that has threads (ui.previewcost): while it is on, startThread()
-    // refuses for every worker that has no thread yet, as a system can, so the path a web build always takes runs
-    // natively too (where none can exist it changes nothing). It returns what it was. Declared here and by the probe:
-    // PreviewWorker.h is frozen (FZ4) and the product never calls it. Message thread.
-    bool previewWorkerRefuseThread(bool) noexcept;
     bool previewWorkerRefuseThread(bool refuse) noexcept { return std::exchange(gRefuseThread, refuse); }
 
     PreviewWorker::PreviewWorker(bool synchronous) : impl_(std::make_unique<Impl>(synchronous)) {}
