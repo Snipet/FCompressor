@@ -57,7 +57,7 @@ export async function run({ u, row }) {
   const loaded = (name, before) => (s) => preset(s).value === name && s.tap.n === before + 1 && runsRecord(s);
   const open = async () => {
     await u.press('Preset', { role: ROLE.combo });
-    return u.until((s) => browser(s) && rows(s).length > 1);
+    return u.steady((s) => browser(s) && rows(s).length > 1);
   };
 
   const s0 = await u.look();

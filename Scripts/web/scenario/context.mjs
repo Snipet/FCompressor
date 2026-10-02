@@ -5,8 +5,9 @@
 // picture of the same frame) is exact only on a still frame, so it is taken before START, with the first-use hint
 // pinned away (?nohint=1), once the Panel no longer asks for the full frame rate. It is judged by the renderer's
 // class, as the page's own self-test judges it: on a GPU no sample differs by more than 2 of 255; on a software
-// renderer (SwiftShader, llvmpipe, softpipe) none by more than 16 and at most 10 in 1000 by more than 2. A font atlas
-// that was not uploaded again after the restore fails either rule by a wide margin.
+// renderer (its name says so: SwiftShader, llvmpipe, softpipe, a basic render driver) none by more than 16 and at
+// most 10 in 1000 by more than 2. A font atlas that was not uploaded again after the restore fails either rule by a
+// wide margin.
 //
 //   context.still            before any loss: the still frame is SoftRaster's
 //   context.still.restored   lost and restored before START: no frame can be read while it is lost, and afterwards
@@ -23,7 +24,7 @@ import { holds, sayThreshold, threshold, thresholdIs } from './engine.mjs';
 export const page = 'own';
 
 const DEFAULT_DB = -18;                               // CLEAN's THRESHOLD
-const SOFTWARE = /swiftshader|llvmpipe|softpipe|software/i;
+const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render/i;
 
 // The WebGL renderer's name, from a canvas of its own that is given up at once.
 const RENDERER = `(() => {

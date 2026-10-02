@@ -145,6 +145,7 @@ try {
               // A group that opens a second page hands the first one's ledger over before it goes.
               leave: async () => ledgers.push({ after: report.group, ...(await errors.ledger(u)) }) };
   report.note('browser', await errors.browser(u));
+  report.note('audio', session.audio);
   let passed = false;                                 // the group before left no failing row
   const running = async () => {
     try {
@@ -154,6 +155,7 @@ try {
     }
   };
   for (const [index, group] of groups.entries()) {
+    if (!session.alive()) throw new Error(`the browser went away (before the group ${group.name})`);
     report.enter(group.name);
     try {
       if (group.page === 'new' || (group.page === 'continue' && !(passed && await running()))) {

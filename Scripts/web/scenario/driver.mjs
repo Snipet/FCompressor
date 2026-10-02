@@ -21,9 +21,10 @@
 //                                           after the library's own (of two that say the same, the last wins)
 //   a page: s(method, params), ev(expression), consoleLines, targetId, metrics(w, h, 1), go(url, 0), at(x, y),
 //           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), and the port tap:
-//           tap(), tapRead() -> { n, last: { v, snap }, reply: { latency, frameLatency, rate, modeSlot, fade,
-//           inPeak, outPeak, blockMaxGr, thrDb, slope }, replies }
+//           tap(), tapRead() -> { n, last: { v, snap }, reply: { flags, publish, latency, frameLatency, rate,
+//           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies }
 //   sleep, cleanUp, PID
+//   where the library has them (the base's has not): a browser's gone(), '' while Chrome lives
 // The presses, the drags, the double click, START and the pictures are made here, not with the library's own: they
 // carry timestamps, wait on conditions and write where the scenario is told to.
 // Requests to that card (the handoff lists them): the Chrome to run comes from --chrome, which the base's library
@@ -50,7 +51,7 @@ export const ROLE = { slider: 0, toggle: 1, button: 2, radioGroup: 3, radio: 4, 
 export const SCREEN = { panel: 0, characteristics: 1 };
 export const OVERLAY = { none: 0, modeBrowser: 1, presetBrowser: 2, settings: 3 };
 // A reply's flags (Source/web/engine/WebProtocol.h ReplyFlag) and a frame's (fcdsp/telemetry/UiFrame.h UiFlag).
-export const REPLY = { gated: 1 << 3, configured: 1 << 4, attached: 1 << 5 };
+export const REPLY = { frame: 1 << 2, gated: 1 << 3, configured: 1 << 4, attached: 1 << 5 };
 export const UI = { bypassed: 1 << 0, fading: 1 << 5 };
 // Input.dispatch*'s modifiers.
 export const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
@@ -97,20 +98,37 @@ const LEDGER = `(async () => {
   return JSON.stringify({ status, worklet });
 })()`;
 
+// Whether a reply (the port tap's) carries a frame the engine has published: before the first one its values are 0.
+const published = (reply) => reply !== null && (reply.flags & REPLY.frame) !== 0 && reply.publish > 0;
+
 // A box of the page in client px, by element id.
 const boxOf = (id) => `JSON.stringify((() => {
   const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect();
   return { x: r.left, y: r.top, w: r.width, h: r.height };
 })())`;
 
+// Whether an AudioContext renders in this browser: one made on a blank page runs and its clock moves within 3 s.
+const RENDERS = `(async () => {
+  const context = new AudioContext();
+  const t0 = performance.now();
+  const renders = () => context.state === 'running' && context.currentTime > 0;
+  while (!renders() && performance.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 50));
+  const ok = renders();
+  await context.close().catch(() => {});
+  return ok;
+})()`;
+const NULL_SINK = '--disable-audio-output';
+
 // The server, one Chrome with a throwaway profile, and the scripted user's page. `flags` are further switches for
 // Chrome (a software renderer, no audio device); `chromePath` is --chrome; `out` is --out.
+//
+// The rows need a context that renders. On a machine with no audio device (a CI runner) Chrome may give one that
+// never does: then that Chrome is given up and another started with the browser's own null sink (NULL_SINK), which
+// renders at the same pace into nothing, and `audio` says so. Chrome is muted either way.
 export async function launch({ dir, out, chromePath = '', flags = [], width = 1280, height = 800 }) {
-  // One scratch directory, under --out and gone when the run ends: Chrome's profile, and the files the user drops.
+  // One scratch directory, under --out and gone when the run ends: Chrome's profiles, and the files the user drops.
   mkdirSync(out, { recursive: true });
   const scratch = mkdtempSync(join(out, 'scenario-'));
-  const profile = join(scratch, 'profile');
-  mkdirSync(profile);
   const removeScratch = () => {
     try {
       rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -119,19 +137,49 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
   process.on('exit', removeScratch);                  // after the library's own handler, which kills what it started
   const server = await cdp.serve(dir);
   let browser = null;
-  try {
-    browser = await cdp.chrome({ width, height, profile, extra: flags, chrome: chromePath || undefined });
-  } catch (error) {
-    server.kill();
-    throw error;
-  }
+  let audio = '';
   const close = () => {
-    browser.kill();
+    if (browser !== null) browser.kill();
     server.kill();
     cdp.cleanUp();
     removeScratch();
   };
-  return { base: server.base, browser, scratch, close };
+  const start = async (name, extra) => {
+    const profile = join(scratch, name);
+    mkdirSync(profile);
+    browser = await cdp.chrome({ width, height, profile, extra, chrome: chromePath || undefined });
+    const probe = await browser.page(null);
+    const renders = await probe.ev(RENDERS);
+    await browser.send('Target.closeTarget', { targetId: probe.targetId }).catch(() => {});
+    return renders;
+  };
+  try {
+    if (await start('profile', flags)) {
+      audio = flags.includes(NULL_SINK) ? `the browser's null sink (${NULL_SINK}, as asked)` : "the machine's device";
+    } else if (flags.includes(NULL_SINK)) {
+      throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK}`);
+    } else {
+      browser.kill();
+      if (!await start('profile-null-sink', [...flags, NULL_SINK])) {
+        throw new Error(`no AudioContext renders in this browser, with ${NULL_SINK} or without`);
+      }
+      audio = `the browser's null sink (${NULL_SINK}): no context rendered through an audio device of the machine`;
+    }
+  } catch (error) {
+    close();
+    throw error;
+  }
+  // Whether that Chrome still runs: the library says so, or its process does.
+  const alive = () => {
+    if (typeof browser.gone === 'function') return browser.gone() === '';
+    try {
+      process.kill(browser.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return { base: server.base, browser, scratch, audio, alive, close };
 }
 
 // The scripted user on one tab: the library's page, and what the groups ask of it.
@@ -159,6 +207,17 @@ export async function user(browser, base) {
       if (Date.now() - t0 >= ms) return { ok: false, s, ms: Date.now() - t0 };
       await sleep(40);
     }
+  };
+  // As until(), and every item of the list lies where it lay in the look before: for a look whose items are then
+  // pressed where it says they are (a screen that is opening lists them, then moves them).
+  u.steady = (test, ms = BOUND_MS) => {
+    let before = '';
+    return u.until((s) => {
+      const now = JSON.stringify(u.list(s).items.map((i) => [i.id, i.x, i.y, i.w, i.h]));
+      const same = now === before;
+      before = now;
+      return same && test(s);
+    }, ms);
   };
   // The look's list, or an error that says there is none: a group that cannot do without it ends there.
   u.list = (s) => {
@@ -341,10 +400,13 @@ export async function user(browser, base) {
     }
     await p.tap();
     tapped = true;
-    const fed = await u.until((s) => s.context === 'running' && s.away && s.tap.replies > 0 && s.tap.reply !== null,
-                              10000);
+    // The first replies may carry a frame the engine has not published yet (its values are all 0): a group reads the
+    // engine's values from its first look on, so START is over only when a published frame has come back.
+    const fed = await u.until((s) => s.context === 'running' && s.away && published(s.tap.reply), 10000);
     return { ...fed, ms: Date.now() - t0,
-             why: fed.ok ? '' : `the page runs, but the context is ${fed.s ? fed.s.context : '?'} and no reply came` };
+             why: fed.ok ? '' : `the page runs, but the context is ${fed.s ? fed.s.context : '?'} and `
+                                + `${fed.s && fed.s.tap && fed.s.tap.replies > 0 ? 'no reply carries a published frame'
+                                                                                 : 'no reply came'}` };
   };
   u.tapped = () => tapped;
   // What load() returned, or an error that says the page did not come up: for a group that goes no further then.
