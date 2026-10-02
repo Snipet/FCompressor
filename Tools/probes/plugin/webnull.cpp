@@ -37,9 +37,11 @@
 //   script.*    once: columns.mismatches 0 over every HistoryRing column (count and written() equal), record.values
 //               (every Params record carried the facade's 30 raw values), refused 0 (records the engine refused,
 //               replies the facade refused), pulls and replies (one each per quantum), diag.mismatches (diagnostics()
-//               against the Processor's, the load apart), ports.static (default01, numSteps, id), and moved_steps:
-//               the script is not vacuous (the level a step settles at differs from the step before it by 0.5 dB or
-//               more at 8 steps at least)
+//               against the Processor's, the load apart; the rate and the block are here what the probe gave both, to
+//               prepareToPlay and to setEngineSetup, so those two fields prove the setter and the prepared gate only:
+//               what the facade derives by itself is link.diag.derived's), ports.static (default01, numSteps, id), and
+//               moved_steps: the script is not vacuous (the level a step settles at differs from the step before it
+//               by 0.5 dB or more at 8 steps at least)
 //   corner.*    the cases JUCE's two-value model exists for, on a fresh pair (LINK, MAKEUP and MIX: linear maps, so
 //               the cases are the same arithmetic under every C library):
 //     first                       a parameter's first notification always lands: LINK one float step below its
@@ -57,7 +59,10 @@
 //               frame is taken only with its flag; resync() posts the values with the snap and Attach; the sink is
 //               given back at destruction; and over the real engine: a Pull after 0.7 s unpulled is followed until
 //               nothing waits, and after 4.5 s unpulled (the engine's ring lapped) the mirror gets one marker, then
-//               the 4095 columns the engine still had, over two pull() calls (one never laps the mirror itself)
+//               the 4095 columns the engine still had, over two pull() calls (one never laps the mirror itself); and
+//               diag.derived: a facade never given setEngineSetup, its engine and a Processor at 44.1 kHz (not the
+//               probe's rate, so nothing is a constant read back): once a reply has brought a frame, diagnostics()
+//               equals the Processor's, the rate out of the reply's UiFrame and the block the 128-frame default
 #include "ProbeRegistry.h"
 
 #include "EngineRig.h"
@@ -128,15 +133,15 @@ namespace
         std::printf("NOTE     no sandbox in the environment: presets and preferences under %s\n", dir.string().c_str());
     }
 
-    void prepare(fcmp::Processor& proc)
+    void prepare(fcmp::Processor& proc, double fs = kFs)
     {
         juce::AudioProcessor::BusesLayout l;
         l.inputBuses.add(juce::AudioChannelSet::stereo());
         l.inputBuses.add(juce::AudioChannelSet::disabled());
         l.outputBuses.add(juce::AudioChannelSet::stereo());
         proc.setBusesLayout(l);
-        proc.setRateAndBufferSizeDetails(kFs, kQuantum);
-        proc.prepareToPlay(kFs, kQuantum);
+        proc.setRateAndBufferSizeDetails(fs, kQuantum);
+        proc.prepareToPlay(fs, kQuantum);
     }
 
     // The input, the same for whoever asks: closed-form sine, seeded noise.
@@ -393,6 +398,17 @@ namespace
 
     // ==== the script =================================================================================================
 
+    // diagnostics() field by field, without the load (the protocol has none) and the names (juce, format, host).
+    std::int64_t diagMismatches(const fcmp::Diagnostics& a, const fcmp::Diagnostics& b)
+    {
+        return (a.prepared == b.prepared ? 0 : 1) + (a.sampleRate == b.sampleRate ? 0 : 1)
+             + (a.maxBlock == b.maxBlock ? 0 : 1) + (a.mainIns == b.mainIns ? 0 : 1)
+             + (a.mainOuts == b.mainOuts ? 0 : 1) + (a.keyChans == b.keyChans ? 0 : 1)
+             + (a.quality == b.quality ? 0 : 1) + (a.budget == b.budget ? 0 : 1)
+             + (a.latencySamples == b.latencySamples ? 0 : 1) + (std::strcmp(a.version, b.version) == 0 ? 0 : 1)
+             + (std::strcmp(a.funkgui, b.funkgui) == 0 ? 0 : 1);
+    }
+
     void scriptRows(Probe& P, const fcdsp::ModeEntry& en)
     {
         Pair r;
@@ -523,15 +539,10 @@ namespace
         P.eq("script.pulls", r.pulls, r.quanta);
         P.eq("script.replies", static_cast<std::int64_t>(r.facade.replies()), r.quanta);
 
+        // The rate and the block: the probe's own two numbers on both sides (Pair gave them to setEngineSetup); what
+        // the facade derives without them is link.diag.derived.
         const fcmp::Diagnostics a = r.proc.diagnostics(), b = r.facade.diagnostics();
-        const std::int64_t diagBad = (a.prepared == b.prepared ? 0 : 1) + (a.sampleRate == b.sampleRate ? 0 : 1)
-                                   + (a.maxBlock == b.maxBlock ? 0 : 1) + (a.mainIns == b.mainIns ? 0 : 1)
-                                   + (a.mainOuts == b.mainOuts ? 0 : 1) + (a.keyChans == b.keyChans ? 0 : 1)
-                                   + (a.quality == b.quality ? 0 : 1) + (a.budget == b.budget ? 0 : 1)
-                                   + (a.latencySamples == b.latencySamples ? 0 : 1)
-                                   + (std::strcmp(a.version, b.version) == 0 ? 0 : 1)
-                                   + (std::strcmp(a.funkgui, b.funkgui) == 0 ? 0 : 1);
-        P.eq("script.diag.mismatches", diagBad, 0);
+        P.eq("script.diag.mismatches", diagMismatches(a, b), 0);
         P.eq("script.diag.no_load", b.blocks == 0u && b.overruns == 0u && b.loadAvg == 0.0f && b.loadPeak == 0.0f
                                     && b.juce[0] == '\0' ? 1 : 0, 1);
 
@@ -850,6 +861,34 @@ namespace
             P.eq("link.lap.columns", static_cast<std::int64_t>(f.history().written() - afterBurst),
                  1 + (fcdsp::HistoryRing::kCapacity - 1));
             P.eq("link.lap.refused", link.log().refused + static_cast<std::int64_t>(f.repliesRefused()), 0);
+        }
+
+        // diagnostics() on a facade the page told nothing (no setEngineSetup), once a reply has brought a frame: the
+        // rate is the engine's own, out of the reply's UiFrame, and the block a worklet's quantum. At 44.1 kHz, so that
+        // neither can be the probe's kFs read back, nor the 48 kHz the facade assumes elsewhere.
+        {
+            constexpr double fs = 44100.0;
+            fcmp::Processor proc;
+            prepare(proc, fs);
+            fcmp::probe::LoopbackLink link;
+            web::WebFacade f(link);
+            fcmp_web_set_gate(link.engine(), 0);
+            fcmp_web_configure(link.engine(), fs, kQuantum);
+            f.setUiAttached(true);
+            Source source;
+            float inL[kQuantum], inR[kQuantum], outL[kQuantum], outR[kQuantum];
+            for (int q = 0; q < 8; ++q)
+            {
+                source.fill(inL, inR);
+                fcmp_web_process(link.engine(), inL, inR, outL, outR, kQuantum);
+            }
+            f.pull();
+            const fcmp::Diagnostics a = proc.diagnostics(), b = f.diagnostics();
+            fcdsp::UiFrame frame{};
+            P.eq("link.diag.derived.reached", f.replies() >= 1u && f.readUiFrame(frame) && frame.publishCount != 0u
+                                              && a.prepared && a.sampleRate == fs && a.maxBlock == kQuantum ? 1 : 0, 1);
+            P.eq("link.diag.derived.mismatches", diagMismatches(a, b), 0);
+            P.eq("link.diag.derived.refused", link.log().refused + static_cast<std::int64_t>(f.repliesRefused()), 0);
         }
     }
 } // namespace
