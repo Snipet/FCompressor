@@ -22,7 +22,8 @@
 //   chrome.*     how the library starts Chrome, seen by a stand-in executable that writes down its arguments and
 //                ends: always --mute-audio and --headless=new, a throwaway profile that is gone afterwards, the GPU
 //                flag by platform, the autoplay and sandbox switches only where asked, a missing browser said
-//   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch
+//   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch;
+//                what a run removes from its results directory
 //   script.*     what web-live.sh runs, seen by a stand-in for node: the twelve ui.dump calls of the contract with
 //                scratch preference paths, the expectation tool, the runner's arguments for a build tree, an
 //                artifact and --serve, and what a failing ui.dump or tool leads to
@@ -31,7 +32,8 @@
 //                build, no built site, --dir without --live and --expect, a site without built-from.txt, no node,
 //                a node older than 22, no Chrome (on the real build tree too); and --help
 //   serve.*      web-live.sh --serve --dir from another directory, every path with a space in it: the URLs of the
-//                contract with what each capture page must give, the three roots answering, and SIGINT ending it
+//                contract with what each capture page must give, the three roots answering, and SIGINT, SIGTERM
+//                and SIGHUP each ending it
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync,
@@ -467,6 +469,28 @@ try {
         `exit ${gate.status}: ${(gate.stdout.match(/^web-live: no verdict.*$/m) || ['no such line'])[0].slice(0, 60)}; `
         + 'its Chrome was muted, headless and without the autoplay switch; summary.txt has the script\'s head and '
         + 'the runner\'s lines');
+
+    // What a run removes from --out: an earlier run's results (a directory that has frames/), and nothing from a
+    // directory that holds something else.
+    const other = join(scratch, 'not a results directory');
+    put(join(other, 'notes.log'), 'kept\n');
+    put(join(other, 'png', 'holiday.png'), 'kept\n');
+    const into = () => spawnSync('/bin/sh', [script, '--dir', site, '--live', liveDir, '--expect', expectDir, '--out',
+                                             other, '--chrome', standIn],
+                                 { encoding: 'utf8', timeout: 60000, cwd: scratch,
+                                   env: { ...process.env, NODE: process.execPath } });
+    const there = (...names) => names.map((name) => existsSync(join(other, name)));
+    const once = into();
+    const untouched = there('notes.log', 'png/holiday.png', 'frames', 'summary.txt');
+    put(join(other, 'frames', 'old.theme0.live.fp'), 'stale\n');
+    put(join(other, 'old-page.log'), 'stale\n');
+    put(join(other, 'scenario', 'old.txt'), 'stale\n');
+    const twice = into();
+    const stale = there('frames/old.theme0.live.fp', 'old-page.log', 'scenario', 'png/holiday.png', 'frames');
+    row(once.status === 2 && twice.status === 2 && untouched.every((is) => is)
+        && stale.join() === 'false,false,false,false,true', 'gate.results_directory',
+        `a directory with something else in it: kept ${untouched.filter((is) => is).length} of 4; an earlier run's `
+        + `results: ${stale.slice(0, 4).filter((is) => !is).length} of 4 removed before the next run`);
   }
 
   // ---- what the script runs -----------------------------------------------------------------------------------------
@@ -656,25 +680,38 @@ exit 0
   // ---- --serve ------------------------------------------------------------------------------------------------------
   {
     // From another directory, with relative paths that have spaces in them.
-    const child = spawn('/bin/sh', [script, '--serve', '--dir', 'the site', '--live', 'the live', '--expect',
-                                    'the expect'],
-                        { cwd: scratch, stdio: ['ignore', 'pipe', 'pipe'],
-                          env: { ...process.env, NODE: process.execPath, CHROME: join(scratch, 'nowhere') } });
-    process.on('exit', () => child.kill('SIGKILL'));     // however this test ends, the server does not outlive it
-    let out = '';
-    let err = '';
-    const ended = new Promise((r) => child.on('close', (code, signal) => r(signal || code)));
-    const ready = new Promise((r) => {
-      child.stdout.on('data', (c) => { out += c; if (/a fresh origin/.test(out)) r(true); });
-      child.stderr.on('data', (c) => { err += c; });
-      ended.then(() => r(false));
-      setTimeout(() => r(false), 30000);
-    });
-    const up = await ready;
-    const base = (/serving at (http:\/\/127\.0\.0\.1:\d+)\//.exec(out) || [])[1] || '';
-    if (!row(up && base !== '', 'serve.starts', up ? `${base}, with no Chrome to be found: --serve needs none`
-                                                    : `it did not come up: ${(err || out).trim().slice(0, 300)}`)) {
-      child.kill('SIGKILL');
+    const serving = async () => {
+      const child = spawn('/bin/sh', [script, '--serve', '--dir', 'the site', '--live', 'the live', '--expect',
+                                      'the expect'],
+                          { cwd: scratch, stdio: ['ignore', 'pipe', 'pipe'],
+                            env: { ...process.env, NODE: process.execPath, CHROME: join(scratch, 'nowhere') } });
+      process.on('exit', () => child.kill('SIGKILL'));   // however this test ends, the server does not outlive it
+      const s = { child, out: '', err: '', up: false, base: '' };
+      s.ended = new Promise((r) => child.on('close', (code, signal) => r(signal || code)));
+      s.up = await new Promise((r) => {
+        child.stdout.on('data', (c) => { s.out += c; if (/a fresh origin/.test(s.out)) r(true); });
+        child.stderr.on('data', (c) => { s.err += c; });
+        s.ended.then(() => r(false));
+        setTimeout(() => r(false), 30000);
+      });
+      s.base = (/serving at (http:\/\/127\.0\.0\.1:\d+)\//.exec(s.out) || [])[1] || '';
+      // The signal sent, then how the process ended and what the server answers afterwards.
+      s.end = async (signal) => {
+        child.kill(signal);
+        const code = await Promise.race([s.ended, new Promise((r) => setTimeout(() => r('still running'), 10000))]);
+        if (code === 'still running') child.kill('SIGKILL');
+        const gone = await ask(s.base, '/index.html');
+        return { code, gone: gone.status === 0, said: `${signal}: exit ${code}, and the server answers `
+                                                      + `${gone.error || gone.status}` };
+      };
+      return s;
+    };
+    const first = await serving();
+    const { base, out } = first;
+    if (!row(first.up && base !== '', 'serve.starts',
+             first.up ? `${base}, with no Chrome to be found: --serve needs none`
+                      : `it did not come up: ${(first.err || out).trim().slice(0, 300)}`)) {
+      first.child.kill('SIGKILL');
     } else {
       const lines = out.split('\n');
       const missing = [];
@@ -696,12 +733,16 @@ exit 0
           && got[4].body.toString().includes('<title>site</title>'), 'serve.answers',
           'the site, the live page, an expectation, the module and a capture page: '
           + got.map((r) => r.status).join(', '));
-      child.kill('SIGINT');
-      const code = await Promise.race([ended, new Promise((r) => setTimeout(() => r('still running'), 10000))]);
-      const gone = await ask(base, '/index.html');
-      row(code === 2 && gone.status === 0, 'serve.interrupted',
-          `SIGINT: exit ${code}, and the server answers ${gone.error || gone.status}`);
-      if (code === 'still running') child.kill('SIGKILL');
+      const interrupted = await first.end('SIGINT');
+      row(interrupted.code === 2 && interrupted.gone, 'serve.interrupted', interrupted.said);
+      // The other signals a runner is ended by: the same end.
+      const ends = [];
+      for (const signal of ['SIGTERM', 'SIGHUP']) {
+        const again = await serving();
+        if (!again.up) again.child.kill('SIGKILL');
+        ends.push(again.up ? await again.end(signal) : { code: 'never up', gone: false, said: `${signal}: never up` });
+      }
+      row(ends.every((e) => e.code === 2 && e.gone), 'serve.other_signals', ends.map((e) => e.said).join('; '));
     }
   }
 } finally {

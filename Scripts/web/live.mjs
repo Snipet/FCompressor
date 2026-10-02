@@ -31,8 +31,8 @@
 // and only they are counted. The last line is "web-live: N/M passed (results in <out>)".
 //
 // Results in <out>: frames/<view>.theme<t>.live.fp, png/<view>.theme<t>.png, png/<page>.png, selftest.log,
-// selftest.autoplay.log, <page>.log, scenario.log, scenario/, summary.txt. They are removed before a run; <expect> is
-// only read.
+// selftest.autoplay.log, <page>.log, scenario.log, scenario/, summary.txt. An earlier run's are removed before a run
+// (nothing else in <out> is); <expect> is only read.
 //
 //   --timeout <s>     how long one page may take to give its verdict (120); the scenario may take five times that
 //   --keep-summary    summary.txt is added to, not replaced (web-live.sh has written its head)
@@ -326,14 +326,18 @@ export async function gate(opt) {
   if (exe === '') throw new NoVerdict(`no Chrome (${chromePlaces(opt.chrome)})`);
   const { out } = opt;
 
-  // The results of an earlier run go; the expectations are only read, wherever they are.
+  // The results of an earlier run go: <out> is one when it has frames/. In any other directory nothing is removed
+  // (--out may name a directory that holds something else). The expectations are only read, wherever they are.
   mkdirSync(out, { recursive: true });
+  const earlier = existsSync(join(out, 'frames'));
   for (const name of readdirSync(out)) {
-    if (name === 'frames' || name === 'png' || name === 'scenario' || name.endsWith('.log')
-        || (name === 'summary.txt' && !opt.keepSummary)) rmSync(join(out, name), { recursive: true, force: true });
+    const result = name === 'frames' || name === 'png' || name === 'scenario' || name.endsWith('.log');
+    if ((earlier && result) || (name === 'summary.txt' && !opt.keepSummary)) {
+      rmSync(join(out, name), { recursive: true, force: true });
+    }
   }
-  mkdirSync(join(out, 'frames'));
-  mkdirSync(join(out, 'png'));
+  mkdirSync(join(out, 'frames'), { recursive: true });
+  mkdirSync(join(out, 'png'), { recursive: true });
 
   // Every line goes to summary.txt as it is said: a run that is interrupted has left what it found.
   const summary = join(out, 'summary.txt');

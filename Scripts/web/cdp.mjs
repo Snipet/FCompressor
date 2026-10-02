@@ -15,9 +15,9 @@
 //                                   page's own state and the taps on the worklet's port.
 //   Report, PID, sleep, pasteboardCount, HERE, PNG: what a scenario needs besides.
 //
-// Every Chrome and every server started here is stopped on every way out of the process: its end, SIGINT, SIGTERM and
-// an uncaught error (exit 2 for those three). A Chrome is only ever killed by its own process id, never by name, and
-// only a profile made here is removed.
+// Every Chrome and every server started here is stopped on every way out of the process: its end, SIGINT, SIGTERM,
+// SIGHUP and an uncaught error (exit 2 for those four). A Chrome is only ever killed by its own process id, never by
+// name, and only a profile made here is removed.
 import { execFileSync, spawn } from 'node:child_process';
 import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync,
          writeFileSync } from 'node:fs';
@@ -60,6 +60,7 @@ export function cleanUp() {
 process.on('exit', cleanUp);
 process.on('SIGINT', () => { cleanUp(); process.exit(2); });
 process.on('SIGTERM', () => { cleanUp(); process.exit(2); });
+process.on('SIGHUP', () => { cleanUp(); process.exit(2); });   // the terminal went away
 process.on('uncaughtException', (e) => {
   console.log('DRIVER ERROR ' + ((e && e.stack) || e));
   cleanUp();
