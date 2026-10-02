@@ -80,7 +80,7 @@ const LOOK = `JSON.stringify((() => {
            says: text('fcmp-status'), notice: text('fcmp-notice'), source: text('fcmp-source-name'),
            button: start && !start.hidden ? start.textContent : '',
            away: document.getElementById('fcmp-overlay').classList.contains('away'),
-           hidden: document.hidden, scrollY: window.scrollY, zoomPref: (() => {
+           hidden: document.visibilityState === 'hidden', scrollY: window.scrollY, zoomPref: (() => {
              try { return localStorage.getItem('FCompressor.uiZoom'); } catch { return null; } })() };
 })())`;
 
@@ -202,12 +202,18 @@ export async function user(browser, base) {
     for (;;) {
       try {
         s = await u.look();
-        if (test(s)) return { ok: true, s, ms: Date.now() - t0 };
+        if (test(s)) {
+          const took = Date.now() - t0;
+          if (took / ms > u.slowest.ms / u.slowest.bound) u.slowest = { ms: took, bound: ms };
+          return { ok: true, s, ms: took };
+        }
       } catch { /* the next look */ }
       if (Date.now() - t0 >= ms) return { ok: false, s, ms: Date.now() - t0 };
       await sleep(40);
     }
   };
+  // The outcome that came nearest to its bound, of those that came: how much room the bounds leave on this machine.
+  u.slowest = { ms: 0, bound: BOUND_MS };
   // As until(), and every item of the list lies where it lay in the look before: for a look whose items are then
   // pressed where it says they are (a screen that is opening lists them, then moves them).
   u.steady = (test, ms = BOUND_MS) => {

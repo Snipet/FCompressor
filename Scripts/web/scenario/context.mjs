@@ -18,6 +18,9 @@
 //   context.lost.edit        an edit made while it is lost reaches the engine
 //   context.restored         restored: the editor draws again and counts no more lost frames
 //   context.restored.edit    an edit afterwards reaches the engine
+//   context.restored.still   the audio paused (the context suspended, on the page's own context: the other still
+//                            frame there is) and the Panel at rest: that frame, with the traces and the meters the
+//                            demo left, is SoftRaster's too, from the same atlas; a press on RESUME plays on
 import { ROLE } from './driver.mjs';
 import { holds, sayThreshold, threshold, thresholdIs } from './engine.mjs';
 
@@ -48,7 +51,8 @@ const RESTORE = '(() => { globalThis.fcmpScenarioLose.restoreContext(); return t
 
 export async function run({ u, row, note }) {
   const selftest = async () => JSON.parse(await u.p.ev('Module.fcmpSelftest()'));
-  const still = (ms = 15000) => u.until((s) => s.status.ok === 1 && s.a11y.fullRate === 0, ms);
+  // At rest: the Panel no longer asks for the full frame rate (after START and paused that takes some 5 s).
+  const still = (ms = 20000) => u.until((s) => s.status.ok === 1 && s.a11y.fullRate === 0, ms);
 
   const loaded = u.up(await u.load({ query: '?nohint=1' }));
   u.list(loaded.s);                                   // whether the Panel is at rest is the list's to say
@@ -114,4 +118,15 @@ export async function run({ u, row, note }) {
   await u.doubleClickAt(...u.centre(slot));
   const reset = await u.until((s) => thresholdIs(u, s, DEFAULT_DB));
   row(reset.ok, 'restored.edit', `a double click on THRESHOLD: ${sayThreshold(threshold(u, reset.s))}`);
+
+  // ---- the still frame of the demo that played: the audio paused, nothing moves ----
+  await u.p.ev('fcmpPage.context().suspend().then(() => true)');
+  const paused = await u.until((s) => s.context === 'suspended' && s.button === 'RESUME');
+  const restedLast = await still();
+  const third = await selftest();
+  await u.pressElement('fcmp-start');
+  const resumed = await u.until((s) => s.context === 'running' && s.away && s.state === 'running');
+  row(paused.ok && restedLast.ok && exact(third.pixels) && third.atlasHash === first.atlasHash && resumed.ok,
+      'restored.still', `the audio paused, the Panel at rest (${restedLast.ms} ms): ${say(third.pixels)}; atlas `
+      + `${third.atlasHash}; RESUME: the context is ${resumed.s.context}`);
 }

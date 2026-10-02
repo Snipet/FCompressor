@@ -13,17 +13,21 @@
 //   --chrome <path>   the Chrome to run (else the library's own choice)
 //   --only <groups>   these groups only, in the order below (a group can always be run alone)
 //   --list            the groups' names, one a line, and nothing else
-//   --timeout <s>     the whole run's bound (default 600): past it the run ends with exit 2
+//   --timeout <s>     the whole run's bound (default 480, under the gate's own 600): past it the run ends with
+//                     exit 2 and says in which group it was
 //   --chrome-flag <switch>   one more switch for Chrome, through the library's own option (repeatable; the last of two
 //                     wins). For a software renderer: --chrome-flag --use-angle=swiftshader --chrome-flag
 //                     --enable-unsafe-swiftshader; for a machine with no audio device: --chrome-flag
 //                     --disable-audio-output
 //
 // Chrome is always headless and muted, with a throwaway profile, and may start an AudioContext without a gesture (the
-// rows need a running context; START is pressed all the same). Input is real (Scripts/web/scenario/driver.mjs has the
-// rules); a control is found by its title in the Panel's accessibility list, Module.fcmpA11y(); a row is judged by what
-// reached the engine (the values of the reply it sent back, the worklet's counters, the editor's status) or by the
-// Panel's own state, never by what the script meant to do.
+// rows need a running context; START is pressed all the same). Where no context renders through the machine's audio
+// device (a runner that has none), Chrome is started again with its own null sink, and the NOTE `audio` says so.
+// Input is real (Scripts/web/scenario/driver.mjs has the rules); a control is found by its title in the Panel's
+// accessibility list, Module.fcmpA11y(); a row is judged by what reached the engine (the values of the reply it sent
+// back, the worklet's counters, the editor's status) or by the Panel's own state, never by what the script meant to
+// do. Nothing waits a fixed time for an outcome: every wait is on a condition and has a bound, and the NOTE `time`
+// says how near the slowest outcome came to its bound on this machine.
 //
 // The groups (Scripts/web/scenario/<group>.mjs; each file says what its rows are):
 //   start      START: the context runs, telemetry arrives, nothing is refused
@@ -47,7 +51,10 @@
 // `driver`, and the group ends there.
 //
 // Output: PASS|FAIL|NOTE rows, then `scenario: N/M passed`. Exit 0 every row passed; 1 a row failed; 2 it could not
-// run (usage, no site, no browser, no verdict in time). No dependency; node 22 or later (WebSocket).
+// run (usage, no site, no browser or one that went away, no verdict in time). No dependency; node 22 or later.
+//
+// That the rows can fail is shown by Scripts/web/scenario/mutants.mjs: this scenario on copies of the site with one
+// thing broken in each.
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -61,7 +68,7 @@ const cannot = (why) => {
 };
 
 // ---- arguments ------------------------------------------------------------------------------------------------------
-const opt = { dir: '', out: '', png: false, chrome: '', only: '', list: false, timeoutS: 600, flags: [] };
+const opt = { dir: '', out: '', png: false, chrome: '', only: '', list: false, timeoutS: 480, flags: [] };
 {
   const takes = { '--dir': 'dir', '--out': 'out', '--chrome': 'chrome', '--only': 'only' };
   const next = (i) => (i < process.argv.length ? process.argv[i] : cannot(usage));
@@ -175,7 +182,8 @@ try {
   report.enter('errors');
   await errors.run(t, ledgers);
   report.enter('');
-  report.note('time', `${((Date.now() - t0) / 1000).toFixed(1)} s for ${chosen.join(', ')}`);
+  report.note('time', `${((Date.now() - t0) / 1000).toFixed(1)} s for ${chosen.join(', ')}; the outcome that came `
+                      + `nearest to its bound took ${u.slowest.ms} ms of ${u.slowest.bound}`);
   console.log(report.summary());
   code = report.failed === 0 ? 0 : 1;
 } catch (error) {
