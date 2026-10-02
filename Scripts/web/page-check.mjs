@@ -264,7 +264,9 @@ async function command(method, path, body, boundMs = left(), { quiet = false } =
     throw new Exchange(sent, `HTTP ${status} ${text}`, status, (value && value.error) || '');
   return value;
 }
-const execute = (script, boundMs = Math.min(left(), 40000)) =>
+// A script sent as the run's time ends still has two seconds to answer: a page with no verdict is then said as that,
+// and not as a driver that did not answer.
+const execute = (script, boundMs = Math.min(Math.max(left(), 2000), 40000)) =>
   command('POST', `/session/${session}/execute/sync`, { script, args: [] }, boundMs);
 async function shoot() {
   if (!opt.screenshot) return;
@@ -385,7 +387,7 @@ async function poll(script, done, what) {
 async function go(url, what) {
   out(`page-check: ${url}`);
   try {
-    await command('POST', `/session/${session}/url`, { url });
+    await command('POST', `/session/${session}/url`, { url }, Math.max(left(), 2000));
   } catch (e) { throw new Stop(`${what} did not load`, e); }
 }
 // A page of the self-test's protocol: its title once it is a verdict. The log is printed as it stood then.
