@@ -7,6 +7,15 @@
 // completed; tick() publishes it on the message thread. computePreview() reads `quit` between runs, so stop() joins
 // within one run (<= ~0.1 s at 192 kHz). The synchronous path never creates the thread. An exception ends the worker
 // without a result, as it ended the juce::Thread; where no thread can exist every job is computed inline (startThread).
+//
+// The rest (web Sprint D, ADR-93; W-N). An inline job holds its tick for the whole computation: 20 to 70 ms natively,
+// 90 to 430 ms as wasm (ui.previewcost notes it per Mode). A synchronous worker is asked for exactly that. An
+// asynchronous one without a thread is the browser's, and computing at every change would draw 2 to 10 frames a second
+// while a control moves. So there the request rests in the queue: tick() computes it only once no newer request has
+// replaced it for kRestS of tick time. It stays `queued` meanwhile, so everything a queued request already does holds:
+// the latest wins, one equal to the last computed is dropped, setActive(false) and stop() drop it, pending() is true
+// (the Panel keeps its full rate until the plots have followed). With a thread nothing rests: tick() runs what it
+// ran, in the order it ran it, except that the first job's thread is created a few statements earlier.
 #include "editor/PreviewWorker.h"
 
 #include "editor/Layout.h"
@@ -34,6 +43,15 @@ namespace fcmp::ui
     namespace
     {
         constexpr float kMinIntervalS = 1.0f / layout::chars::kPreviewMaxHz;
+
+        // The rest of a request that has no thread to run on (PreviewWorker.h's contract names the value). It is longer
+        // than the longest tick a browser's host hands over (funkgui::web::FrameCadence clamps dt to 0.1 s), so a rest
+        // spans at least two ticks there: the frame that one computation held is never the whole rest of the next
+        // request, and a drag that goes on after a pause does not compute in every frame.
+        constexpr float kRestS = 0.15f;
+
+        // ui.previewcost's switch (previewWorkerRefuseThread, below): no worker starts a thread while it is on.
+        bool gRefuseThread = false;
 
         // std::thread has no name: the worker takes one where the platform has a call for it (debuggers, profilers).
         void nameThisThread() noexcept
@@ -92,10 +110,11 @@ namespace fcmp::ui
         }
 
         // Message thread: the worker thread, created by the first asynchronous job. False: there is no thread, and the
-        // job is computed inline, as the synchronous path does, instead of pending for ever. Where threads cannot exist
-        // (Emscripten without -pthread) that is decided here, at compile time, and no thread is ever asked for: the
-        // constructor's std::system_error cannot be relied on there, since such a build catches nothing unless it is
-        // given an exception model (the throw is an abort). Elsewhere false is the system refusing a thread.
+        // job is computed inline, as the synchronous path does, instead of pending for ever (once it has rested: tick()
+        // asks here before it takes a request from the queue). Where threads cannot exist (Emscripten without -pthread)
+        // that is decided here, at compile time, and no thread is ever asked for: the constructor's std::system_error
+        // cannot be relied on there, since such a build catches nothing unless it is given an exception model (the
+        // throw is an abort). Elsewhere false is the system refusing a thread, asked again at the next tick.
         bool startThread()
         {
            #if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
@@ -103,6 +122,8 @@ namespace fcmp::ui
            #else
             if (thread.joinable())
                 return true;
+            if (gRefuseThread)
+                return false;                                    // a probe's refusal, taken as the system's below is
             try
             {
                 thread = std::thread([this] { run(); });
@@ -122,6 +143,7 @@ namespace fcmp::ui
         std::optional<PreviewJob> queued;                        // the latest request not yet started
         uint64_t lastKey = 0;                                    // the key of the last started job
         float sinceStart = kMinIntervalS;                        // the first request starts at once
+        float rest = 0.0f;                                       // tick time since `queued` was replaced (no thread)
         uint32_t serial = 0;
         std::unique_ptr<PreviewBuffer> front = std::make_unique<PreviewBuffer>();
         std::unique_ptr<PreviewBuffer> back = std::make_unique<PreviewBuffer>();
@@ -135,6 +157,13 @@ namespace fcmp::ui
                                                                  // the computation reads it between runs without it
         std::thread thread;                                      // joined by stop(), which the destructor calls
     };
+
+    // The probes' way to the no-thread path in a build that has threads (ui.previewcost): while it is on, startThread()
+    // refuses for every worker that has no thread yet, as a system can, so the path a web build always takes runs
+    // natively too (where none can exist it changes nothing). It returns what it was. Declared here and by the probe:
+    // PreviewWorker.h is frozen (FZ4) and the product never calls it. Message thread.
+    bool previewWorkerRefuseThread(bool) noexcept;
+    bool previewWorkerRefuseThread(bool refuse) noexcept { return std::exchange(gRefuseThread, refuse); }
 
     PreviewWorker::PreviewWorker(bool synchronous) : impl_(std::make_unique<Impl>(synchronous)) {}
 
@@ -160,7 +189,10 @@ namespace fcmp::ui
             return;
         }
         if (!d.queued || d.queued->key != key)
+        {
             d.queued = PreviewJob{ &entry, eng, fs, key };
+            d.rest = 0.0f;                                       // a newer request: its rest starts (tick(), no thread)
+        }
     }
 
     void PreviewWorker::tick(float dt)
@@ -169,7 +201,10 @@ namespace fcmp::ui
         if (d.stopped)
             return;
         if (dt > 0.0f)
+        {
             d.sinceStart += dt;
+            d.rest += dt;
+        }
         if (!d.synchronous && d.running)
         {
             bool done = false;
@@ -181,6 +216,10 @@ namespace fcmp::ui
                 d.publish();
         }
         if (!d.active || !d.queued || d.running || d.sinceStart < kMinIntervalS)
+            return;
+        // No thread (startThread() is false): the job would be computed inside this tick, so the request rests first
+        // and stays queued. With a thread startThread() is true here, as it is again below, and nothing is held back.
+        if (!d.synchronous && d.rest < kRestS && !d.startThread())
             return;
         const PreviewJob job = *d.queued;
         d.queued.reset();

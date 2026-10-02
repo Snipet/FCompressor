@@ -1,4 +1,4 @@
-// FCMP_PROBE layer=ui name=font scope=global timeout=120 platform=apple
+// FCMP_PROBE layer=ui name=font scope=global timeout=120 platform=apple,web
 //
 // ui.font (03 §3.6, F §0.9; U1s): every string any registered Mode can put on screen has every glyph in the atlas, so
 // a Mode that brings a label with a new character (µ, ∞, ≈ …) fails here in plain text instead of drawing a gap.
@@ -15,9 +15,11 @@
 // glyph. Golden row: font.atlas.hash (exact) — FunkGui's FNV-1a of the atlas pixels; a CoreGraphics update can move it,
 // which is a known drift reason (03 §3.6).
 //
-// macOS only (ADR-92): FunkGui rasterises the glyphs with juce::Graphics into a native Image, CoreGraphics here and
-// JUCE's software renderer on Linux, so the atlas hash is a property of the platform. Linux runs this same body as
-// ui.font_linux (ui_font_linux.cpp), whose golden holds Linux's atlas; every spec row is the same on both.
+// macOS and web (ADR-92, ADR-93): FunkGui rasterises the glyphs with juce::Graphics into a native Image, CoreGraphics
+// here and JUCE's software renderer on Linux, so the atlas hash is a property of the platform. Linux runs this same
+// body as ui.font_linux (ui_font_linux.cpp), whose golden holds Linux's atlas; every spec row is the same on both.
+// Without JUCE nothing is rasterised: the web build (wasm32 under node, web Sprint D) loads the atlas FunkGui commits,
+// which is the macOS bake, so its font.atlas.hash is macOS's and it runs against this probe's golden with no overlay.
 #include "ProbeRegistry.h"
 
 #include "FakeFacade.h"
@@ -233,6 +235,7 @@ FCMP_PROBE(ui, font)
 int fcmp::probe::uiFont(funkgui::test::Probe& P)
 {
     const funkgui::HeadlessGuiScope gui;                          // FontService bakes the atlas through JUCE's fonts
+                                                                  // (without JUCE it loads the committed bake)
     funkgui::FontService& fonts = funkgui::FontService::get();
     const funkgui::FontAtlasSdf& atlas = fonts.atlas();
     P.eq("font.ok", atlas.baked() && fonts.ok() ? 1 : 0, 1);
