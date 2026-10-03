@@ -4,14 +4,15 @@
 # A probe is one file, Tools/probes/dsp/<name>.cpp (layer dsp) or Tools/probes/plugin/<name>.cpp (layers proc and ui;
 # UI files are ui_<name>.cpp), whose first matching line declares it:
 #
-#   // FCMP_PROBE layer=dsp name=static scope=mode timeout=60 [platform=apple|linux]
+#   // FCMP_PROBE layer=dsp name=static scope=mode timeout=60 [platform=<apple|linux|web>[,...]]
 #
 # scope=mode registers <layer>.<name>.<key> for every registered Mode in Modes.def (none until F3 activates slot 0);
-# scope=global registers <layer>.<name>. platform= (ADR-92) registers the test on that platform only; the file compiles
-# everywhere. It is for the rare probe whose golden differs by platform (ui.font's atlas hash: ui.font on macOS,
-# ui.font_linux on Linux). Files without the line (helpers such as FakeFacade.cpp) register no test; a malformed line
-# is a configure error, and so is a duplicate test name. Changing the line needs a reconfigure, which every workflow
-# runs.
+# scope=global registers <layer>.<name>. platform= (ADR-92, ADR-93), a comma list, registers the test on those platforms
+# only; the file compiles everywhere. It is for the rare probe whose golden differs by platform (ui.font's atlas hash:
+# ui.font on macOS and the web, whose atlas is FunkGui's committed macOS bake, ui.font_linux on Linux). The web
+# configuration registers the layer=ui probes only, on fcmp_probe_web. Files without the line (helpers such as
+# FakeFacade.cpp) register no test; a malformed line is a configure error, and so is a duplicate test name. Changing
+# the line needs a reconfigure, which every workflow runs.
 #
 # Test properties: labels verify;<layer>;global|mode:<key>;probe:<layer>.<name>; TIMEOUT from the line; the sandbox
 # environment (FCMP_PREFS_DIR, FCMP_PRESETS_DB, FCMP_UI_THEME=0; ProbeMain empties <build>/sandbox/<test> before each
@@ -257,6 +258,8 @@ endif()
 # ---- lints (no probe executable; exit code only) --------------------------------------------------------------------
 add_test(NAME lint.deps COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}
                                 -P ${PROJECT_SOURCE_DIR}/cmake/LintDeps.cmake)
+add_test(NAME lint.docs COMMAND ${CMAKE_COMMAND} -DFCMP_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+                                -P ${PROJECT_SOURCE_DIR}/cmake/LintDocs.cmake)
 if(NOT FCOMPRESSOR_WEB)                  # check-headers.sh compiles for the host with the native flag list
   # lint.headers hands check-headers.sh FcmpArch.cmake's warning list; the script fails if its own copy differs (R-B0 #6).
   # FCMP_HEADER_CHECK_JUCE_FLAGS: FcmpPlatform.cmake's JUCE 8.0.4 workaround, for the headers that include JUCE (ADR-92).
@@ -275,7 +278,7 @@ if(NOT FCOMPRESSOR_WEB)                  # check-headers.sh compiles for the hos
                                      /bin/bash ${PROJECT_SOURCE_DIR}/Scripts/check-headers.sh ${CMAKE_BINARY_DIR})
   set_tests_properties(lint.headers PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
 endif()
-set_tests_properties(lint.deps PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
+set_tests_properties(lint.deps lint.docs PROPERTIES LABELS "verify;lint;global" TIMEOUT 600)
 
 # ---- not in verify: bench.<key> (label bench; run alone by the lead, never while agents build) -------------------------
 if(TARGET fcmp_bench)

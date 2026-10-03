@@ -19,11 +19,12 @@ wrong.
 ## 1. What FCompressor is
 
 An all-in-one compressor plugin for the author's own use (macOS: AU, VST3 and Standalone; Linux from ADR-92: VST3 and
-Standalone; manufacturer `Funk`, plugin code `Fcmp`, bundle id `com.funk.fcompressor`). Compressor types are called
-**Modes**: Clean, a VCA bus compressor, a feedback FET, an opto, a vari-mu, a diode bridge, and so on — 35 are
-catalogued (D §5.1) and more will be added continuously. **Every Mode shares exactly the same UI**: the same parameters
-in the same places, the same visual aids. Some Modes lock a parameter, or restrict it to hardware steps (Bus G's ratio
-is 2 · 4 · 10).
+Standalone; manufacturer `Funk`, plugin code `Fcmp`, bundle id `com.funk.fcompressor`). From ADR-93 the same DSP and
+editor also build as a browser demo, published from `main`: two WebAssembly modules and a static page, without JUCE,
+and not a plugin format (§3.1). Compressor types are called **Modes**: Clean, a VCA bus compressor, a feedback FET, an
+opto, a vari-mu, a diode bridge, and so on — 35 are catalogued (D §5.1) and more will be added continuously. **Every
+Mode shares exactly the same UI**: the same parameters in the same places, the same visual aids. Some Modes lock a
+parameter, or restrict it to hardware steps (Bus G's ratio is 2 · 4 · 10).
 
 ### 1.1 Goals
 
@@ -34,8 +35,8 @@ is 2 · 4 · 10).
    output; bit-identical results across optimisation levels; no libm on the audio path.
 4. **Stable sessions forever.** Host parameter IDs, ranges, Mode slots, the state layout and the preset format are
    frozen at v1; automation stays meaningful across Mode switches.
-5. **Buildable by at most three agents in parallel**, with disjoint file ownership and a lead who reviews, commits and
-   blesses.
+5. **Buildable by several agents in parallel** (at most six at once since 2026-10-01, three before), with disjoint
+   file ownership and a lead who reviews, commits and blesses.
 6. **A reusable GUI library, FunkGui**, which HardwareReverb migrates onto after FCompressor v1.
 
 ### 1.2 Non-goals (v1)
@@ -62,6 +63,7 @@ FetchContent** (user decision, ADR-01). Nothing third-party or shared is copied 
                          │   Source/fcdsp   JUCE-free DSP static lib                    │
                          │   Source/plugin  JUCE processor, state, presets glue         │
                          │   Source/editor  GPU-free panel (+ gpu/Editor)               │
+                         │   Source/web     the browser demo (ADR-93); web/ its page    │
                          │   Tools/probes   fcmp_probe_dsp, fcmp_probe_plugin           │
                          │   cmake/FcmpDeps.cmake ── FetchContent, pins, SHA asserts    │
                          └──────┬───────────────────────┬───────────────────────┬───────┘
@@ -102,7 +104,7 @@ FetchContent** (user decision, ADR-01). Nothing third-party or shared is copied 
 Three layers with one direction of dependency (01 §1, §2):
 
 ```
-  ┌──────────────── editor  (namespace fcmp::ui; JUCE + FunkGui::core; GPU part in editor/gpu) ────────────────┐
+  ┌──────────────── editor  (namespace fcmp::ui; FunkGui::core; JUCE and the GPU part only in editor/gpu) ─────┐
   │ Panel = fixed composition of SubViews: Header · DisplayRow · SlotGrid · Band · CharScreen · ModeBrowser ·  │
   │         PresetStrip · PresetBrowser · Footer        SlotModel (ValueModel per Pid)   PreviewWorker          │
   │ gpu/Editor : funkgui::EditorHost   (bgfx/Metal, FramePump, A11yBridge)                                      │
@@ -128,16 +130,53 @@ Three layers with one direction of dependency (01 §1, §2):
 | `fcdsp` | Includes nothing from JUCE, FunkGui, `plugin/` or `editor/`; no libm on the audio path; no static initialisation (lint `lint.deps`) | Every probe links the same archive the plugin ships; results are bit-reproducible (ADR-10, ADR-24) |
 | `plugin` | Never includes `editor/` except `CreateEditorGpu.cpp` | The processor must build headless |
 | `editor` | Reaches the processor only through `ProcessorFacade` | UI work and UI probes run on a `FakeFacade`, never waiting for the real processor (ADR-40) |
+| `editor` outside `gpu/` | Includes and names nothing of JUCE's (lint `editor.juce`); menus, choosers and the clipboard are `HostServices` calls | The same sources compile for the browser (ADR-93) |
+| `plugin/portable` | No JUCE; of FunkGui only `ParamPort.h` (lint `plugin.portable`) | The model code (`EditHistory`, `FactoryData`) is the processor's and the browser facade's |
+| `web/engine` | Portable C++ over `fcdsp` alone, no Emscripten header (lint `web.engine`) | It builds natively for the checks, and the module needs no JavaScript glue |
+| `web/facade` | No Emscripten header, no `EngineHost`; the engine only through an `EngineLink` that moves `WebProtocol.h` bytes (lint `web.facade`) | `proc.webnull` runs it natively beside a real `Processor` |
+| `web/ui` | The only place an Emscripten header may appear (lints `web.emscripten`, `web.ui`) | Everything else of the demo stays testable natively |
 
 Targets (03 §2.7): `fcdsp` (STATIC), `FCompressor` (`juce_add_plugin`, links FunkGui PRIVATE), `fcmp_probe_dsp`
-(JUCE-free), `fcmp_probe_plugin` (processor + panel + FunkGui core, no GPU), `fcmp_bench`. Three configurations:
-**GPU** (the real editor), **headless** (no bgfx; the plugin gets JUCE's generic editor; every probe still builds) and
-**DSP-only** (no JUCE at all; ≈ 2 s configure).
+(JUCE-free), `fcmp_probe_plugin` (processor + panel + FunkGui core, no GPU), `fcmp_bench`. Four configurations:
+**GPU** (the real editor), **headless** (no bgfx; the plugin gets JUCE's generic editor; every probe still builds),
+**DSP-only** (no JUCE at all; ≈ 2 s configure) and **web** (ADR-93: wasm32 through Emscripten, no JUCE, no bgfx, no
+threads; §3.1).
 
 The canonical source tree, with every directory and file stem, is 01 §2.1. Its properties matter for parallel work:
 one directory per Mode (`Source/fcdsp/modes/<key>/`), one header per stage policy
 (`Source/fcdsp/engine/stages/<slot>/<Policy>.h`), one file pair per UI sub-view, one file per probe, and per-directory
 source globs — so adding any of those edits no shared file (ADR-19, ADR-20, ADR-21).
+
+### 3.1 The browser demo (ADR-93)
+
+The `web` configuration (`-DFCOMPRESSOR_WEB=ON`, the `web` preset; Emscripten pinned to 6.0.3) builds the same `fcdsp`
+and the same editor for a browser: two WebAssembly modules joined by one `MessagePort`, and a static page. There is no
+`Processor`, no JUCE, no bgfx, no thread and no `SharedArrayBuffer`, so any static host serves it.
+
+```
+ main thread: fcmp-ui.js + fcmp-ui.wasm                  AudioWorklet: fcmp-worklet.js + fcmp-engine.wasm
+ Panel (Source/editor, not gpu/) on funkgui::WebHost     fcmp_web_process: EngineHost::process, 128-frame quanta
+ WebFacade : ProcessorFacade (30 values, EditHistory,     fcmp_web_post, between quanta: Params, Attach, Reset, Pull
+   WebPresets, a mirror HistoryRing)  ── Params, Pull ──▶    → a reply: UiFrame, new history columns, flags, latency
+ PortLink : EngineLink (WebProtocol bytes)  ◀── reply ──
+ WebGlSink (WebGL2, one draw call)                        ArrayBuffers transferred, never shared
+```
+
+- **The engine** (`Source/web/engine`): the C ABI `fcmp_web_*` and the byte protocol `WebProtocol.h` over
+  `EngineHost`; target `fcmp_web_engine`, `fcmp-engine.wasm`, a standalone module with no imports. It also builds
+  natively (`fcmp_web_engine_lib`), where `web.engine.print` holds it to the `dsp.print` goldens.
+- **The facade** (`Source/web/facade`): `WebFacade`, `WebPresets` and `EngineLink`, portable C++. Natively it is
+  compiled into `fcmp_probe_plugin`, where `proc.webnull` runs it over the engine beside a real `Processor` and finds
+  every output, raw value, `UiFrame` and history column equal.
+- **The editor module** (`Source/web/ui`: `WebMain.cpp`, `PortLink`): target `fcmp_web_ui`, `fcmp-ui.js` and
+  `fcmp-ui.wasm`: the editor outside `gpu/`, `plugin/portable`, the facade and FunkGui's core and web host. The same
+  sources, with every `ui.*` probe, make `fcmp_probe_web`, which runs under node against the plugin's goldens.
+- **The page** (`web/`): `index.html`, `main.js`, `fcmp-worklet.js`, `loop.js` and `demo.css`, plain ES modules.
+- **The site** (`fcmp_web_site`, `build-web/site`): the page, the two modules, the licences and `built-from.txt`,
+  exactly what CI publishes to GitHub Pages from `main`.
+- **The test-only side**, never in the site: `fcmp_web_print` (`fcmp-print.wasm`, from `Tools/web/live`) and
+  `fcmp_web_live` (`build-web/live`: `web/live`'s pages and the `dsp.print` goldens), which `Scripts/web-live.sh`, the
+  browser gate, serves beside the site (03 §2.12).
 
 ---
 
@@ -350,11 +389,16 @@ expose an index space `{0..n−1}` with step 1 (VoiceOver increments work); arro
 | **Message** | UI, gestures, `SetupWatcher` (20 Hz), state load, preset apply, analysis | touch engine state directly |
 | **`PreviewWorker`** (UI) | `analysis::stepResponse` off the message thread | draw; hold state the drawing depends on in probes |
 | **`prepareToPlay`'s thread** | `EngineHost::configure` (the only allocation point) + `setLatencySamples` | – |
+| **AudioWorklet** (browser demo) | `fcmp_web_process` in `process()`; `fcmp_web_post` for the port's records, between quanta | in `process()`: allocate, lock, post a message, call libm |
+| **Browser main thread** (browser demo) | the Panel, `WebFacade`, one Pull before each frame, the preview inline once a control has rested 0.15 s | touch engine state |
 
 Rules (01 §2.3, §5; K2):
 1. **No parameter listeners, no `AsyncUpdater`** in the processor. JUCE's VST3 wrapper applies parameter changes
    inside `process()`, so listeners would fire on the audio thread. A 20 Hz message-thread `SetupWatcher` applies
    `quality`/`labudget` (reconfigure under `suspendProcessing` + new latency) and announces Mode changes to the host.
+   The browser demo has neither a `SetupWatcher` nor a second thread: there a `quality`/`labudget` change
+   reconfigures, and allocates, inside `fcmp_web_post` on the worklet's thread between two render quanta, and may
+   click. It is the one deviation from this section (ADR-93); `fcmp_web_process` keeps every rule.
 2. **Batches.** State load, preset apply and multi-parameter UI writes bracket their writes with
    `beginBatch()/endBatch()`; while a batch is open the audio thread reuses the previous `BlockParams`, so it never
    resolves a half-written set (a transient "OFF" or a spurious crossfade).
@@ -364,13 +408,17 @@ Rules (01 §2.3, §5; K2):
 4. **Determinism.** `ScopedFtz` in `EngineHost::process` and in every analysis entry point; `-ffp-contract=off`, no
    `-ffast-math`; fma-only `log2/exp2/tanh/logCosh/tanPi` instead of libm on the audio path (lint-enforced); input
    sanitised (NaN/inf → 0, ±1e6 clamp) before any delay line; block-size invariance via absolute-index control ticks
-   and 1 ms history columns.
+   and 1 ms history columns. wasm has neither flush-to-zero nor denormals-are-zero: the WASM SIMD128 backend flushes a
+   tiny result itself, by x86's rule, and the browser engine zeroes denormal input and idles behind a silence gate
+   (ADR-93).
 5. **Nothing steps.** Every gain-changing transition ramps: parameter smoothing (20 ms one-poles with exact landing),
    GR OFF and Stage-2 OFF (20 ms ramps), bypass/listen/delta (20 ms), kernel crossfades (20 ms, starts ≥ 50 ms apart).
 6. **Editor teardown** never outlives what it references: parameter ports belong to the processor; the Panel stops its
    worker before gestures close.
 7. **Gates**: an allocation counter in every `dsp.rt.<key>` run; RTSan (or a lock/syscall interposer) and a
-   `tsan-agent` preset at milestones; `validate.sh` (auval `-strict`, pluginval level 10) at every sprint end.
+   `tsan-agent` preset at milestones; `validate.sh` (auval `-strict`, pluginval level 10) at every sprint end. For the
+   browser demo: `web.worklet` (no allocation over 35,000 `process()` calls of the shipped worklet) and
+   `Scripts/web-live.sh`, the browser gate in headless Chrome.
 
 ---
 
@@ -470,7 +518,8 @@ bank is built from per-Mode `factory/<key>.inc` files with a content-hashed revi
   probes; `-Werror` on our sources only.
 - Presets: `agent` (headless, RelWithDebInfo — the agents' default), `agent-gui`, `dsp`, `lead` (Release+LTO, blessing),
   `owner` (installs), `release` (arm64), `universal` (only after an x86 verify), `lead-x86`, `asan`, `tsan`,
-  `tsan-agent`, `rtsan`. Agent and lead builds must produce bit-identical hashes; a difference is a determinism bug.
+  `tsan-agent`, `rtsan`, and `web` (the browser demo, Release; ADR-93, 03 §2.12). Agent and lead builds must produce
+  bit-identical hashes; a difference is a determinism bug.
 - FunkGui: INTERFACE libraries with INTERFACE sources (`FunkGui::core`, `::gpu`, `::harness`, `::presets`), product
   identity by PRIVATE definitions (`funkgui_configure_product`: product name, env prefix `FCMP_`, ObjC name root,
   preferences folder); ObjC classes registered at runtime under randomised names so two FCompressor binaries in one host
@@ -486,9 +535,10 @@ bank is built from per-Mode `factory/<key>.inc` files with a content-hashed revi
 
 (03 §4.)
 - **The lead** (the user's main session) plans sprints, writes task manifests, creates the sprint base, reviews,
-  commits, merges, tags FunkGui, bumps the pin, blesses, validates and installs. **Agents** (≤ 3 at once across both
-  repositories) each own one task, one worktree per repository, their own build directories, and only the paths in
-  their manifest's `OWNS` globs; they never commit, bless, install, or touch `~/audio/.deps` or HardwareReverb.
+  commits, merges, tags FunkGui, bumps the pin, blesses, validates and installs. **Agents** (≤ 6 at once across both
+  repositories since 2026-10-01; 3 before) each own one task, one worktree per repository, their own build
+  directories, and only the paths in their manifest's `OWNS` globs; they never commit, bless, install, or touch
+  `~/audio/.deps` or HardwareReverb.
 - **FCompressor agents** use harness-made git worktrees; **FunkGui agents** use `git worktree add` into
   `FunkGui.wt/s<N>-<task>` (user decision). FCompressor consumes only **tagged** FunkGui: a FunkGui feature needed in
   sprint N is tagged in sprint N−1.

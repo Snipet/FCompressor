@@ -1,10 +1,11 @@
 # FCompressor — rules for every Claude session
 
-All-in-one compressor plugin (AU/VST3/Standalone, macOS arm64; VST3/Standalone on Linux x86-64 with Clang, ADR-92)
-built on JUCE 8.0.4 and the FunkGui library. The design is final: `docs/ARCHITECTURE.md` (overview),
-`docs/DECISIONS.md` (ADR-nn, Qn), `docs/SPRINTS.md` (the plan: cards, ownership, commands), and the binding appendices
-in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (UI), `03-build-verify-process.md`
-(build, verify, process). Appendices beat ARCHITECTURE; SPRINTS beats 03 §4.9 on scheduling and ownership only.
+All-in-one compressor plugin (AU/VST3/Standalone, macOS arm64; VST3/Standalone on Linux x86-64 with Clang, ADR-92;
+a browser demo, the same DSP and editor as WebAssembly without JUCE, ADR-93) built on JUCE 8.0.4 and the FunkGui
+library. The design is final: `docs/ARCHITECTURE.md` (overview), `docs/DECISIONS.md` (ADR-nn, Qn), `docs/SPRINTS.md`
+(the plan: cards, ownership, commands), and the binding appendices in `docs/design/`: `01-core-contracts.md`
+(contracts), `02-funkgui-and-ui.md` (UI), `03-build-verify-process.md` (build, verify, process). Appendices beat
+ARCHITECTURE; SPRINTS beats 03 §4.9 on scheduling and ownership only.
 
 ## Who you are
 
@@ -31,9 +32,10 @@ in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (U
 - Edit only paths matched by your manifest's `OWNS` globs. Any other changed path fails the definition of done.
 - `FROZEN` files: never edit. Propose changes as an interface-change request in the handoff. A card may add bodies to a
   frozen header it OWNS, never rename, remove or change a frozen declaration (SPRINTS §0.3).
-- Lead-only: `CMakeLists.txt`, `cmake/**`, `CMakePresets.json`, `Scripts/**`, `.gitignore`, `CLAUDE.md`, `README.md`,
-  `LICENSE`, `docs/**`, `Resources/**`, `tests/golden/**`, `tests/fixtures/**` (write-once) — except where a Sprint-0
-  card's OWNS names them. Exception: `docs/modes/<key>.md` belongs to that Mode's card.
+- Lead-only: `CMakeLists.txt`, `cmake/**`, `CMakePresets.json`, `Scripts/**`, `.github/**`, `.gitignore`, `CLAUDE.md`,
+  `README.md`, `LICENSE`, `docs/**`, `Resources/**`, `web/**` (the demo's page, its test-only pages and node tests),
+  `tests/golden/**`, `tests/fixtures/**` (write-once) — except where a card's OWNS names them. Exception:
+  `docs/modes/<key>.md` belongs to that Mode's card.
 - `Source/fcdsp/modes/Modes.def`: lead or the sprint's descriptor-wave card only. A slot is permanent once its line
   appears; a lone new-Mode card only uncomments its own reserved line. Mode DSP cards never edit it.
 - Golden files are never written by probes: candidates go to `build-*/golden-candidates/`; the lead blesses.
@@ -50,7 +52,15 @@ in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (U
 - `plugin/` never includes `editor/` (sole exception: `CreateEditorGpu.cpp`). `editor/` reaches the processor **only**
   through `Source/plugin/ProcessorFacade.h`, never `fcdsp::EngineHost`. Product constants come from the generated
   `FcmpProduct.h`, never `JucePlugin_*`.
-- Floating point: `-ffp-contract=off`, never `-ffast-math`. No warnings: our sources build with `-Werror`.
+- **What the browser builds has no JUCE** (ADR-93): `Source/editor/**` outside `gpu/` includes and names nothing of
+  JUCE's (`juce::`, `JUCE_*`, `jassert`; a menu, a chooser and the clipboard are `HostServices` calls).
+  `Source/plugin/portable/**` and `Source/web/{facade,ui}/**` take of `plugin/` only `portable/` and
+  `ProcessorFacade.h`; `portable/` and `facade/` of FunkGui only `funkgui/params/ParamPort.h`. `Source/web/**`: no
+  JUCE; `engine/` is portable C++ over `fcdsp` alone; `facade/` (no `editor/`) and `ui/` (no `editor/gpu/`, no FunkGui
+  JUCE or GPU part) share only `web/engine/WebProtocol.h` with the engine and never name `EngineHost`. An Emscripten
+  header appears only under `Source/web/ui`.
+- Floating point: `-ffp-contract=off`, never `-ffast-math`, never `-mrelaxed-simd`. No warnings: our sources build
+  with `-Werror`.
 - Sources are per-directory globs rooted at `Source/` and `Tools/`; probes self-register from their first line. Adding
   a Mode, policy, view or probe edits no CMake and no shared file.
 
@@ -65,6 +75,8 @@ in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (U
 - Telemetry is lock-free: `UiFrame` seqlock, `HistoryRing` SPSC with a claim word, both gated by the attach count.
 - `ScopedFtz` in `EngineHost::process` and every analysis entry point; inputs sanitised before any delay line;
   block-size invariant; nothing steps (every gain change ramps, 20 ms).
+- The one deviation (ADR-93): the demo's AudioWorklet has no second thread, so a `quality`/`labudget` change
+  reconfigures (and allocates) inside `fcmp_web_post`, between two render quanta. `fcmp_web_process` keeps every rule.
 
 ## Worktree, builds, presets (03 §4.3, §2.10; commands tagged in SPRINTS §0.2)
 
@@ -76,9 +88,17 @@ in `docs/design/`: `01-core-contracts.md` (contracts), `02-funkgui-and-ui.md` (U
   - `agent` — headless, RelWithDebInfo: the default and the DoD build. `[AGENT]` = `cmake --workflow --preset
     agent-verify && Scripts/verify.sh "$WT/build-agent"`. Probes only: `cmake --build --preset agent-probes`.
   - `agent-gui` — GPU editor work. `[GPU]` = `cmake --workflow --preset agent-gui-verify`.
+  - `web` — the browser demo: wasm32 through Emscripten 6.0.3 (any other version fails the configure), Release.
+    `[WEB]` = `cmake --workflow --preset web-verify && Scripts/verify.sh --strict "$WT/build-web"`: every `ui.*` probe
+    and the `web.*` tests under node, against the same goldens. Run it too when you touch `Source/web/**`, `web/**`,
+    `Tools/web/**`, `Source/editor/**` outside `gpu/`, `Source/plugin/portable/**`, `Source/fcdsp/core/**` or a `ui_*`
+    probe. Emscripten's library cache is shared: on a lock or a half-written library wait and retry, never clear it.
   - `owner`, `lead`, `lead-x86`, `release`, `universal`, `asan`, `tsan`, `tsan-agent`, `rtsan`: lead only.
 - One card's tests: `ctest --preset agent -L 'mode:bus-g'` or `-L 'probe:dsp\.(simd|units)'`. Build presets cap
   parallelism at `-j6` (no load limit; it serialised builds under load); do not raise it. Never run `fcmp_bench` while others build.
+- A browser, when a card needs one: headless Chrome only, always `--mute-audio` (it plays through the user's speakers),
+  its own throwaway `--user-data-dir` under your scratch; kill only your own, by that path. Never Safari. The browser
+  gate, `Scripts/web-live.sh`, is the lead's: run it only when your card says so.
 - FunkGui is consumed only as a **tag** (the pin in `cmake/FcmpDeps.cmake`). An override
   (`-DFETCHCONTENT_SOURCE_DIR_FUNKGUI=…`) is allowed only to your own FunkGui worktree or a lead-made
   `FunkGui.wt/pin-<sha7>`, must descend from the pin, and must be declared in the handoff.

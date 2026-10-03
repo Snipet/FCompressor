@@ -1,7 +1,8 @@
 # cmake/FcmpWeb.cmake: the browser demo (ADR-93). Included by CMakeLists.txt in every configuration.
 #
-# The demo is two wasm modules joined by a MessagePort: fcmp-engine.wasm (fcdsp behind a C ABI, in an AudioWorklet) and,
-# from a later sprint, the editor module. This file builds what Sprint A delivers: the engine and its checks.
+# The demo is two wasm modules joined by a MessagePort: fcmp-engine.wasm (fcdsp behind a C ABI, in an AudioWorklet) and
+# fcmp-ui.js/.wasm (the editor, on the browser's main thread), and a static page. This file builds the engine and its
+# checks, the editor module, the site and the browser gate's test-only side (03 §2.12).
 #
 # Sources (cmake/FcmpSources.cmake globs; adding a file edits no CMake):
 #   Source/web/engine/*.cpp   the engine wrapper: the C ABI over fcdsp::EngineHost and the byte protocol. It names
