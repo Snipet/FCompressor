@@ -190,18 +190,17 @@ export function gpuFlags(gpu = undefined, platform = process.platform) {
 //   chrome          the executable (findChrome's choice otherwise: $CHROME, the macOS application, PATH)
 //   profile         a --user-data-dir of the caller's, kept; '' makes a throwaway one under the system's temporary
 //                   directory, removed at the end
-//   gpu             'metal', 'swiftshader' or flags (gpuFlags); not given: $SCOUT_GPU (the scouts' variable, kept for
-//                   the scenario), else by platform
+//   gpu             'metal', 'swiftshader' or flags (gpuFlags); not given: by platform
 //   autoplay        --autoplay-policy=no-user-gesture-required, so an AudioContext runs with no gesture (true)
 //   sandbox         false adds --no-sandbox, for a container that gives Chrome no user namespace (true, unless the
 //                   environment has FCMP_WEB_LIVE_NO_SANDBOX=1: the gate's switch reaches every Chrome started here)
-//   flags, extra    more flags before and after the fixed ones (the last of two switches wins); flags not given:
-//                   $SCOUT_FLAGS
+//   flags, extra    more flags before and after the fixed ones (the last of two switches wins; none by default)
 //   png             where page.shot writes a relative name (PNG)
+// No other variable of the environment changes a flag: a Chrome is started as its caller says.
 //   answerMs        how long one DevTools command may take (60 s)
 // Answers { send, page, kill, close, version, renderer, audioRuns, profile, pid, path, flags, gone, said }.
 export async function chrome({ width = 1280, height = 800, extra = [], profile = '', chrome: path = '',
-                               gpu = undefined, flags = undefined, autoplay = true,
+                               gpu = undefined, flags = [], autoplay = true,
                                sandbox = process.env.FCMP_WEB_LIVE_NO_SANDBOX !== '1', png = PNG,
                                answerMs = 60000 } = {}) {
   const exe = findChrome(path);
@@ -211,14 +210,12 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
     profile = mkdtempSync(join(tmpdir(), 'fcmp-chrome-'));
     profiles.push(profile);
   }
-  const split = (text) => text.split(' ').filter((f) => f !== '');
   const all = ['--headless=new', '--remote-debugging-pipe', `--user-data-dir=${profile}`, '--no-first-run',
                '--no-default-browser-check', '--disable-extensions', '--mute-audio',
                // nothing of the browser's own goes to the network (updates, variations, reports)
                '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-pings',
                '--disable-default-apps', '--metrics-recording-only',
-               ...(gpu === undefined && process.env.SCOUT_GPU ? split(process.env.SCOUT_GPU) : gpuFlags(gpu)),
-               ...(flags === undefined ? split(process.env.SCOUT_FLAGS || '') : flags),
+               ...gpuFlags(gpu), ...flags,
                ...(autoplay ? ['--autoplay-policy=no-user-gesture-required'] : []),
                ...(sandbox ? [] : ['--no-sandbox']),
                `--window-size=${width},${height}`, ...extra, 'about:blank'];
@@ -369,12 +366,14 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
     };
     P.reload = async (settle = 1500) => { await s('Page.reload', {}); await sleep(settle); };
     // The first truthy value of `expression`, asked every `every` ms for at most `ms`; null when there was none. An
-    // expression that throws (the page is still loading) counts as not yet.
+    // expression that throws (the page is still loading) counts as not yet, and so does a question the page does not
+    // answer (a main thread that never rests): each question waits for the time that is left at most, never for
+    // `answerMs`, so the bound holds either way.
     P.until = async (expression, ms = 10000, every = 50) => {
       const deadline = Date.now() + ms;
       for (;;) {
-        const value = await ev(expression).catch(() => null);
-        if (value) return value;
+        const value = await within(Math.max(deadline - Date.now(), 1), ev(expression).catch(() => null));
+        if (value && value !== LATE) return value;
         if (Date.now() >= deadline || gone !== '') return null;
         await sleep(every);
       }
@@ -459,16 +458,35 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
                                             pointerType: 'mouse' });
       await sleep(120);
     };
-    const VK = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37,
-                 ArrowRight: 39, Home: 36, End: 35, PageUp: 33, PageDown: 34, ' ': 32 };
-    // modifiers: Alt 1, Ctrl 2, Meta 4, Shift 8. NEVER pass nativeVirtualKeyCode: on macOS headless Chrome the key
-    // then repeats without end (8,500 keydowns in a second on a plain page) and starves the page's timers and
-    // messages.
+    // P.key(key) sends one key, down and up. `key` is a named key of NAMED, or one character. A character is sent as
+    // its text, with the code and the Windows virtual key code of the key that types it on a US keyboard: A-Z (either
+    // case), 0-9, space, and the punctuation of the main block, shifted or not (`-` is Minus 189, `.` Period 190, `(`
+    // Digit9 57, `"` Quote 222). Any other character (é, €) has no key: code '' and virtual key code 0, and arrives as
+    // its text alone. Never the character's own code as the key's: 46 ('.') is Delete, 39 ("'") ArrowRight, 45 ('-')
+    // Insert, and Chrome would run that key's editing command and drop the character. Shift is not added for a shifted
+    // character or a capital: a listener that needs it is given it in `modifiers` (Alt 1, Ctrl 2, Meta 4, Shift 8).
+    // NEVER pass nativeVirtualKeyCode: on macOS headless Chrome the key then repeats without end (8,500 keydowns in a
+    // second on a plain page) and starves the page's timers and messages.
+    const NAMED = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40,
+                    ArrowLeft: 37, ArrowRight: 39, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
+    const KEYS = { ' ': ['Space', 32] };                // a character -> [code, Windows virtual key code]
+    for (let i = 0; i < 26; i += 1) {
+      const c = String.fromCharCode(65 + i);
+      KEYS[c] = KEYS[c.toLowerCase()] = [`Key${c}`, 65 + i];
+    }
+    for (let i = 0; i < 10; i += 1) KEYS[String(i)] = KEYS[')!@#$%^&*('[i]] = [`Digit${i}`, 48 + i];
+    for (const [code, vk, chars] of [['Backquote', 192, '`~'], ['Minus', 189, '-_'], ['Equal', 187, '=+'],
+                                     ['BracketLeft', 219, '[{'], ['BracketRight', 221, ']}'], ['Backslash', 220, '\\|'],
+                                     ['Semicolon', 186, ';:'], ['Quote', 222, '\'"'], ['Comma', 188, ',<'],
+                                     ['Period', 190, '.>'], ['Slash', 191, '/?']]) {
+      for (const c of chars) KEYS[c] = [code, vk];
+    }
     P.key = async (key, { modifiers = 0, settle = 120 } = {}) => {
-      const named = key.length > 1;
-      const code = named ? key : (/[a-z]/i.test(key) ? `Key${key.toUpperCase()}` : /[0-9]/.test(key) ? `Digit${key}`
-                                  : key === ' ' ? 'Space' : '');
-      const vk = VK[key] ?? key.toUpperCase().charCodeAt(0);
+      const named = [...key].length !== 1;
+      if (named && !(key in NAMED)) {
+        throw new Error(`P.key: '${key}' is not a key: one character, or one of ${Object.keys(NAMED).join(', ')}`);
+      }
+      const [code, vk] = named ? [key, NAMED[key]] : KEYS[key] || ['', 0];
       const text = named ? (key === 'Enter' ? '\r' : undefined) : ((modifiers & 6) ? undefined : key);
       await s('Input.dispatchKeyEvent', { type: text !== undefined ? 'keyDown' : 'rawKeyDown', key, code,
                                           windowsVirtualKeyCode: vk, modifiers, text, unmodifiedText: text });

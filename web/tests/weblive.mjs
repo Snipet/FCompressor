@@ -14,37 +14,54 @@
 //                `live` and `hooks` left out, no expectation (a FAIL, never a pass), and each way a hooks line is wrong
 //   pixels.*     the pixel rule by renderer class, on both sides of each bound
 //   page.*       a page's end by the self-test's protocol: no verdict within the timeout, a FAIL title, and a PASS
-//                title that the log or an uncaught error contradicts
-//   scenario.*   the scenario's end by its contract: the last line, the exit code, a run that never ended
+//                title that the log or an uncaught error contradicts; a log read on after an early FAIL to its last
+//                line, until it is quiet, until the timeout, or until the page stops answering
+//   scenario.*   the scenario's end by its contract: the last line, the exit code, a run that never ended; its
+//                command line (four times --timeout, a forced renderer as --chrome-flag); a stand-in scenario with a
+//                Chrome and a scratch directory stopped at the bound and by SIGINT, SIGTERM and SIGHUP to the gate:
+//                its own cleanup runs, nothing of it is left
+//   published.*  the published site's built-from.txt asked over HTTP (a local server playing the remote host, under
+//                a sub path): another commit until a delay passes, a site that never updates, 404, no server
 //   contract.*   the capture page's address is the contract's, its pins are names Source/web/ui/WebMain.cpp reads,
 //                the views are the editor's, and web-live.sh computes node values for the views the runner opens
 //   summary.*    the count, the last line and the exit code of a run
 //   chrome.*     how the library starts Chrome, seen by a stand-in executable that writes down its arguments and
 //                ends: always --mute-audio and --headless=new, a throwaway profile that is gone afterwards, the GPU
-//                flag by platform, the autoplay, sandbox and null-sink switches only where asked, a missing
-//                browser said
+//                flag by platform, the autoplay, sandbox and null-sink switches only where asked, no flag from any
+//                other variable of the environment, a missing browser said; and, through a stand-in that speaks
+//                DevTools over the pipe, the keys a typed text sends and the bound of page.until on a page that does
+//                not answer
 //   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch;
-//                what a run removes from its results directory
-//   script.*     what web-live.sh runs, seen by a stand-in for node: the twelve ui.dump calls of the contract with
-//                scratch preference paths, the expectation tool, the runner's arguments for a build tree, an
-//                artifact and --serve, and what a failing ui.dump or tool leads to
+//                --gpu swiftshader; the results directory (a foreign one refused and untouched, in every form; an
+//                earlier run's results replaced; the default beside the site, never the current directory); the
+//                --url form with the stand-in server
+//   script.*     what web-live.sh runs, seen by a stand-in for node: the results directory prepared first, the
+//                twelve ui.dump calls of the contract with scratch preference paths, the expectation tool, the
+//                runner's arguments for a build tree, an artifact, the published site and --serve, what a failing
+//                ui.dump or tool leads to, and SIGINT, SIGTERM and SIGHUP during the node values (exit 2, no scratch
+//                directory left)
 //   usage.*      every way web-live.sh and live.mjs refuse to run, each with exit 2 and its reason: no arguments, an
 //                unknown option, a missing value, both forms at once, no such directory, not a build tree, not a web
 //                build, no built site, --dir without --live and --expect, a site without built-from.txt, no node,
-//                a node older than 22, no Chrome (on the real build tree too); and --help
+//                a node older than 22, no Chrome (on the real build tree too), each misuse of --url, --commit, --wait
+//                and --gpu; and --help
 //   serve.*      web-live.sh --serve --dir from another directory, every path with a space in it: the URLs of the
 //                contract with what each capture page must give, the three roots answering, and SIGINT, SIGTERM
 //                and SIGHUP each ending it
-// Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
+// The test sets FCMP_WEB_LIVE_NO_SANDBOX itself for every run it makes (CI may have it set for the gate). Output:
+// PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync,
-         symlinkSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync,
+         statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TEST = 'web.live.runner';
+// The gate's switch reaches every Chrome the library starts (cdp.mjs reads it), and CI may have it set for the gate:
+// this test sets it itself where a row is about it, and no other run of it sees it.
+delete process.env.FCMP_WEB_LIVE_NO_SANDBOX;
 
 let passed = 0;
 let failed = 0;
@@ -106,6 +123,53 @@ const ask = (base, path, method = 'GET') => new Promise((answered) => {
   req.on('error', (e) => answered({ status: 0, headers: {}, body: Buffer.alloc(0), error: e.code || e.message }));
   req.end();
 });
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const readOr = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '');
+// Whether a process still runs (a zombie waits for its parent, so give it a moment).
+const ended = async (pid, ms = 3000) => {
+  for (const t0 = Date.now(); Date.now() - t0 < ms; await pause(50)) {
+    try { process.kill(pid, 0); } catch { return true; }
+  }
+  return false;
+};
+
+// A stand-in for Chrome that speaks DevTools over the pipe, as the library drives it (descriptor 3 in, 4 out, each
+// message ended by a NUL), and draws nothing: every command is answered with {}, a version, a target and a session
+// with theirs. Runtime.evaluate is answered `true`, or never ($FAKE_EVAL=never: a page whose main thread never rests).
+// Input.dispatchKeyEvent's parameters go to $FAKE_KEYS, one JSON a line. Browser.close, or its driver gone, ends it.
+const devtools = join(scratch, 'devtools chrome.mjs');
+writeFileSync(devtools, `import { appendFileSync } from 'node:fs';
+import { Socket } from 'node:net';
+const input = new Socket({ fd: 3, readable: true, writable: false });
+const output = new Socket({ fd: 4, readable: false, writable: true });
+const answer = (id, result) => output.write(JSON.stringify({ id, result }) + '\\0');
+const handle = (m) => {
+  if (m.method === 'Browser.getVersion') return answer(m.id, { product: 'DevToolsStandIn/1.0' });
+  if (m.method === 'Target.createTarget') return answer(m.id, { targetId: 'T' + m.id });
+  if (m.method === 'Target.attachToTarget') return answer(m.id, { sessionId: 'S' + m.id });
+  if (m.method === 'Runtime.evaluate') {
+    return process.env.FAKE_EVAL === 'never' ? undefined : answer(m.id, { result: { type: 'boolean', value: true } });
+  }
+  if (m.method === 'Input.dispatchKeyEvent' && process.env.FAKE_KEYS) {
+    appendFileSync(process.env.FAKE_KEYS, JSON.stringify(m.params) + '\\n');
+  }
+  answer(m.id, {});
+  if (m.method === 'Browser.close') setTimeout(() => process.exit(0), 20);
+};
+let held = Buffer.alloc(0);
+input.on('data', (chunk) => {
+  held = Buffer.concat([held, chunk]);
+  for (let end = held.indexOf(0); end >= 0; end = held.indexOf(0)) {
+    handle(JSON.parse(held.subarray(0, end).toString('utf8')));
+    held = held.subarray(end + 1);
+  }
+});
+input.on('end', () => process.exit(0));
+input.on('error', () => process.exit(0));
+`);
+const devtoolsChrome = join(scratch, 'devtools chrome');
+writeFileSync(devtoolsChrome, `#!/bin/sh\nexec '${process.execPath}' '${devtools}' "$@"\n`);
+chmodSync(devtoolsChrome, 0o755);
 
 try {
   // ---- the server ------------------------------------------------------------------------------------------------
@@ -293,9 +357,42 @@ try {
                    judge('PASS', 'NOTE     nothing ran\n'), judge('PASS', ''),
                    judge('PASS', 'PASS     web.live.print: 0 row(s) passed, 0 failed\n')];
     row(lying.every((v) => !v.ok), 'page.pass_contradicted', lying.map((v) => v.detail).join('; '));
-    row(live.isVerdict('PASS') && live.isVerdict('FAIL: x') && live.isVerdict('FAIL') && !live.isVerdict('RUNNING')
+    row(live.isVerdict('PASS') && live.isVerdict('FAIL') && live.isVerdict('FAIL: x') && !live.isVerdict('RUNNING')
         && !live.isVerdict('PASSED') && !live.isVerdict(''), 'page.is_verdict',
         'PASS and FAIL... are verdicts; RUNNING, PASSED and an empty title are not');
+
+    // An uncaught error makes the title FAIL at once, and the page goes on logging rows: the log is read on. Each
+    // case is a page as a list of reads ([title, log]; undefined: no answer), one every 20 ms, the last one repeated.
+    const UNCAUGHT = 'PASS     web.live.x one: ok\nFAIL     web.live.x uncaught: rejection: boom\n';
+    const END = 'FAIL     web.live.x: 3 row(s) passed, 1 failed\n';
+    const page = (reads) => {
+      let i = 0;
+      return async () => reads[Math.min(i++, reads.length - 1)];
+    };
+    const grows = (n) => Array.from({ length: n }, (_, k) => ['FAIL: uncaught',
+      UNCAUGHT + Array.from({ length: k + 1 }, (__, j) => `PASS     web.live.x row${j}: ok\n`).join('')]);
+    const forever = () => {                             // a new line at every read
+      let k = 0;
+      return async () => ['FAIL: uncaught', `${UNCAUGHT}PASS     web.live.x row: ${k++}\n`];
+    };
+    const timed = async (read, options) => {
+      const t0 = Date.now();
+      const r = await live.readToEnd(read, ['FAIL: uncaught', UNCAUGHT],
+                                     { leftMs: 3000, quietMs: 600, every: 20, ...options });
+      return { ...r, ms: Date.now() - t0 };
+    };
+    const toEnd = await timed(page([...grows(5), ['FAIL: uncaught', grows(5)[4][1] + END]]));
+    const quiet = await timed(page(grows(3)));
+    const busy = await timed(forever(), { leftMs: 800, quietMs: 600 });
+    const deaf = await timed(page([undefined]));
+    const already = await live.readToEnd(page([]), ['FAIL: uncaught', UNCAUGHT + END], { leftMs: 3000, quietMs: 600 });
+    row(toEnd.how === 'last line' && toEnd.log.endsWith(END) && /row4: ok/.test(toEnd.log) && toEnd.ms < 600
+        && quiet.how === 'quiet' && /row2: ok\n$/.test(quiet.log) && quiet.ms >= 600 && quiet.ms < 1500
+        && busy.how === 'timeout' && busy.ms >= 800 && busy.ms < 1500
+        && deaf.how === 'no answer' && deaf.log === UNCAUGHT && already.how === 'last line',
+        'page.log_to_its_end', `after a FAIL title the log is read on: to its last line (${toEnd.ms} ms, `
+        + `${toEnd.log.split('\n').length - 1} lines), until it is quiet (${quiet.ms} ms), until the timeout `
+        + `(${busy.ms} ms), until the page stops answering; a log that has its last line is not read again`);
   }
 
   // ---- the scenario's end -------------------------------------------------------------------------------------------
@@ -316,6 +413,135 @@ try {
         passing.length ? `passed, and should not: ${passing.join('; ')}`
           : `${good.detail}; and ${bad.length} ends that fail: a row failed, the count and the exit code disagree, no `
             + 'last line, nothing judged, killed, never ended');
+
+    // Its command line: its own bound is four times the gate's --timeout (the gate stops it at five times), and a
+    // renderer forced with --gpu reaches its Chrome as --chrome-flag switches.
+    const opt = { scenario: '/s/scenario.mjs', dir: '/the site', out: '/the out', timeoutS: 7, gpu: undefined };
+    const plain = live.scenarioArgs(opt, '/c');
+    const forced = live.scenarioArgs({ ...opt, gpu: 'swiftshader' }, '/c');
+    const byDefault = live.scenarioArgs({ ...opt, timeoutS: live.parseArgs(['--dir', 'a', '--live', 'b', '--expect',
+                                                                            'c', '--out', 'd']).opt.timeoutS }, '/c');
+    const wantPlain = ['/s/scenario.mjs', '--dir', '/the site', '--out', '/the out/scenario', '--chrome', '/c',
+                       '--timeout', '28'];
+    const gpuOf = (value) => live.parseArgs(['--dir', 'a', '--live', 'b', '--expect', 'c', '--out', 'd', '--gpu',
+                                             value]);
+    row(JSON.stringify(plain) === JSON.stringify(wantPlain)
+        && JSON.stringify(forced) === JSON.stringify([...wantPlain, '--chrome-flag', '--use-angle=swiftshader',
+                                                      '--chrome-flag', '--enable-unsafe-swiftshader'])
+        && byDefault.join(' ').endsWith('--timeout 480') && gpuOf('swiftshader').opt.gpu === 'swiftshader'
+        && gpuOf('default').opt.gpu === undefined && /--gpu is default or swiftshader/.test(gpuOf('metal').error),
+        'scenario.arguments', `${plain.slice(1).join(' ')}; with --gpu swiftshader also `
+        + `${forced.slice(plain.length).join(' ')}; 480 s at the default --timeout`);
+
+    // A stand-in scenario as Scripts/web/scenario/driver.mjs has it: a scratch directory under its --out, removed by
+    // its exit handler, and in it the profile of its Chrome (the DevTools stand-in), started through the library.
+    // It never ends. The gate's part of it runs in a child process (live.runScenario, with the library's signal
+    // handlers), so it can be ended by its bound or by a signal.
+    const stub = join(scratch, 'stand-in scenario.mjs');
+    writeFileSync(stub, `import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const args = process.argv.slice(2);
+const at = (name) => args[args.indexOf(name) + 1];
+const cdp = await import(pathToFileURL(process.env.STUB_CDP).href);
+mkdirSync(at('--out'), { recursive: true });
+const scratch = mkdtempSync(join(at('--out'), 'scenario-'));
+process.on('exit', () => rmSync(scratch, { recursive: true, force: true }));
+mkdirSync(join(scratch, 'profile'));
+const browser = await cdp.chrome({ chrome: at('--chrome'), profile: join(scratch, 'profile') });
+console.log('READY ' + process.pid + ' ' + browser.pid + ' ' + scratch);
+await new Promise(() => {});
+`);
+    const part = join(scratch, 'the gate part.mjs');
+    writeFileSync(part, `import { pathToFileURL } from 'node:url';
+const [runner, out, stub, exe, timeoutS] = process.argv.slice(2);
+const live = await import(pathToFileURL(runner).href);
+const end = await live.runScenario({ scenario: stub, dir: '/no site', out, timeoutS: Number(timeoutS) }, exe,
+                                   new live.Tally());
+console.log('END late ' + end.late + ' code ' + end.code);
+process.exit(0);
+`);
+    // One run: the gate's part started, ended by `signal` once the stand-in is ready (or by its bound), and then
+    // what is left: the scenario's process, its Chrome, its scratch directory.
+    const scenarioRun = async (signal, timeoutS) => {
+      const out = join(scratch, `scenario run ${signal}`);
+      const child = spawn(process.execPath, [part, runner, out, stub, devtoolsChrome, String(timeoutS)],
+                          { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, STUB_CDP: join(source, 'Scripts',
+                                                                                   'web', 'cdp.mjs') } });
+      let said = '';
+      const t0 = Date.now();
+      const closed = new Promise((r) => child.on('close', (code, sig) => r(code ?? sig)));
+      const ready = await new Promise((r) => {
+        const hear = (c) => { said += c; const m = /READY (\d+) (\d+) (.+)/.exec(said); if (m) r(m); };
+        child.stdout.on('data', hear);
+        child.stderr.on('data', (c) => { said += c; });
+        closed.then(() => r(null));
+        setTimeout(() => r(null), 20000);
+      });
+      if (ready && signal !== 'bound') child.kill(signal);
+      const code = await Promise.race([closed, pause(20000).then(() => 'still running')]);
+      if (code === 'still running') child.kill('SIGKILL');
+      const pids = ready ? [Number(ready[1]), Number(ready[2])] : [];
+      const gone = (await Promise.all(pids.map((pid) => ended(pid)))).every((is) => is);
+      for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+      const left = ready ? existsSync(ready[3].trim()) : true;
+      const leftovers = existsSync(join(out, 'scenario')) ? readdirSync(join(out, 'scenario')) : [];
+      return { ok: ready !== null && gone && !left && leftovers.length === 0, code, said, ms: Date.now() - t0,
+               text: `${signal}: ${ready ? 'ready' : `never ready (${said.trim().slice(-200)})`}, exit ${code}, `
+                     + `the scenario and its Chrome ${gone ? 'gone' : 'STILL RUNNING'}, its scratch `
+                     + `${left || leftovers.length ? `LEFT (${leftovers.join(', ')})` : 'gone'}` };
+    };
+    const bound = await scenarioRun('bound', 0.6);
+    row(bound.ok && bound.code === 0 && /END late true code null/.test(bound.said) && bound.ms < 15000,
+        'scenario.bound', `at the bound of 3 s: ${bound.text} (${bound.ms} ms)`);
+    const signals = [];
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) signals.push(await scenarioRun(signal, 60));
+    row(signals.every((r) => r.ok && r.code === 2 && r.ms < 15000), 'scenario.interrupted',
+        signals.map((r) => r.text).join('; '));
+  }
+
+  // ---- the published site -------------------------------------------------------------------------------------------
+  {
+    // A server playing the remote host: the site under a sub path, its built-from.txt naming another commit until
+    // `switchAt` (never, when it is Infinity).
+    const OLD = `site ${'1'.repeat(40)} clean 2026-10-01T00:00:00Z`;
+    const NEW = `site abcdef1${'2'.repeat(33)} clean 2026-10-02T00:00:00Z`;
+    let switchAt = Infinity;
+    const remote = createServer((req, res) => {
+      if (req.url !== '/some/sub/path/built-from.txt') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`${Date.now() >= switchAt ? NEW : OLD}\n`);
+    });
+    await new Promise((r) => remote.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${remote.address().port}/some/sub/path`;
+    const waited = async (options) => {
+      const notes = [];
+      const t0 = Date.now();
+      const r = await live.awaitPublished({ base, waitS: 4, say: (text) => notes.push(text), ...options });
+      return { ...r, notes, ms: Date.now() - t0 };
+    };
+    switchAt = Date.now() + 1500;
+    const later = await waited({ commit: 'abcdef1' });
+    switchAt = Infinity;
+    const never = await waited({ commit: 'abcdef1' });
+    const now = await waited({ commit: '1'.repeat(40) });
+    const any = await waited({});
+    const missing = await waited({ base: `${base}/nothing`, commit: 'abcdef1', waitS: 1 });
+    remote.close();
+    const closed = await waited({ commit: 'abcdef1', waitS: 1 });
+    row(later.ok && later.notes.length >= 1 && /says 'site 1{40} clean .*', not yet 'site abcdef1 clean'/
+          .test(later.notes[0]) && later.ms >= 1500 && later.ms < 4500
+        && !never.ok && /still says 'site 1{40} clean .*' after .* not 'site abcdef1 clean': the site was not updated/
+          .test(never.detail) && never.ms >= 4000 && never.ms < 8000 && never.notes.length >= 2
+        && now.ok && now.notes.length === 0 && any.ok && any.notes.length === 0
+        && !missing.ok && /HTTP 404/.test(missing.detail) && !closed.ok && /no answer/.test(closed.detail),
+        'published.built_from', `another commit until 1.5 s: ${later.detail}, ${later.notes.length} wait(s); never `
+        + `updated: ${never.detail.replace(base, '<base>')} (${never.ms} ms, ${never.notes.length} NOTE(s)); 404 `
+        + `and no server fail`);
   }
 
   // ---- the contract -------------------------------------------------------------------------------------------------
@@ -438,6 +664,68 @@ try {
         && nullSink.args.includes(cdp.NULL_SINK) && nullSink.args.includes('--mute-audio'), 'chrome.null_sink',
         `${cdp.NULL_SINK} only where it is asked for (a machine where no AudioContext renders), and muted there too`);
 
+    // The scouts' switches are gone: no variable of the environment adds a flag (the gate's own --gpu does that).
+    process.env.SCOUT_GPU = '--use-angle=vulkan';
+    process.env.SCOUT_FLAGS = '--user-data-dir=/elsewhere --no-sandbox';
+    rmSync(argsFile, { force: true });
+    try { await cdp.chrome({ chrome: standIn }); } catch { /* the stand-in ends */ }
+    const bare = args();
+    delete process.env.SCOUT_GPU;
+    delete process.env.SCOUT_FLAGS;
+    row(bare.length > 0 && !bare.some((a) => /vulkan|elsewhere|--no-sandbox/.test(a)) && profileOf(bare).length === 1
+        && cdp.gpuFlags().every((f) => bare.includes(f)), 'chrome.no_environment_flags',
+        `with SCOUT_GPU and SCOUT_FLAGS set, a Chrome started with neither gpu nor flags has the platform's `
+        + `${cdp.gpuFlags().join(' ')} and nothing of theirs`);
+
+    // Through the DevTools stand-in: what a typed text sends. A character's key code is the key's on a US keyboard
+    // (or 0), never its ASCII code, which is another key's (46 '.' is Delete, 39 "'" ArrowRight, 45 '-' Insert).
+    const keysFile = join(scratch, 'keys.jsonl');
+    process.env.FAKE_KEYS = keysFile;
+    const typing = await cdp.chrome({ chrome: devtoolsChrome, gpu: 'swiftshader', answerMs: 5000 });
+    const tab = await typing.page(null);
+    const TYPED = "aZ09 -12.5 dB_A/b:c;d,e'f (x)!\"é";
+    await tab.type(TYPED);
+    await tab.key('Enter');
+    let notAKey = '';
+    try { await tab.key('F13'); } catch (e) { notAKey = e.message; }
+    delete process.env.FAKE_KEYS;
+    const sent = readFileSync(keysFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const downs = sent.filter((k) => k.type !== 'keyUp');
+    const want = { a: ['KeyA', 65], Z: ['KeyZ', 90], 0: ['Digit0', 48], 9: ['Digit9', 57], ' ': ['Space', 32],
+                   '-': ['Minus', 189], '.': ['Period', 190], _: ['Minus', 189], '/': ['Slash', 191],
+                   ':': ['Semicolon', 186], ';': ['Semicolon', 186], ',': ['Comma', 188], "'": ['Quote', 222],
+                   '(': ['Digit9', 57], ')': ['Digit0', 48], '!': ['Digit1', 49], '"': ['Quote', 222], é: ['', 0] };
+    const wrongKeys = [...TYPED].map((ch, i) => {
+      const d = downs[i] || {};
+      const [code, vk] = want[ch] || [d.code, d.windowsVirtualKeyCode];
+      return d.key === ch && d.text === ch && d.type === 'keyDown' && d.code === code && d.windowsVirtualKeyCode === vk
+        && !(vk >= 33 && vk <= 46) ? '' : `${ch}: ${JSON.stringify(d)}`;
+    }).filter((w) => w !== '');
+    const enter = downs[[...TYPED].length] || {};
+    row(wrongKeys.length === 0 && downs.length === [...TYPED].length + 1 && sent.length === 2 * downs.length
+        && enter.windowsVirtualKeyCode === 13 && enter.text === '\r'
+        && sent.every((k) => !('nativeVirtualKeyCode' in k))
+        && /'F13' is not a key/.test(notAKey), 'chrome.keys',
+        wrongKeys.join('; ') || `${JSON.stringify(TYPED)}: each character with its US key's code ('.' Period 190, '-' `
+        + `Minus 189, "'" Quote 222, '(' Digit9 57, 'é' none), never 33-46; Enter 13; no nativeVirtualKeyCode; an `
+        + 'unknown named key refused');
+
+    // page.until on a page that does not answer (its main thread never rests): it ends at its bound, not at the
+    // library's answer timeout.
+    await typing.close();
+    process.env.FAKE_EVAL = 'never';
+    const deaf = await cdp.chrome({ chrome: devtoolsChrome, gpu: 'swiftshader', answerMs: 5000 });
+    delete process.env.FAKE_EVAL;
+    const deafTab = await deaf.page(null);
+    const t0 = Date.now();
+    const value = await deafTab.until('document.title', 400);
+    const untilMs = Date.now() - t0;
+    await deaf.close();
+    row(value === null && untilMs >= 400 && untilMs < 2000 && (await ended(typing.pid)) && (await ended(deaf.pid)),
+        'chrome.until_bound',
+        `until('document.title', 400) on a page that never answers: ${value} after ${untilMs} ms (the answer `
+        + 'timeout is 5000 ms)');
+
     const onPath = join(scratch, 'bin on PATH');
     mkdirSync(onPath);
     copyFileSync(standIn, join(onPath, 'google-chrome'));
@@ -476,40 +764,146 @@ try {
         + 'its Chrome was muted, headless and without the autoplay switch; summary.txt has the script\'s head and '
         + 'the runner\'s lines');
 
-    // What a run removes from --out: an earlier run's results (a directory that has frames/), and nothing from a
-    // directory that holds something else.
+    // --gpu swiftshader: the software renderer for the gate's Chrome on any platform.
+    rmSync(argsFile, { force: true });
+    const soft = spawnSync('/bin/sh', [script, '--dir', site, '--live', liveDir, '--expect', expectDir, '--out',
+                                       join(scratch, 'results of a soft gate'), '--chrome', standIn, '--gpu',
+                                       'swiftshader'],
+                           { encoding: 'utf8', timeout: 60000, cwd: scratch,
+                             env: { ...process.env, NODE: process.execPath } });
+    const softArgs = args();
+    row(soft.status === 2 && swift.every((f) => softArgs.includes(f)) && !softArgs.includes('--use-angle=metal')
+        && /^ {2}gpu {9}swiftshader \(forced/m.test(soft.stdout), 'gate.gpu',
+        `--gpu swiftshader: its Chrome had ${softArgs.filter((a) => /angle|swiftshader/.test(a)).join(' ')}; the `
+        + 'summary says it was forced');
+
+    // The results directory: a run may only ever remove or replace what the gate wrote. Each listing is every path
+    // under a directory with its content, so "untouched" means byte for byte.
+    const listing = (dir) => {
+      const all = [];
+      const walk = (at, rel) => {
+        for (const name of readdirSync(at).sort()) {
+          const path = join(at, name);
+          if (statSync(path).isDirectory()) walk(path, `${rel}${name}/`);
+          else all.push(`${rel}${name}=${readFileSync(path, 'utf8')}`);
+        }
+      };
+      if (existsSync(dir)) walk(dir, '');
+      return all.join('|');
+    };
+    const gateInto = (out, more = []) => spawnSync('/bin/sh', [script, '--dir', site, '--live', liveDir, '--expect',
+                                                               expectDir, '--out', out, '--chrome', standIn, ...more],
+                                                   { encoding: 'utf8', timeout: 60000, cwd: scratch,
+                                                     env: { ...process.env, NODE: process.execPath } });
+    // A directory that holds something else: refused, twice, and left as it was.
     const other = join(scratch, 'not a results directory');
-    put(join(other, 'notes.log'), 'kept\n');
-    put(join(other, 'png', 'holiday.png'), 'kept\n');
-    const into = () => spawnSync('/bin/sh', [script, '--dir', site, '--live', liveDir, '--expect', expectDir, '--out',
-                                             other, '--chrome', standIn],
-                                 { encoding: 'utf8', timeout: 60000, cwd: scratch,
-                                   env: { ...process.env, NODE: process.execPath } });
-    const there = (...names) => names.map((name) => existsSync(join(other, name)));
-    const once = into();
-    const untouched = there('notes.log', 'png/holiday.png', 'frames', 'summary.txt');
-    put(join(other, 'frames', 'old.theme0.live.fp'), 'stale\n');
-    put(join(other, 'old-page.log'), 'stale\n');
-    put(join(other, 'scenario', 'old.txt'), 'stale\n');
-    const twice = into();
-    const stale = there('frames/old.theme0.live.fp', 'old-page.log', 'scenario', 'png/holiday.png', 'frames');
-    row(once.status === 2 && twice.status === 2 && untouched.every((is) => is)
-        && stale.join() === 'false,false,false,false,true', 'gate.results_directory',
-        `a directory with something else in it: kept ${untouched.filter((is) => is).length} of 4; an earlier run's `
-        + `results: ${stale.slice(0, 4).filter((is) => !is).length} of 4 removed before the next run`);
+    put(join(other, 'notes.log'), 'mine\n');
+    put(join(other, 'png', 'holiday.png'), 'mine\n');
+    put(join(other, 'expect', 'precious.txt'), 'mine\n');
+    put(join(other, 'summary.txt'), 'mine\n');
+    const before = listing(other);
+    const refusedRuns = [gateInto(other), gateInto(other)];
+    // One that holds an expect/ directory alone (the artifact as it is downloaded): taken, and expect/ kept.
+    const withExpect = join(scratch, 'an artifact results');
+    put(join(withExpect, 'expect', 'panel.theme0.node.fp'), 'kept\n');
+    const taken = gateInto(withExpect);
+    // An earlier run's: its results go before the next run, and nothing else.
+    const earlier = join(scratch, 'an earlier run');
+    const firstRun = gateInto(earlier);
+    put(join(earlier, 'frames', 'old.theme0.live.fp'), 'stale\n');
+    put(join(earlier, 'scenario', 'scenario-x', 'old.txt'), 'stale\n');
+    for (const name of ['page.log', 'selftest.log', 'selftest.autoplay.log', 'scenario.log']) {
+      put(join(earlier, name), 'stale\n');
+    }
+    put(join(earlier, 'png', 'old.png'), 'stale\n');
+    put(join(earlier, 'notes.log'), 'mine\n');
+    put(join(earlier, 'expect', 'mine.fp'), 'mine\n');
+    const second = gateInto(earlier);
+    const after = listing(earlier);
+    row(refusedRuns.every((r) => r.status === 2 && /is not a results directory of the gate \(it holds notes\.log, png, /
+          .test(r.stderr) && !/web-live: no verdict/.test(r.stdout)) && listing(other) === before
+        && taken.status === 2 && /no verdict/.test(taken.stdout) && existsSync(join(withExpect, '.web-live'))
+        && readFileSync(join(withExpect, 'expect', 'panel.theme0.node.fp'), 'utf8') === 'kept\n'
+        && firstRun.status === 2 && second.status === 2 && existsSync(join(earlier, '.web-live'))
+        && !/stale/.test(after) && after.includes('notes.log=mine') && after.includes('expect/mine.fp=mine')
+        && /summary\.txt=web-live\.sh: /.test(after), 'gate.results_directory',
+        `a directory holding something else: refused twice (${refusedRuns[0].stderr.trim().split('\n')[0]
+          .slice(0, 90)}...), byte for byte as it was; one holding only expect/: taken, expect/ kept; an earlier `
+        + `run's: its frames, png, scenario and logs gone before the next, notes.log and expect/ kept`);
+
+    // With --dir and no --out the results go beside the site, whatever the current directory is.
+    const elsewhere = join(scratch, 'a current directory');
+    mkdirSync(elsewhere);
+    const besideSite = join(scratch, 'web-live');
+    const defaulted = spawnSync('/bin/sh', [script, '--dir', site, '--live', liveDir, '--expect', expectDir,
+                                            '--chrome', standIn],
+                                { encoding: 'utf8', timeout: 60000, cwd: elsewhere,
+                                  env: { ...process.env, NODE: process.execPath } });
+    const besideOk = existsSync(join(besideSite, '.web-live')) && existsSync(join(besideSite, 'frames'))
+      && readOr(join(besideSite, 'summary.txt')).startsWith(`web-live.sh: ${site} (an artifact`);
+    const cwdLeft = readdirSync(elsewhere);
+    rmSync(besideSite, { recursive: true, force: true });
+    row(defaulted.status === 2 && besideOk && cwdLeft.length === 0, 'gate.default_results',
+        `--dir <site> with no --out: the results in ${besideSite.replace(scratch, '<site>/..')}, the current `
+        + `directory left empty (${cwdLeft.length} entries)`);
+
+    // The published site: built-from.txt is asked first; a site that never says the commit is exit 1 and no Chrome.
+    const NEW = `site abcdef1${'2'.repeat(33)} clean 2026-10-02T00:00:00Z\n`;
+    let says = `site ${'1'.repeat(40)} clean 2026-10-01T00:00:00Z\n`;
+    const remote = createServer((req, res) => {
+      res.writeHead(req.url === '/some/sub/path/built-from.txt' ? 200 : 404);
+      res.end(req.url === '/some/sub/path/built-from.txt' ? says : '');
+    });
+    await new Promise((r) => remote.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${remote.address().port}/some/sub/path/`;
+    const viaUrl = (more) => new Promise((done) => {
+      rmSync(argsFile, { force: true });
+      const child = spawn('/bin/sh', [script, '--url', url, '--expect', expectDir, '--commit', 'abcdef1', '--chrome',
+                                      standIn, ...more],
+                          { cwd: scratch, env: { ...process.env, NODE: process.execPath } });
+      let stdout = '';
+      child.stdout.on('data', (c) => { stdout += c; });
+      child.stderr.on('data', (c) => { stdout += c; });
+      child.on('close', (code) => done({ code, stdout, chromeArgs: args() }));
+    });
+    const stale = await viaUrl(['--wait', '2', '--out', join(scratch, 'published never')]);
+    says = NEW;
+    const fresh = await viaUrl(['--wait', '2']);
+    remote.close();
+    const defaultOut = join(scratch, 'web-live');                      // beside the expectations
+    const freshSummary = existsSync(join(defaultOut, 'summary.txt'))
+      ? readFileSync(join(defaultOut, 'summary.txt'), 'utf8') : '';
+    rmSync(defaultOut, { recursive: true, force: true });
+    row(stale.code === 1 && /^NOTE {5}web\.live published: .*not yet 'site abcdef1 clean'/m.test(stale.stdout)
+        && /^FAIL {5}web\.live published: .*still says 'site 1{40} clean/m.test(stale.stdout)
+        && /^web-live: 0\/1 passed \(results in .*published never\)$/m.test(stale.stdout)
+        && stale.chromeArgs.length === 0
+        && fresh.code === 2 && /^PASS {5}web\.live published: .*says 'site abcdef12{33} clean/m.test(fresh.stdout)
+        && /web-live: no verdict \(Chrome went away/.test(fresh.stdout) && fresh.chromeArgs.includes('--mute-audio')
+        && freshSummary.startsWith(`web-live.sh: ${url} (the published site`), 'gate.url_form',
+        `a site that never says the commit: exit ${stale.code}, no Chrome started, `
+        + `'${(/^web-live: \d+\/\d+ passed.*$/m.exec(stale.stdout) || [''])[0].replace(scratch, '.')}'; one that `
+        + `does: PASS published, then the pages (exit ${fresh.code} with the stand-in), results beside the `
+        + 'expectations');
   }
 
   // ---- what the script runs -----------------------------------------------------------------------------------------
   {
-    // A stand-in for node: it says it is node 24, names a browser when asked to find one, writes down every other
-    // call with the two preference variables, and writes the file after --fp as ui.dump would. $FAKE_FAILS names an
-    // argument at whose sight it fails instead (exit 3).
+    // A stand-in for node: it says it is node 24, names a browser when asked to find one, hands the results
+    // directory's preparation to the real node (the guard is the runner's), writes down every other call with the two
+    // preference variables, and writes the file after --fp as ui.dump would. $FAKE_FAILS names an argument at whose
+    // sight it fails instead (exit 3); with $FAKE_SLOW (a path) a ui.dump touches it and sleeps.
     const fake = join(scratch, 'stand-in node');
     const calls = `${fake}.log`;
     writeFileSync(fake, `#!/bin/sh
 case "\${1:-}" in --version) echo v24.0.0; exit 0 ;; esac
 for a in "$@"; do
   if [ "$a" = --find-chrome ]; then echo "/a browser/chrome"; echo "FIND" >> "$0.log"; exit 0; fi
+  if [ "$a" = --prepare-out ]; then
+    { echo "PREP"; printf 'ARG %s\n' "$@"; } >> "$0.log"
+    exec '${process.execPath}' "$@"
+  fi
+  if [ "$a" = ui.dump ] && [ -n "\${FAKE_SLOW:-}" ]; then : > "$FAKE_SLOW"; sleep 30; fi
 done
 { echo "RUN \${FCMP_PREFS_DIR:-}|\${FCMP_PRESETS_DB:-}"; printf 'ARG %s\n' "$@"; } >> "$0.log"
 prev=""
@@ -521,19 +915,21 @@ done
 exit 0
 `);
     chmodSync(fake, 0o755);
-    // The calls as [{ env, args }], and how often a browser was looked for.
+    // The calls as [{ env, args }] (the results directory's preparation as `preps`), and how often a browser was
+    // looked for.
     const ran = (args, env = {}) => {
       rmSync(calls, { force: true });
       const r = spawnSync('/bin/sh', [script, ...args], { encoding: 'utf8', timeout: 60000, cwd: scratch,
                                                          env: { ...process.env, NODE: fake, CHROME: '', ...env } });
       const text = existsSync(calls) ? readFileSync(calls, 'utf8') : '';
-      const runs = text.split(/^RUN /m).slice(1).map((block) => {
+      const blocks = text.split(/^(?=RUN |PREP$)/m).filter((b) => /^(RUN |PREP)/.test(b)).map((block) => {
         const lines = block.split('\n');
-        return { env: lines[0].split('|'),
+        return { prep: lines[0] === 'PREP', env: lines[0].replace(/^RUN /, '').split('|'),
                  args: lines.slice(1).filter((l) => l.startsWith('ARG ')).map((l) => l.slice(4)) };
       });
-      return { code: r.status, out: r.stdout || '', err: r.stderr || '', runs,
-               finds: (text.match(/^FIND$/gm) || []).length };
+      return { code: r.status, out: r.stdout || '', err: r.stderr || '', runs: blocks.filter((b) => !b.prep),
+               preps: blocks.filter((b) => b.prep).map((b) => b.args), finds: (text.match(/^FIND$/gm) || []).length,
+               order: blocks.map((b) => (b.prep ? 'PREP' : 'RUN')).join(' ') };
     };
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -580,18 +976,35 @@ exit 0
     const artifact = ran(['--dir', 'the site', '--live', 'the live', '--expect', 'the expect', '--out', 'the out',
                           '--timeout', '9', '--chrome', 'my chrome']);
     const serving = ran(['--serve', 'build web']);
+    const published = ran(['--url', 'https://example.invalid/a base/', '--expect', 'the expect', '--commit',
+                           'abcdef1', '--wait', '30', '--timeout', '9', '--gpu', 'swiftshader']);
+    const publishedHead = existsSync(join(scratch, 'web-live', 'summary.txt'))
+      ? readFileSync(join(scratch, 'web-live', 'summary.txt'), 'utf8') : '';
+    rmSync(join(scratch, 'web-live'), { recursive: true, force: true });
     const wantArtifact = [runner, '--dir', site, '--live', liveDir, '--expect', expectDir, '--out',
-                          join(scratch, 'the out'), '--timeout', '9', '--chrome', '/a browser/chrome',
-                          '--keep-summary'];
-    row(built.runs.length === 14 && built.finds === 1
-        && same(last.args, runnerCall(['--out', results, '--timeout', '7', '--chrome', '/a browser/chrome',
-                                       '--keep-summary']))
+                          join(scratch, 'the out'), '--timeout', '9', '--gpu', 'default', '--chrome',
+                          '/a browser/chrome', '--keep-summary'];
+    const wantPublished = [runner, '--url', 'https://example.invalid/a base/', '--expect', expectDir, '--commit',
+                           'abcdef1', '--wait', '30', '--out', join(scratch, 'web-live'), '--timeout', '9', '--gpu',
+                           'swiftshader', '--chrome', '/a browser/chrome', '--keep-summary'];
+    const prepOf = (out, ...more) => [runner, '--prepare-out', out, ...more];
+    row(built.runs.length === 14 && built.finds === 1 && built.order.startsWith('PREP RUN')
+        && same(built.preps, [prepOf(results, '--live', join(tree, 'live'), '--with-expect')])
+        && same(last.args, runnerCall(['--out', results, '--timeout', '7', '--gpu', 'default', '--chrome',
+                                       '/a browser/chrome', '--keep-summary']))
         && artifact.code === 0 && artifact.finds === 1 && artifact.runs.length === 1
-        && same(artifact.runs[0].args, wantArtifact)
+        && same(artifact.preps, [prepOf('the out', '--live', liveDir)]) && same(artifact.runs[0].args, wantArtifact)
         && serving.code === 0 && serving.finds === 0 && serving.runs.length === 14
-        && same(serving.runs[13].args, [runner, '--serve', ...runnerCall([]).slice(1)]), 'script.runner_arguments',
-        `a build: ${last.args.slice(1).join(' ').replaceAll(scratch, '.')}; an artifact: nothing computed, `
-        + `${artifact.runs.length} call; --serve: no browser looked for`);
+        && same(serving.preps, [prepOf(results, '--live', join(tree, 'live'), '--with-expect')])
+        && same(serving.runs[13].args, [runner, '--serve', ...runnerCall([]).slice(1)])
+        && published.code === 0 && published.finds === 1 && published.runs.length === 1
+        && same(published.preps, [prepOf(join(scratch, 'web-live'))]) && same(published.runs[0].args, wantPublished)
+        && publishedHead.startsWith('web-live.sh: https://example.invalid/a base/ (the published site')
+        && !/built-from/.test(publishedHead), 'script.runner_arguments',
+        `a build: the results directory prepared first, then ${last.args.slice(1).join(' ').replaceAll(scratch, '.')}; `
+        + `an artifact: nothing computed, ${artifact.runs.length} call; the published site: `
+        + `${published.runs[0] ? published.runs[0].args.slice(1, 9).join(' ') : 'no call'}...; --serve: no browser `
+        + 'looked for');
 
     const oneFails = ran(['build web'], { FAKE_FAILS: 'settings' });
     const kept = ['settings.theme1.node.fp', 'settings.theme1.node.log', 'panel.theme0.node.fp',
@@ -604,6 +1017,34 @@ exit 0
         && toolFails.runs.length === 13, 'script.failures',
         `a ui.dump that fails leaves no expectation and its output (${oneFails.err.trim().split('\n').length} said), `
         + `and the runner still runs; the expectation tool failing ends the gate: exit ${toolFails.code}`);
+
+    // A signal while the node values are made (a terminal closed, a job cancelled): exit 2, and the scratch
+    // directory of the preferences is gone, under each shell there is (dash runs no EXIT trap for a signal it does
+    // not catch).
+    const shells = ['/bin/sh', '/bin/dash'].filter((shell) => existsSync(shell));
+    const signalled = [];
+    for (const shell of shells) {
+      for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+        const tmp = join(scratch, `tmp ${basename(shell)} ${signal}`);
+        mkdirSync(tmp, { recursive: true });
+        const started = join(tmp, 'a ui.dump started');
+        const child = spawn(shell, [script, 'build web'], { cwd: scratch, detached: true, stdio: 'ignore',
+                                                            env: { ...process.env, NODE: fake, CHROME: '',
+                                                                   FAKE_SLOW: started, TMPDIR: tmp } });
+        const closed = new Promise((r) => child.on('close', (code, sig) => r(code ?? sig)));
+        for (const t0 = Date.now(); !existsSync(started) && Date.now() - t0 < 20000;) await pause(50);
+        const was = readdirSync(tmp).filter((n) => n.startsWith('fcmp-web-live.')).length;
+        try { process.kill(-child.pid, signal); } catch { /* gone */ }
+        const code = await Promise.race([closed, pause(20000).then(() => 'still running')]);
+        if (code === 'still running') { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }
+        const left = readdirSync(tmp).filter((n) => n.startsWith('fcmp-web-live.'));
+        signalled.push({ ok: was === 1 && code === 2 && left.length === 0,
+                         text: `${basename(shell)} ${signal}: exit ${code}, scratch ${left.length ? 'LEFT' : 'gone'}`,
+                       });
+      }
+    }
+    row(shells.length > 0 && signalled.every((s) => s.ok), 'script.signals',
+        `during the node values: ${signalled.map((s) => s.text).join('; ')}`);
   }
 
   // ---- usage --------------------------------------------------------------------------------------------------------
@@ -620,8 +1061,9 @@ exit 0
     const say = (r) => `exit ${r.code}: ${r.err.trim().split('\n')[0]}`;
 
     const dirArgs = ['--dir', site, '--live', liveDir, '--expect', expectDir];
+    const URL_ = 'http://127.0.0.1:9/some/sub/path/';
     const cases = {
-      no_arguments: [sh([]), /a build directory, or --dir/],
+      no_arguments: [sh([]), /a build directory, --dir <site> --live <dir> --expect <dir>, or --url/],
       unknown_option: [sh(['--bogus', build]), /unknown option --bogus/],
       missing_value: [sh([build, '--out']), /--out needs a value/],
       empty_value: [sh([build, '--chrome', '']), /--chrome needs a value/],
@@ -630,7 +1072,7 @@ exit 0
       two_builds: [sh([build, build]), /one build directory, not two/],
       both_forms: [sh([build, ...dirArgs]), /not both/],
       dir_alone: [sh(['--dir', site]), /--dir needs --live <dir> and --expect <dir>/],
-      live_without_dir: [sh(['--live', liveDir, '--expect', expectDir]), /a build directory, or --dir/],
+      live_without_dir: [sh(['--live', liveDir, '--expect', expectDir]), /a build directory, --dir <site>/],
       no_such_build: [sh([join(scratch, 'nowhere')]), /no build directory/],
       not_configured: [sh([liveDir]), /is not a configured build directory/],
       no_such_site: [sh(['--dir', join(scratch, 'nowhere'), '--live', liveDir, '--expect', expectDir]),
@@ -641,6 +1083,20 @@ exit 0
                           /no live directory/],
       no_expectations: [sh(['--dir', site, '--live', liveDir, '--expect', join(scratch, 'nowhere')]),
                         /no expectation directory/],
+      bad_gpu: [sh([build, '--gpu', 'metal']), /--gpu is default or swiftshader, not 'metal'/],
+      commit_without_url: [sh([...dirArgs, '--commit', 'abcdef1']), /--commit and --wait go with --url/],
+      wait_without_url: [sh([build, '--wait', '5']), /--commit and --wait go with --url/],
+      url_with_dir: [sh(['--url', URL_, '--expect', expectDir, '--dir', site]),
+                     /--url is the published site: not with a build directory, --dir or --live/],
+      url_with_build: [sh([build, '--url', URL_, '--expect', expectDir]), /not with a build directory/],
+      url_without_expect: [sh(['--url', URL_]), /--url needs --expect <dir>/],
+      url_not_http: [sh(['--url', 'ftp://127.0.0.1/site/', '--expect', expectDir]), /http or https address/],
+      url_with_query: [sh(['--url', `${URL_}?view=panel`, '--expect', expectDir]), /no query and no fragment/],
+      url_no_expectations: [sh(['--url', URL_, '--expect', join(scratch, 'nowhere')]), /no expectation directory/],
+      url_bad_commit: [sh(['--url', URL_, '--expect', expectDir, '--commit', 'ABCDEF1']), /--commit is 7 to 40/],
+      url_short_commit: [sh(['--url', URL_, '--expect', expectDir, '--commit', 'abc12']), /--commit is 7 to 40/],
+      url_bad_wait: [sh(['--url', URL_, '--expect', expectDir, '--wait', 'soon']), /--wait is a whole number/],
+      serve_url: [sh(['--serve', '--url', URL_, '--expect', expectDir]), /--serve serves a site of this machine/],
     };
     // A tree that is configured, but not for the web; and a web tree with nothing built in it.
     const native = join(scratch, 'build native');
@@ -670,14 +1126,47 @@ exit 0
                                                      '--chrome', noChrome]), /no Chrome \(--chrome /];
     cases.runner_no_site = [run(process.execPath, [runner, '--dir', liveDir, '--live', liveDir, '--expect', expectDir,
                                                    '--out', join(scratch, 'never made')]), /is not a site/];
+    const never = join(scratch, 'never made');
+    const node = (args) => run(process.execPath, [runner, ...args]);
+    cases.runner_bad_gpu = [node([...dirArgs, '--out', never, '--gpu', 'vulkan']), /--gpu is default or swiftshader/];
+    cases.runner_commit_without_url = [node([...dirArgs, '--out', never, '--commit', 'abcdef1']), /go with --url/];
+    cases.runner_url_no_out = [node(['--url', URL_, '--expect', expectDir]), /--out is required/];
+    cases.runner_url_with_dir = [node(['--url', URL_, '--dir', site, '--expect', expectDir, '--out', never]),
+                                 /not with --dir, --live or --serve/];
+    cases.runner_url_not_http = [node(['--url', 'file:///etc/', '--expect', expectDir, '--out', never]),
+                                 /http or https address/];
+    cases.runner_url_bad_commit = [node(['--url', URL_, '--expect', expectDir, '--out', never, '--commit', 'xyz']),
+                                   /--commit is 7 to 40/];
+    cases.runner_bad_wait = [node(['--url', URL_, '--expect', expectDir, '--out', never, '--wait', '-1']),
+                             /--wait is a number of seconds/];
+    const foreign = join(scratch, 'a directory of mine');
+    put(join(foreign, 'mine.txt'), 'mine\n');
+    cases.runner_out_refused = [node(['--prepare-out', foreign]),
+                                /is not a results directory of the gate \(it holds mine\.txt/];
+    cases.runner_gate_out_refused = [node([...dirArgs, '--out', foreign, '--chrome', process.execPath]),
+                                     /is not a results directory of the gate/];
     for (const [name, [r, reason]] of Object.entries(cases)) row(refused(r, reason), `usage.${name}`, say(r));
-    row(!existsSync(join(scratch, 'never made')) && !existsSync(join(scratch, 'web-live')),
-        'usage.nothing_written', 'a run that is refused leaves no results directory');
+    row(!existsSync(join(scratch, 'never made')) && !existsSync(join(scratch, 'web-live'))
+        && readdirSync(foreign).join() === 'mine.txt' && readFileSync(join(foreign, 'mine.txt'), 'utf8') === 'mine\n',
+        'usage.nothing_written', 'a run that is refused leaves no results directory, and a directory refused as one '
+        + 'is left as it was');
 
+    // --help is the header: every form, every option the script takes (read from its own argument loop) and each
+    // exit code.
     const help = sh(['--help']);
-    row(help.code === 0 && /Scripts\/web-live\.sh <build-web>/.test(help.out)
-        && /^Exit: 0 every row passed/m.test(help.out) && help.err === '', 'usage.help',
-        `exit ${help.code}, ${help.out.split('\n').length} lines, the last: ${help.out.trim().split('\n').pop()}`);
+    const options = [...new Set((readFileSync(script, 'utf8').match(/^ {4}(-[-|a-z]+)\)/gm) || [])
+      .flatMap((m) => m.trim().slice(0, -1).split('|')))];
+    const undocumented = options.filter((o) => !new RegExp(`(^|[\\s(])${o}\\b`, 'm').test(help.out));
+    const forms = ['<build-web> [options]', '--dir <site> --live <dir> --expect <dir> [options]',
+                   '--url <base> --expect <dir> [--commit <sha>] [--wait <s>] [options]', '--serve <build-web>',
+                   '--serve --dir <site> --live <dir> --expect <dir>']
+      .filter((f) => !help.out.includes(`web-live.sh ${f}`));
+    row(help.code === 0 && options.length >= 12 && undocumented.length === 0 && forms.length === 0
+        && /^Exit: 0 every row passed; 1 .*\n2 usage, .*no Chrome, the results directory refused, no verdict, a signal/m
+          .test(help.out) && help.err === '', 'usage.help',
+        undocumented.length || forms.length ? `not in --help: ${[...undocumented, ...forms].join(', ')}`
+          : `exit ${help.code}, ${help.out.split('\n').length} lines: the five forms, all ${options.length} options `
+            + `(${options.join(' ')}) and the exit codes`);
     const found = run(process.execPath, [runner, '--find-chrome', '--chrome', process.execPath]);
     row(found.code === 0 && found.out.trim() === process.execPath, 'usage.find_chrome',
         `--find-chrome prints the executable it was given and nothing else: ${found.out.trim()}`);
