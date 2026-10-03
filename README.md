@@ -100,8 +100,8 @@ is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin fo
 Press START. The page plays a loop it synthesises, or an audio file you open or drop on it; the file never leaves
 your browser. It needs a desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address.
 Its tests run in headless Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI
-also opens it in Firefox and Safari and reports the result without failing on it. It has not been tried by hand in
-Firefox or Safari yet.
+also runs its self-test and checks in Firefox and Safari (both pass) and reports them without failing on them. It has
+not been tried by hand in Firefox or Safari yet.
 
 What differs from the plugin (the page lists the same):
 - No preset import or export; your own presets last until the page is closed.

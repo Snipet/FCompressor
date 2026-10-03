@@ -1293,8 +1293,14 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     use the same rule.
   - **WebDriver** (lead phase, card L-W). `Scripts/web/page-check.mjs` runs the self-test, the capture pages
     (`--frames`) and the live pages (`--pages`) in Chrome, Firefox or Safari over WebDriver classic, with no
-    dependency: CI's `web-browsers` job. `web.pagecheck` holds its protocol to a fake driver; no real driver had been
-    met when it merged.
+    dependency: CI's `web-browsers` job. `web.pagecheck` holds its protocol to a fake driver. On PR #68's runs every
+    real driver passed it 10 of 10 (the self-test, the six captures equal to the node values, the three live pages):
+    Chrome 154 through chromedriver (SwiftShader); Safari 26.6 on macos-26 (its GPU, largest pixel difference 1, the
+    context running); Firefox 156 headed on a virtual display (headless Firefox on the GPU-less runner gives a page no
+    WebGL2), on Mesa's llvmpipe (largest difference 3). Firefox's audio thread flushes denormals to zero (its
+    `fcmp-tail` page reads flush-to-zero and denormals-are-zero ON in the worklet; Chrome and Safari OFF), so after the
+    source ends its values differ from the engine under node in bus-g and octo, and on a 2^-120 floor in five Modes:
+    a fact of the browser, recorded as notes; the 112 print rows and the 140 others hold in all three.
   - **What differs from the plugin** (one list; the page shows the first ten): no preset import or export, and user
     presets last until the page is closed; no side-chain key input; the DSP load in the settings shows a dash; with no
     input the engine idles and the meters stop; a QUALITY or LOOKAHEAD change rebuilds the engine on the audio thread
@@ -1335,8 +1341,8 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   - **What waits for the user:** listening to it (nobody has: the lead checked it with the output silenced, and sound
     was judged by numbers only; at Sprint D the lead pressed START, dragged THRESHOLD and saw the gain reduction and
     the curve follow, and opened CHARACTERISTICS, in Chrome by hand); Safari and Firefox by hand, and a machine with an
-    Intel or AMD GPU (the scripted user has run in headless Chrome only; CI's WebDriver runs of Firefox and Safari are
-    reports); recorded loops with a CREDITS file, if the user supplies material of their own; tagging v1.2.0, which the
+    Intel or AMD GPU (the scripted user has run in headless Chrome only; CI's WebDriver runs of Firefox and Safari pass
+    but are reports); recorded loops with a CREDITS file, if the user supplies material of their own; tagging v1.2.0, which the
     version in the settings follows.
 
 ## HardwareReverb migration
