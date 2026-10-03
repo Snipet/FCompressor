@@ -113,7 +113,7 @@ const boxOf = (id) => `JSON.stringify((() => {
 })())`;
 
 // Where a wait was asked for, from the stack of `asked` (an Error made as the wait began): the first two places in a
-// group's file (`scenario/quality.mjs:34, scenario/quality.mjs:58`: a helper of the group, then its caller), or, for
+// group's file (`scenario/quality.mjs:35, scenario/quality.mjs:54`: a helper of the group, then its caller), or, for
 // a wait of the runner's own (a group's page loaded and started), its place in scenario.mjs.
 const where = (asked) => {
   const at = String(asked.stack).split('\n').slice(1)

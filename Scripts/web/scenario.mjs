@@ -186,7 +186,8 @@ try {
     try {
       if (stopped !== null) {
         report.row(false, 'page', `after the group ${stopped.after} and before this one: `
-                                  + `${stopped.broken || 'a look at the page failed'}; this group goes on with a new page`);
+                                  + `${stopped.broken || 'a look at the page failed'}; this group goes on with a new `
+                                  + 'page');
       }
       if (group.page === 'new' || (group.page === 'continue' && !plays)) {
         const loaded = await u.load();
