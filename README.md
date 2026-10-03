@@ -128,8 +128,8 @@ Scripts/web-live.sh --serve build-web                # serves it on 127.0.0.1 an
 Any static server works as well, on `127.0.0.1` or `localhost`, for example
 `python3 -m http.server 8000 --bind 127.0.0.1 --directory build-web/site`. An `http` address of another machine on
 your network is not a secure context: there the browser gives the page no AudioWorklet, and the page says so.
-`wrangler.jsonc` lets Cloudflare build and serve the same site from an import of this repository; its header gives the
-build command. `docs/DECISIONS.md` ADR-93 has the design, the measurements and the reasons.
+`wrangler.jsonc` lets Cloudflare build and serve the same site from an import of this repository; the build command
+there is `bash Scripts/cloudflare-build.sh`. `docs/DECISIONS.md` ADR-93 has the design, the measurements and the reasons.
 
 ## Testing
 
