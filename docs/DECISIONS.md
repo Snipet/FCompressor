@@ -1031,22 +1031,35 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       `llvm-ar` and `llvm-ranlib` (`cmake/FcmpPlatform.cmake`), which need no plugin; install the `llvm` package.
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
-- **ADR-93 A browser demo: FCompressor as WebAssembly (v1.2 or later; in progress).** The user asked for web builds
-  through WASM, to demo the plugin in a browser. The demo runs the real DSP and shows the real editor; it is not a port
-  and not a second code base. Design pass: five scouts, three independent designs and a judge
-  (`docs/sprints/web/plan.md` and the reports beside it). Sprints A to D; this entry grows with them.
-  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset),
-    with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules joined by a MessagePort:
-    `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and, from Sprint D, the editor module (the unchanged
-    Panel over a web facade, FunkGui's core without JUCE, a WebGL2 sink) on the main thread. No SharedArrayBuffer, so no
-    cross-origin isolation headers: any static host serves it.
-  - **Arithmetic: the plugin's, bit for bit.** fcdsp gains a third backend, WASM SIMD128
+- **ADR-93 A browser demo: FCompressor as WebAssembly (on `main` after v1.1.0; published on GitHub Pages from `main`,
+  first when PR #68 merged).** The user asked for web builds through WASM, to demo the plugin in a browser. The demo
+  runs the real DSP and shows the real editor; it is not a port and not a second code base. Design pass: five scouts,
+  three independent designs and a judge (`docs/sprints/web/plan.md` and the reports beside it). Built from 2026-10-01
+  to 2026-10-02 in four sprints and a lead phase (manifests `docs/sprints/web-{a,b,c,d}.md` and `web-lead.md`): A, the
+  engine in wasm with exact arithmetic (PR #64); B, FunkGui's core without JUCE, its host services and the WebGL2 sink
+  (FunkGui v0.12.0, PR #65); C, the editor's views without JUCE, the web facade proven bit-equal to the processor, and
+  FunkGui's WebHost (v0.13.0, PR #66); D, the editor as wasm under node, and the page (v0.14.0, PR #67); the lead
+  phase, on Sprint D's merge 58f13e9: the browser gate, CI, publishing and the documents (PR #68). Where this entry and
+  the plan differ, this entry is right.
+  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset;
+    03 §2.12, ARCHITECTURE §3.1), with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules
+    joined by a MessagePort: `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and `fcmp-ui.js` +
+    `fcmp-ui.wasm` (the unchanged Panel over a web facade, FunkGui's core without JUCE, a WebGL2 sink) on the main
+    thread. No SharedArrayBuffer, so no cross-origin isolation headers: any static host serves it. The platform is a
+    desktop browser with WebAssembly, AudioWorklet and WebGL2, on an HTTPS or localhost address; only Chrome has been
+    measured. The settings screen shows `CMakeLists.txt`'s version, 1.1.0, although the demo carries v1.2's features
+    (v1.2.0 is not tagged).
+  - **Arithmetic: the plugin's.** fcdsp gains a third backend, WASM SIMD128
     (`Source/fcdsp/core/{Simd.h,FlushTiny.h,ScopedFtz.h,FastMath.h}`; never `-mrelaxed-simd`, whose fused multiply-add
     is implementation-defined). Emscripten's SSE and NEON emulation was rejected: both give an unfused fma, against
     Simd.h's one-rounding contract. wasm has no fused multiply-add, so `fma`/`fms` are exact in software: a multiply-add
     in f64 (the product of two floats is exact there), and a round-to-odd correction only for lanes that land on a float
     rounding boundary (24 SIMD operations and a branch; 33 more on the slow path, taken on 0.1 to 3.5 % of engine calls
-    on program material). `-DFCOMPRESSOR_WEB_FMA=unfused` builds the two-rounding form for measurement only.
+    on program material). `-DFCOMPRESSOR_WEB_FMA=unfused` builds the two-rounding form for measurement only. **Equal to
+    the plugin bit for bit on what the goldens hold:** the 112 `dsp.print` rows (the module under node, and through
+    the shipped worklet in Chrome) and every `ui.*` probe's goldens under node. **Not in the denormal range:** there the
+    engine follows x86's flush rule (below), and native arm64's output differs from it by at most 9e-36 (−701 dBFS) in
+    bus-g, octo and the three opto Modes, after a source ends or under a ±2^-120 floor (`docs/sprints/web/l-print.md`).
   - **Denormals.** wasm has no flush-to-zero and no denormals-are-zero. The backend makes a tiny result of add, sub,
     mul, div, fma or fms a signed zero, by a speculative test that costs four operations when no lane is near FLT_MIN.
     "Tiny" is x86's rule exactly (MXCSR.FTZ): the exact result, rounded to 24 bits as if the exponent had no lower
@@ -1056,185 +1069,281 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     both native backends give zero; the x86 CI run of `web.simd` showed it, and the check's own reference had the same
     mistake.) arm64 decides on the exact result itself, so the three backends differ only in
     [FLT_MIN (1 − 2^-25), FLT_MIN): zero on arm64, FLT_MIN on x86 and wasm, as Simd.h always allowed. Operands are read
-    as they are. The engine wrapper zeroes denormal input samples and runs a silence gate: after exactly-zero input for
-    longer than the engine's tail (at least 100 ms) it resets the engine and outputs zeros until a sample or a Params
-    record arrives. A record counts as activity, so the engine runs new values on the silence for that long again, as
-    the plugin's engine does all the time: a Mode change made while idle has finished its crossfade before signal
-    returns, and an edit that shortens the tail cannot close the gate before the engine has run it (review findings;
-    `web.engine.selfcheck`'s `abi.gate.*` rows compare the audio with a fresh engine's, bit for bit).
-    `web.engine.tail` measures the cost of silence with the gate off.
-  - **The engine module** (`Source/web/engine`, portable C++ over fcdsp alone: lint `web.engine`, so the same sources
-    build natively for the checks). `fcmp_web_*`: create, configure, process (any frame count; the worklet gives 128),
-    post and reply (the byte protocol of `WebProtocol.h`: Params with the 30 plain values and a snap flag, Attach,
-    Reset, Pull; the reply carries the UiFrame, the new HistoryRing columns, flags and the latency), latency, the gate
-    switch and a self-check. Raw values become BlockParams exactly as `Processor::buildBlockParams` makes them.
-    **A deviation from the real-time rules, recorded here:** a quality or lookahead-budget change reconfigures (and
-    allocates) inside `fcmp_web_post`, between two render quanta, because the worklet has no other thread;
-    `fcmp_web_process` itself never allocates, locks or calls libm. The module is standalone: no JavaScript glue, no
-    imports, exports by the compiler's `export_name` attribute only (545 KB; the slow paths of fma and of the flush
-    are out of line, which took 130 KB off and made STD about a quarter faster).
-  - **Measured (Sprint A, 48 kHz, 128-frame quanta, the `dsp.print` material, real-time factor under node):**
+    as they are. Chrome (154, arm64) computes denormals unflushed on the main thread, in the worklet's constructor and
+    message handler and inside `process()`, offline and live, so the backend's flush is the only one.
+  - **Measured** (48 kHz, 128-frame quanta, the `dsp.print` material; real-time factor under node, `web.engine.print`
+    and `web.engine.speed`):
 
     | | rows equal to the native goldens | worst Mode at HQ (mu-67) | clean ECO / STD / HQ |
     |---|---|---|---|
-    | exact fma (shipped), the lead's Mac (arm64) | **112 of 112** (`web.engine.print`, all 14 Modes × 8) | 20.4× | 168× / 102× / 55× |
-    | exact fma, the CI runner (x86-64) | 112 of 112 | 12.6× | 102× / 62× / 32× |
+    | exact fma (shipped), the lead's Mac (arm64), Sprint A | **112 of 112** (all 14 Modes × 8) | 20.4× | 168× / 102× / 55× |
+    | the same at Sprint D's gate, 2026-10-02 | 112 of 112 | 20.5× | 163× / 104× / 52× |
+    | exact fma, the CI runner (x86-64), Sprint A | 112 of 112 | 12.6× | 102× / 62× / 32× |
+    | exact fma, the CI runner (x86-64), the lead phase (PR #68) | 112 of 112 | 11.3× | 94× / 55× / 27× |
     | unfused (measurement only), the lead's Mac | 0 of 112 | 40.8× | 295× / 187× / 92× |
 
     Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate on both machines, so the demo
     runs the plugin's exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log`
     move nothing. On the x86 runner no 2/3 s of a Mode's silent tail costs more than 0.92× its active signal with the
-    gate off (`web.engine.tail`): the flush leaves no denormal for V8 to trip over. Natively on x86-64, `web.simd`
-    passes on the Linux CI runner, which is where the flush rule above was learned.
-  - **Tests** (`cmake/FcmpWeb.cmake`): `fcmp_web_check` is built from `Tools/web/*.cpp` in every configuration, and its
-    subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels `verify;web`, judged by
-    exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms bit-equal to a one-rounding
-    reference on 12.6 million triples; the flush rule of each backend on both sides of its boundary and on the tie;
-    the FastMath functions hashed against native arm64 constants, and lane by lane against their scalar forms);
-    `web.engine.print` renders `dsp.print`'s material through the C ABI in 128-frame quanta and compares with the same
-    golden rows (in the wasm build a Mode without golden rows fails: no `dsp.print` runs beside it);
-    `web.engine.selfcheck` (the module's own hash, the ABI's contract, the silence gate against records), `.tail`,
-    `.speed` and `.abi` (node instantiates the shipped module with an empty import object). The two that measure time
-    run alone; `.tail` judges the worst pair of adjacent 1/3 s windows over three runs after a warm-up, at ×2 in the
-    wasm build and with ADR-87's scale natively. Natively four of them run in every gate, so the wrapper cannot drift
-    from the engine.
-  - **FunkGui v0.12.0** (Sprints A and B; additive, no golden row moves).
-    - *Core without JUCE* (G-A): `FUNKGUI_WITH_JUCE` (default ON, nothing changes; OFF gives a JUCE-free core), the
-      committed macOS font atlas with `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a storage
-      backend, presets `nojuce` and `web`: its JUCE-free tests pass as wasm32 under node against the same goldens.
-    - *Host services* (G-B): a popup menu, a file chooser and the clipboard are plain `HostServices` calls
-      (`services`, `showMenu`, `dismissMenus`, `chooseFiles`, `copyText`, `commandKeyIsMeta`), served by `EditorHost`
-      over JUCE exactly as FCompressor's four views do it today, and by `HeadlessHost` with scripted replies, so a
-      probe can test a menu for the first time. The views switch to them in Sprint C; until then nothing in the plugin
-      calls them.
-    - *The WebGL2 sink* (G-C): `FunkGui::web`'s `WebGlSink` mirrors `BgfxSink` (one draw call, one program, the R8
-      atlas) with shader text generated from the same `shaders/*.sc` by CMake alone and pinned by `fg.shader.web`.
-      **Run in a real browser** (Chromium, ANGLE Metal, this Mac; the first browser run of anything here): against
-      SoftRaster the frame differs by at most 1 per channel, and a forced context loss and restore gives the same
-      frames byte for byte. **One difference from native, by rule:** a hard edge through device pixel centres in y is
-      filled one row further down by WebGL. Only clips make such an edge, and with a browser's
-      dpi = physical height / 640 whole logical px are not always device px, so a view snaps its clip edges with
-      `Canvas::snapY` (FCompressor has one, the preset list: Sprint C; where the dpi is a multiple of 0.25, which is
-      every macOS window and every integer Linux scale, the snap changes nothing; at a fractional Linux desktop scale
-      the list's edge can move by one device row, onto the row Vulkan and WebGL then agree on).
-      The sink is not corrected instead: that would cost an off-screen pass per frame.
-  - **Model code out of JUCE** (Sprint B, card E-1; no behaviour change, zero drift): `Source/plugin/portable/` (lint
-    `plugin.portable`: no JUCE, no FunkGui but `ParamPort.h`) holds `EditHistory` and the new `FactoryData` (the factory
-    bank's entry table and default filling as plain rows; `FactoryBank.cpp` converts them, and the bank and its
-    revision are byte-identical). `PreviewWorker` runs on `std::thread` with the computation in `PreviewCompute`
-    (no exception leaves the worker, as with `juce::Thread`; where threads cannot exist it computes inline).
-    `FakeFacade` reads `FactoryData` and has no JUCE in it. `RenderInfo::renderer` replaces the settings screen's
-    hard-coded "METAL", which was wrong on Linux.
-  - **Review** (Sprint B: six reviewers by area, two skeptics per finding): eight low-severity defects confirmed and
-    fixed, each with a check shown to fail on the old code (a separators-only menu that was taken but never opened; live
-    menu rows that could not fail; a second sink on one canvas breaking the first's recovery; the page runner hanging
-    when the browser died; a shader check with a prefix-match hole; an exception on the preview thread terminating the
-    host; the no-thread fallback aborting under wasm; the fill rule undocumented).
-  - **The editor without JUCE** (Sprint C, cards E-2 and E-3). The four views that showed menus, choosers and the
-    clipboard through JUCE (`EditControls`, `PresetStrip`, `PresetBrowser`, `Settings`) ask `HostServices` instead;
-    `Panel`'s host proxy forwards the calls. The same items, anchors, themes and callbacks, so nothing a user sees
-    changes; `EditorHost` does with JUCE what the views did. Lint rule `editor.juce`: nothing under `Source/editor`
-    outside `gpu/` includes or names JUCE (`#if JUCE_MAC` would turn silently false there, so the command key is the
-    host's `commandKeyIsMeta()`). IMPORT and EXPORT are enabled only when the host reports a file chooser, and say so
-    when it does not (the browser host has none). The UI probes use `funkgui::HeadlessGuiScope`, and `HeadlessHost`'s
-    scripted replies let them test a menu, a chooser and the clipboard for the first time (`ui.edits`, `ui.presets`,
-    `ui.settings`: 61 new spec rows; two rows of `ui.settings` that asserted "a headless host copies nothing" are
-    replaced by name). The editor outside `gpu/` compiles as wasm32 (`fcmp_web_editor_check`).
+    gate off (`web.engine.tail`; 0.61× to 0.94× in the lead phase's run): the flush leaves no denormal for V8 to trip
+    over. Natively on x86-64, `web.simd`
+    passes on the Linux CI runner, which is where the flush rule above was learned. In Chrome on the lead's Mac (the
+    lead phase's `fcmp-tail` page): through the shipped worklet STD runs at 28.3× (mu-67) to 90.3× (brickwall) real
+    time and HQ at 19.1× (mu-67) to 45.8× (brickwall); silence with the gate off costs 0.62× (mu-67) to 1.00×
+    (console-e) of signal on the main thread, 1.12× at worst across runs (limit 2×).
+  - **The engine module** (`Source/web/engine`, portable C++ over fcdsp alone: lint `web.engine`, so the same sources
+    build natively for the checks). `fcmp_web_*`: create, configure, process (any frame count; the worklet gives 128),
+    post and reply (the byte protocol of `WebProtocol.h`: Params with the 30 plain values and a snap flag, Attach,
+    Reset, Pull; the reply carries the UiFrame, the new HistoryRing columns, flags and the latency), latency, the gate
+    switch and a self-check. Raw values become BlockParams exactly as `Processor::buildBlockParams` makes them. The
+    wrapper zeroes denormal input samples and runs a silence gate: after exactly-zero input for longer than the engine's
+    tail (at least 100 ms) it resets the engine and outputs zeros until a sample or a Params record arrives. A record
+    counts as activity, so the engine runs new values on the silence for that long again, as the plugin's engine does
+    all the time: a Mode change made while idle has finished its crossfade before signal returns, and an edit that
+    shortens the tail cannot close the gate before the engine has run it (`web.engine.selfcheck`'s `abi.gate.*` rows
+    compare the audio with a fresh engine's, bit for bit). `web.engine.tail` measures the cost of silence with the gate
+    off. The module is standalone: no JavaScript glue and no imports; it exports the functions the wrapper marks with
+    the compiler's `export_name` attribute, `malloc` and `free` (545,704 bytes; the slow paths of fma and of the flush
+    are out of line, which took 130 KB off and made STD about a quarter faster).
+  - **The one deviation from the real-time rules** (ARCHITECTURE §7): a quality or lookahead-budget change reconfigures
+    (and allocates) inside `fcmp_web_post`, between two render quanta, because the worklet has no other thread, and it
+    may click. `fcmp_web_process` itself never allocates, locks or calls libm.
+  - **The editor without JUCE.**
+    - *FunkGui v0.12.0* (Sprints A and B, cards G-A and G-B; additive, no golden row moves). `FUNKGUI_WITH_JUCE`
+      (default ON, nothing changes; OFF gives a JUCE-free core), the committed macOS font atlas with
+      `FontAtlasSdf::load`/`serialise` and `fg.font.baked`, preferences behind a storage backend, presets `nojuce` and
+      `web`: its JUCE-free tests pass as wasm32 under node against the same goldens. A popup menu, a file chooser and
+      the clipboard are plain `HostServices` calls (`services`, `showMenu`, `dismissMenus`, `chooseFiles`, `copyText`,
+      `commandKeyIsMeta`), served by `EditorHost` over JUCE and by `HeadlessHost` with scripted replies, so a probe can
+      test a menu.
+    - *The model code* (Sprint B, card E-1; no behaviour change, zero drift). `Source/plugin/portable/` (lint
+      `plugin.portable`: no JUCE, no FunkGui but `ParamPort.h`) holds `EditHistory` and `FactoryData` (the factory
+      bank's entry table and default filling as plain rows; `FactoryBank.cpp` converts them, and the bank and its
+      revision are byte-identical). `PreviewWorker` runs on `std::thread` with the computation in `PreviewCompute` (no
+      exception leaves the worker, as with `juce::Thread`; where threads cannot exist it computes inline). `FakeFacade`
+      reads `FactoryData` and has no JUCE in it. `RenderInfo::renderer` replaces the settings screen's hard-coded
+      "METAL", which was wrong on Linux.
+    - *The views* (Sprint C, cards E-2 and E-3). The four views that showed menus, choosers and the clipboard through
+      JUCE (`EditControls`, `PresetStrip`, `PresetBrowser`, `Settings`) ask `HostServices`; `Panel`'s host proxy
+      forwards the calls. The same items, anchors, themes and callbacks, so nothing a user sees changes; `EditorHost`
+      does with JUCE what the views did. Lint rule `editor.juce`: nothing under `Source/editor` outside `gpu/` includes
+      or names JUCE (`#if JUCE_MAC` would turn silently false there, so the command key is the host's
+      `commandKeyIsMeta()`). IMPORT and EXPORT are enabled only when the host reports a file chooser, and say so when it
+      does not. The UI probes use `funkgui::HeadlessGuiScope`, and `HeadlessHost`'s scripted replies test a menu, a
+      chooser and the clipboard (`ui.edits`, `ui.presets`, `ui.settings`: 61 new spec rows; two rows of `ui.settings`
+      that asserted "a headless host copies nothing" are replaced by name). These sources compile unchanged into
+      `fcmp_web_ui` and `fcmp_probe_web`.
+    - *The preview without a thread* (Sprint D; the lead's decision). One step-response preview costs 22 to 72 ms
+      natively and 89 to 428 ms under node (`ui.previewcost`'s notes, per Mode: bus-g fastest, mu-67 slowest), far
+      over a frame. A browser's main thread has no thread to give it, so there an asynchronous `PreviewWorker` computes
+      a request inside `tick()` only once no newer request has replaced it for 0.15 s of tick time: a control that
+      moves stays smooth (a 30-frame drag runs 0 jobs; it ran 10), and the attack and release curves of the
+      CHARACTERISTICS screen follow 0.24 to 0.58 s after the control rests, with one held frame. With a thread (every
+      native build) nothing changes; the synchronous option still computes at once. `ui.previewcost` holds the rule
+      natively too, through a switch that refuses the thread (`previewWorkerRefuseThread`, never called by the product).
   - **The web facade** (Sprint C, card W-F; `Source/web/facade`, lint `web.facade`: no Emscripten header, no
     `EngineHost`, the engine reached only through an `EngineLink` that moves `WebProtocol` bytes). `WebFacade` is a
     `ProcessorFacade`: 30 values held as JUCE holds them (`HostValue` restates JUCE's two-value parameter model on
-    purpose, so the raw values are the processor's bit for bit, including a one-ulp drag step and Init after an
-    undo); nothing is posted while a batch is open, the outermost end posts one Params record with the snap, a write
-    outside a batch posts one record; an explicit `pull()` per frame fills a mirror `HistoryRing`; `WebPresets` is the
-    factory bank and the session's user presets with the processor's rules. **Proven natively:** `proc.webnull` runs a
-    `Processor` beside a `WebFacade` over the engine module (a loopback link, 128-frame quanta) through gestures,
-    batches, presets, undo, A/B, quality changes and a reset, for all 14 Modes: output, the 30 raw values, every
-    `UiFrame` and every history column are equal bit for bit. `proc.webpresets` and `ui.web` cover the presets and a
-    Panel over the facade. Not in the protocol yet: the DSP load figures (the settings screen shows a dash in the
-    browser) and an acknowledgement of a refused record. For Sprint D's page: `pull()` before each `Panel::tick`,
-    `resync()` when the worklet's port connects, and `setEngineSetup` with the AudioContext's rate before the editor
-    opens (until a reply arrives the facade knows no rate of its own).
-  - **FunkGui v0.13.0: the browser host** (Sprint C, cards G-D and G-E). `WebHost` is `EditorHost`'s counterpart on a
-    canvas: one `WebGlSink`, `EditorHost`'s frame order on `requestAnimationFrame` (60 Hz, 12 Hz idle, nothing while
-    hidden), the zoom fitted to the window, its own DOM listeners (pointer capture, JUCE's modifiers, click counts and
-    wheel units, `EditorHost`'s key table), `preventDefault` only for what the Panel consumed. `WebServices` is the
-    popup menu as DOM elements with the native menu's metrics and rules, and the clipboard; `WebPrefs` keeps
-    `UiPreferences` in localStorage. No file chooser, no IME, no accessibility mirror. The gallery is a web page
-    (`tools/GalleryWeb`); three pages run in headless Chrome under CTest (`fg.web.page`, `fg.web.host`,
-    `fg.web.services`), and the menu was opened by a real click in a real browser. **Known differences from the
-    plugin:** Chrome gives no scroll-direction flag, so under natural scrolling on a Mac a value control turns the
-    other way; a notched mouse wheel arrives in pixels and moves a stepped control about two detents.
-  - **The UI probes as wasm32** (Sprint D, card W-N). The web tree builds `fcmp_probe_web` (the editor outside
-    `gpu/`, the model code, the facade, the engine archive and every `layer=ui` probe) and runs it under node against
-    the SAME goldens: 219 `ui.*` tests (all 14 Modes; `ui.font` too, since without JUCE the atlas is FunkGui's
-    committed macOS bake) pass with no drift and no overlay. A probe's first line takes `platform=` as a comma list
-    over `apple|linux|web`.
-  - **The preview without a thread** (Sprint D; the lead's decision). One step-response preview costs 22 to 72 ms
-    natively and 89 to 428 ms under node (`ui.previewcost`'s notes, per Mode: bus-g fastest, mu-67 slowest), far over a
-    frame. A browser's main thread has no thread to give it, so there an asynchronous `PreviewWorker` computes a
-    request inside `tick()` only once no newer request has replaced it for 0.15 s of tick time: a control that moves
-    stays smooth (a 30-frame drag runs 0 jobs; it ran 10), and the attack and release curves of the CHARACTERISTICS
-    screen follow 0.24 to 0.58 s after the control rests, with one held frame. With a thread (every native build)
-    nothing changes; the synchronous option still computes at once. `ui.previewcost` holds the rule natively too,
-    through a switch that refuses the thread (`previewWorkerRefuseThread`, never called by the product). **Follow-up,
-    not started:** the preview in a Worker, which would let the curves track a drag; it needs the user's go.
-  - **The editor module** (Sprint D, card U-1; `Source/web/ui`, lint `web.ui` and `web.emscripten`: the one place an
-    Emscripten header may appear). `fcmp-ui.js` + `fcmp-ui.wasm` (1,323,756 bytes; 447,506 gzip): the unchanged Panel
-    over a `WebFacade` on a `funkgui::WebHost` (the native editor's zoom steps, default and preference key; the fit
-    asks that the canvas fits the window), preferences in localStorage, ADR-85's new-instance QUALITY and LOOKAHEAD
-    applied on page load, the DISPLAY row saying WEBGL2 and the browser's name. `PortLink` is the `EngineLink` over the
-    worklet's `MessagePort`: a Pull travels in one recycled 16,704-byte `ArrayBuffer`, every other record in a buffer
-    of its own size, always transferred and never a view of the module's memory; a record from a replaced port or to a
-    destroyed link is ignored. The module pulls from FunkGui v0.14.0's `WebHostConfig::beforeTick`, so a pull follows
-    the host's cadence (60 Hz, 12 Hz idle, none while hidden). `Module.fcmpSelftest()` draws one frame through the sink
-    and reads it back in the same call against SoftRaster (the largest difference 1 of 255 at the ratios a display
-    gives; below about 0.8 device px per logical px, a browser zoomed far out, a few tens of samples differ and the
-    row says so).
-  - **The page** (Sprint D, card U-2; `web/`, plain ES modules, no framework, nothing from another origin, every URL
-    relative). START creates the AudioContext in the click, loads `fcmp-worklet.js` (the engine instantiated with an
-    empty import object; `process()` copies in, calls `fcmp_web_process` and copies out with no allocation, no message
-    and no throw, for any frame count and any input shape) and connects the module's port. The source is a loop
-    synthesised in the page (drums, bass and a pad; peaks at -3 dBFS, about -14.7 dBFS RMS; no audio file is in the
-    repository) or a file the user drops or opens, which never leaves the browser. The page says what it cannot do
-    before START (no WebAssembly, an insecure context, no AudioWorklet, no WebGL2, `file:`), shows RESUME when the
-    browser pauses audio, and lists what differs from the plugin. The seam between the module and the page (the
-    names on `Module`, the wire rule, who pulls) is written down in `docs/sprints/web-d.md`.
-  - **The site** (`cmake --build --preset web` makes `build-web/site`; `cmake/FcmpWebSite.cmake`): 13 files,
-    2,096,442 bytes (643,434 gzip): the page, the two modules, the licences (GPL-3.0, the typeface's OFL, and the
-    toolchain's own texts for musl, libc++, libc++abi, compiler-rt and Emscripten in `THIRD-PARTY.txt`) and
-    `built-from.txt`, which says `clean` only when FCompressor's tree is clean AND the FunkGui in the modules is the
-    pinned commit itself, so the footer never links a commit that is not the source. The gate's stamp in the web tree
-    covers the modules and the site. **Nothing publishes it.**
-  - **Tests** (Sprint D). Under node, beside the 219 probes: `web.ui.port` (PortLink and a facade as wasm over a real
-    MessageChannel to the shipped engine: the wire rule, one carrier for 60 pulls judged by buffer identity, the
+    purpose, so the raw values are the processor's bit for bit, including a one-ulp drag step and Init after an undo);
+    nothing is posted while a batch is open, the outermost end posts one Params record with the snap, a write outside a
+    batch posts one record; an explicit `pull()` per frame fills a mirror `HistoryRing`; `WebPresets` is the factory
+    bank and the session's user presets with the processor's rules. The editor module pulls before each `Panel::tick`;
+    when the worklet's port connects it gives `setEngineSetup` the AudioContext's rate and calls `resync()` (until a
+    reply arrives the facade knows no rate of its own). **Proven natively:** `proc.webnull` runs a `Processor` beside
+    a `WebFacade` over the engine module (a loopback link, 128-frame quanta) through gestures, batches, presets, undo,
+    A/B, quality changes and a reset, for all 14 Modes: output, the 30 raw values, every `UiFrame` and every history
+    column are equal bit for bit. `proc.webpresets` and `ui.web` cover the presets and a Panel over the facade. The
+    protocol carries no DSP load figures and no acknowledgement of a refused record (the worklet counts refusals).
+  - **The browser host** (FunkGui).
+    - *The WebGL2 sink* (v0.12.0, card G-C): `FunkGui::web`'s `WebGlSink` mirrors `BgfxSink` (one draw call, one
+      program, the R8 atlas) with shader text generated from the same `shaders/*.sc` by CMake alone and pinned by
+      `fg.shader.web`. In a real browser (Chromium, ANGLE Metal, the lead's Mac): against SoftRaster the frame differs
+      by at most 1 per channel, and a forced context loss and restore gives the same frames byte for byte. **One
+      difference from native, by rule:** a hard edge through device pixel centres in y is filled one row further down
+      by WebGL. Only clips make such an edge, and with a browser's dpi = physical height / 640 whole logical px are not
+      always device px, so a view snaps its clip edges with `Canvas::snapY` (FCompressor has one such clip, the preset
+      list, snapped since Sprint C; where the dpi is a multiple of 0.25, which is every macOS window and every integer
+      Linux scale, the snap changes nothing; at a fractional Linux desktop scale the list's edge can move by one device
+      row, onto the row Vulkan and WebGL then agree on). The sink is not corrected instead: that would cost an
+      off-screen pass per frame.
+    - *WebHost* (v0.13.0, Sprint C, cards G-D and G-E): `EditorHost`'s counterpart on a canvas: one `WebGlSink`,
+      `EditorHost`'s frame order on `requestAnimationFrame` (60 Hz, 12 Hz idle, nothing while hidden), the zoom fitted
+      to the window, its own DOM listeners (pointer capture, JUCE's modifiers, click counts and wheel units,
+      `EditorHost`'s key table), `preventDefault` only for what the Panel consumed. `WebServices` is the popup menu as
+      DOM elements with the native menu's metrics and rules, and the clipboard; `WebPrefs` keeps `UiPreferences` in
+      localStorage. It has no file chooser, no IME and no accessibility mirror. The gallery is a web page
+      (`tools/GalleryWeb`); three pages run in headless Chrome under FunkGui's CTest (`fg.web.page`, `fg.web.host`,
+      `fg.web.services`), and the menu was opened by a real click in a real browser. v0.14.0 adds
+      `WebHostConfig::beforeTick`, from which the editor module pulls.
+  - **The editor module** (Sprint D, card U-1; `Source/web/ui`, lints `web.ui` and `web.emscripten`: the one place an
+    Emscripten header may appear). `fcmp-ui.js` + `fcmp-ui.wasm`: the unchanged Panel over a `WebFacade` on a
+    `funkgui::WebHost` (the native editor's zoom steps, default and preference key; the fit asks that the canvas fits
+    the window), preferences in localStorage, ADR-85's new-instance QUALITY and LOOKAHEAD applied on page load, the
+    settings screen's DISPLAY row saying WEBGL2 and its FORMAT row WEB and the browser's name. `PortLink` is the
+    `EngineLink` over the worklet's `MessagePort`: a Pull travels in one recycled 16,704-byte `ArrayBuffer`, every other
+    record in a buffer of its own size, always transferred and never a view of the module's memory; a record from a
+    replaced port or to a destroyed link is ignored. The pull follows the host's cadence (60 Hz, 12 Hz idle, none
+    while hidden). `Module.fcmpSelftest()` draws one frame through the sink and reads it back in the same call against
+    SoftRaster (the largest difference 1 of 255 at the ratios a display gives; below about 0.8 device px per logical
+    px, a browser zoomed far out, a few tens of samples differ and the row says so). The seam between the module and the
+    page (the names on `Module`, the wire rule, who pulls) is written down in `docs/sprints/web-d.md`; the lead phase
+    adds the gate's two exports and three pins (below).
+  - **The page** (Sprint D, card U-2; `web/`, plain ES modules, no framework). Nothing is loaded from another origin;
+    the one absolute URL is the footer's link to the source repository and the built commit. START creates the
+    AudioContext in the click, loads `fcmp-worklet.js` (the engine instantiated with an empty import object; `process()`
+    copies in, calls `fcmp_web_process` and copies out with no allocation, no message and no throw, for any frame count
+    and any input shape) and connects the module's port. The source is a loop synthesised in the page (drums, bass and
+    a pad; peaks at -3 dBFS, about -14.7 dBFS RMS) or a file the user drops or opens, which never leaves the browser;
+    no audio file is in the repository. The page says what it cannot do before START (no WebAssembly, an insecure
+    context, no AudioWorklet, no WebGL2, `file:`), shows RESUME when the browser pauses audio, and lists what differs
+    from the plugin (below).
+  - **The site** (`cmake --build --preset web` makes `build-web/site`; `cmake/FcmpWebSite.cmake`): 13 files, 2,109,424
+    bytes, 653,886 gzip (web.size's method, node's zlib at level 9 file by file; at Sprint D 2,096,442 and 648,135):
+    the page, the two modules (`fcmp-engine.wasm` 545,704 bytes, 136,515 gzip; `fcmp-ui.wasm` 1,330,842 and 451,250,
+    7,086 bytes more than at Sprint D for the gate's exports and pins; `fcmp-ui.js` 55,742 and 16,153), the licences
+    (GPL-3.0, the typeface's OFL, and the toolchain's own texts for musl, libc++, libc++abi, compiler-rt and Emscripten
+    in `THIRD-PARTY.txt`) and `built-from.txt`, which says `clean` only when FCompressor's tree is clean AND the FunkGui
+    in the modules is the pinned commit itself, so the footer never links a commit that is not the source. The gate's
+    stamp in the web tree covers the modules and the site; `web.size` holds the site to its 13 files, each within 20 %
+    of its measured size.
+  - **CI and publishing** (`.github/workflows/ci.yml`, 03 §4.10). The `web` job builds the `web` preset on
+    ubuntu-24.04 with emsdk at the pinned version, runs `Scripts/verify.sh --strict build-web`, reports the x86 runner's
+    numbers (`simdbench`, `speed`, `tail`) and runs the browser gate under SwiftShader; it keeps the site (`web-site`)
+    and the gate's inputs (`web-live`) for 14 days and runs the gate again on the downloaded copy. `web-browsers`
+    reports Chrome and Firefox (ubuntu-24.04) and Safari (macos-26) through `Scripts/web/page-check.mjs`, never as a
+    gate. **Hosting** (the user's decision, 2026-10-02): on a push to `main` on which `dsp`, `plugin`, `linux-dsp`,
+    `linux-plugin` and `web` passed, `publish` deploys the `web-site` artifact the gate tested, byte for byte, to GitHub
+    Pages, https://snipet.github.io/FCompressor/, and `published` runs `Scripts/web-live.sh --url` against the public
+    page once its `built-from.txt` names the commit. Nothing else is published.
+  - **Tests under node** (`cmake/FcmpWeb.cmake`, 03 §2.12). `fcmp_web_check` is built from `Tools/web/*.cpp` in every
+    configuration, and its subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels
+    `verify;web;global`, judged by exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms
+    bit-equal to a one-rounding reference on 12.6 million triples; the flush rule of each backend on both sides of its
+    boundary and on the tie; the FastMath functions hashed against native arm64 constants, and lane by lane against
+    their scalar forms); `web.engine.print` renders `dsp.print`'s material through the C ABI in 128-frame quanta and
+    compares with the same golden rows (in the wasm build a Mode without golden rows fails: no `dsp.print` runs beside
+    it); `web.engine.selfcheck` (the module's own hash, the ABI's contract, the silence gate against records), `.tail`,
+    `.speed` and `.abi` (node instantiates the shipped module with an empty import object). The two that measure time
+    run alone; `.tail` judges the worst pair of adjacent 1/3 s windows over three runs after a warm-up, at ×2 in the
+    wasm build and with ADR-87's scale natively. Natively four of them run in every gate, so the wrapper cannot drift
+    from the engine. The web tree builds `fcmp_probe_web` (the editor outside `gpu/`, the model code, the facade, the
+    engine archive and every `layer=ui` probe) and runs it under node against the SAME goldens, with no drift and no
+    overlay (`ui.font` too, since without JUCE the atlas is FunkGui's committed macOS bake; a probe's first line takes
+    `platform=` as a comma list over `apple|linux|web`). Beside them: `web.ui.port` (PortLink and a facade as wasm over
+    a real MessageChannel to the shipped engine: the wire rule, one carrier for 60 pulls judged by buffer identity, the
     patience rule, a replaced port, a destroyed and a displaced link), `web.worklet` (the shipped script over the
     shipped engine: bit-equal to the module driven directly, every input shape and a source that stops, the reply in
     the buffer the Pull came in, 0 bytes allocated over 35,000 `process()` calls), `web.loop`, `web.size` (exactly the
-    expected files, each within 20 % of its measured size, no absolute or cross-origin URL written), `web.page` and
-    `web.site`: 232 tests in the web tree. In a browser (`?selftest=1`, FunkGui's page runner on headless Chrome;
-    by hand, not in CI): the engine's self-check hash in a real AudioWorklet and on the main thread, 10 s rendered
-    through the worklet with 0 of 480,000 frames differing from the engine driven directly (about 100x real time),
-    silence costing no more than signal, the atlas hash, the pixel row, frames drawn and replies arriving; an
-    uncaught error is a FAIL that no PASS replaces. In a real browser the lead pressed START, dragged THRESHOLD
-    (the gain reduction and the curve followed) and opened CHARACTERISTICS.
-  - **Review** (Sprint D: ten reviewers by area, two skeptics per finding): 20 low-severity findings confirmed and
-    fixed, each with a row shown to fail on the old code; the preview worker, FunkGui's hook and the joints between
-    the cards came back clean. Most were rows that could not fail (a stale preview result in four Modes, the carrier
-    judged by the link's own counter, a worklet fed its stale input); the rest were edges: an editor failure that is
-    not an `abort()` never reached the page, a fault during START was dropped, the browser's name came from the brand
-    list's placeholder entry, an out-of-range new-instance preference was applied, the self-test compared at a
-    non-proportional buffer, the zoom's fit reserved the header twice.
-  - **Known differences from the plugin** (the page lists them): no preset import or export, and user presets last
-    until the page is closed; no side-chain key input; the DSP load shows a dash; with no input the engine idles and
-    the meters stop; a QUALITY or LOOKAHEAD change rebuilds the engine on the audio thread and may click; the wheel
-    under reversed scrolling and a notched wheel (above); typed values take plain keys only; no host parameter menu;
-    the CHARACTERISTICS curves follow a control once it rests; desktop browsers with WebGL2 only, nothing for a screen
-    reader inside the editor.
-  - **Not done:** the plan's lead phase (a browser gate in CI, `Scripts/web-live.sh`, uploading the site, the final
-    documents) and hosting: not authorised yet, and nothing is published until the user decides where. Safari and
-    Firefox have not been run (the page is written to the specifications; Chrome only was measured). Sound was
-    checked by numbers, never by ear, by the lead. The zoom's fit is measured once, so a page loaded in a narrow
-    window keeps a slightly large margin when widened.
+    expected files, each within its budget, no absolute or cross-origin URL written), `web.page`, `web.site`; and from
+    the lead phase `web.worklet.print` (the shipped worklet script in a stand-in scope over the shipped engine: the 112
+    print rows, and the expectation tool's output), `web.live.runner` (the gate's server, comparison, usage and exit
+    codes, without a browser) and `web.pagecheck` (the WebDriver runner against a fake driver). `lint.docs` holds the
+    documents' structural facts to the files that own them. **Counts, 2026-10-02:** the web tree holds 237 tests, 220
+    `ui.*` (25 probes, 14 Modes), 15 `web.*`, `lint.deps` and `lint.docs` (the lead's run passed 236 of 236 before
+    `lint.docs` existed); a native `agent` tree holds 529: 208 `dsp.*`, 94 `proc.*`, 220 `ui.*`, 3 `lint.*` and 4
+    `web.*`.
+  - **The browser gate** (the lead phase), `Scripts/web-live.sh`: gui-live's counterpart. It runs on a web build tree,
+    on a downloaded artifact (`--dir`), on the published site (`--url`) or only serves (`--serve`); 03 §3.6 has its
+    forms, options and exit codes. Headless Chrome, always muted, with a throwaway profile: ANGLE on Metal on macOS,
+    SwiftShader elsewhere, and `--gpu swiftshader` forces the software renderer. Its 31 rows:
+    - *Twelve capture pages* (six views × two themes at 2×, START never pressed, the pins below): `Module.fcmpFrame()`
+      equals the node value (`fcmp_probe_web ui.dump --facade web --host WEB-LIVE --nolive 1 --fp`) in every line but
+      `live` and `hooks`, and each frame read back through the sink is SoftRaster's by the pixel rule (below), twelve
+      rows of each; one more row for the shipped asynchronous preview (`chars.sidechain` with no `dt` pin reaches the
+      same frame).
+    - *The page's self-test*, `?selftest=1`, with the context suspended (11 rows) and running (12 rows): the engine's
+      self-check hash in a real AudioWorklet and on the main thread, 10 s rendered through the worklet with 0 of
+      480,000 frames differing from the engine driven directly (about 100× real time), silence costing no more than
+      signal, the atlas hash, the pixel row, frames drawn and replies arriving; an uncaught error is a FAIL that no PASS
+      replaces.
+    - *The live pages* (`web/live` with the test-only `fcmp-print.wasm` from `Tools/web/live`, served at `/live/` beside
+      the site and never part of it): `fcmp-print` runs the 112 blessed `dsp.print` rows through the shipped worklet in
+      an `OfflineAudioContext`, each row a fresh engine reconfigured by records (112 of 112 equal, and 28 more rows at a
+      render quantum of 320); `fcmp-extra` the 140 rows that have no golden (ECO, HQ, HQ with a lookahead budget,
+      44.1 kHz) against the shipped engine under node (140 of 140); `fcmp-tail` the denormal range (the tail and floor
+      values of all 14 Modes equal node's; a browser that differs gets a NOTE, not a failure), the floating-point
+      environment, the cost of silence and the load through the worklet (their numbers are under **Measured**). `Tools/web/live/expect.mjs` writes
+      what they compare with.
+    - *The scripted user*, `Scripts/web/scenario.mjs`, in place of the plan's hand checks in Chrome: 79 rows in one
+      headless Chrome with real input (mouse, keys, wheel, a dropped file), controls found by name through
+      `Module.fcmpA11y()`, each row judged by what reached the engine or by the Panel's own state: START, every screen,
+      a drag, a double click, the wheel, typed values, undo and redo by the platform's chord, presets and their menus,
+      A|B, a stepped and a continuous Mode, QUALITY and LOOKAHEAD, a dropped file and a bad one, a lost WebGL context,
+      a hidden tab, the zoom and its preference, and no uncaught error or error-level console line. With `--png` (81
+      rows) it saves each view in one stepped and one continuous Mode. `Scripts/web/scenario/mutants.mjs` reruns it on
+      25 mutated sites, each turning its named rows red.
+
+    Measured by the lead on 2026-10-02 (arm64 macOS): `Scripts/web-live.sh build-web` passed 31 of 31 in about 100 s on
+    ANGLE Metal (pixel rows largest 1 to 2 of 255, none over 2); the same gate on a copied site with `--gpu
+    swiftshader` 31 of 31 in about 106 s (pixel rows largest 5 to 6 of 255, within FunkGui's software bound).
+  - **The module's hooks for the gate** (lead phase, card L-M). `Module.fcmpFrame()` settles the host (frames until the
+    Panel no longer asks for the full rate, at most 600; while the engine publishes, one frame, so a frame of live audio
+    is never reported as settled) and returns the frame's fingerprint as text, written once in
+    `Source/web/ui/FrameText.h`, which `ui.dump --fp` shares. `Module.fcmpA11y()` returns the Panel's accessibility list
+    and state as JSON. Three pins in the page's address: `nohint=1` (no first-use hint), `nolive=1` (the Panel draws as
+    if no telemetry came) and `host=<text>` (1 to 31 characters of `[A-Za-z0-9 ._-]` in place of the browser's name, so
+    the settings screen reads the same in every browser); a pinned `dt` makes the preview synchronous. Without a pin
+    the page is exactly the page. `ui.webframe` holds the frame `ui.dump --facade web` makes to the blessed
+    `ui.geometry` rows of the five gui-live views, natively and under node.
+  - **The pixel rule, by renderer class on a still frame** (lead phase, card L-J). The WebGL renderer's name decides: a
+    GPU may have no sample over 2 of 255; a software renderer (SwiftShader, llvmpipe, softpipe, a software rasteriser)
+    gets FunkGui's bound, none over 16 and at most 10 per mille over 2; an unknown name is judged as a GPU. The
+    self-test's frame is a still one, taken before START once the Panel is at rest (`fcmpA11y()`'s `fullRate` 0, about
+    5 s after load), because a live frame differs from SoftRaster by a pixel on a moving trace. The gate's pixel rows
+    use the same rule.
+  - **WebDriver** (lead phase, card L-W). `Scripts/web/page-check.mjs` runs the self-test, the capture pages
+    (`--frames`) and the live pages (`--pages`) in Chrome, Firefox or Safari over WebDriver classic, with no
+    dependency: CI's `web-browsers` job. `web.pagecheck` holds its protocol to a fake driver. On PR #68's runs every
+    real driver passed it 10 of 10 (the self-test, the six captures equal to the node values, the three live pages):
+    Chrome 154 through chromedriver (SwiftShader); Safari 26.6 on macos-26 (its GPU, largest pixel difference 1, the
+    context running); Firefox 156 headed on a virtual display (headless Firefox on the GPU-less runner gives a page no
+    WebGL2), on Mesa's llvmpipe (largest difference 3). Firefox's audio thread flushes denormals to zero (its
+    `fcmp-tail` page reads flush-to-zero and denormals-are-zero ON in the worklet; Chrome and Safari OFF), so after the
+    source ends its values differ from the engine under node in bus-g and octo, and on a 2^-120 floor in five Modes:
+    a fact of the browser, recorded as notes; the 112 print rows and the 140 others hold in all three.
+  - **What differs from the plugin** (one list; the page shows the first ten): no preset import or export, and user
+    presets last until the page is closed; no side-chain key input; the DSP load in the settings shows a dash; with no
+    input the engine idles and the meters stop; a QUALITY or LOOKAHEAD change rebuilds the engine on the audio thread
+    (the plugin uses another thread) and may click; where the system reverses the scroll direction the wheel turns a
+    value the other way (Chrome gives no scroll-direction flag), and a notched wheel moves a stepped control about two
+    steps (it arrives in pixels); typed values take plain keys only, with no input method and no dead keys; no host
+    parameter menu on a right-click; desktop browsers with WebGL2 only, and nothing for a screen reader in the editor;
+    on the CHARACTERISTICS screen the attack and release curves follow a control once it rests, not while it moves.
+    Not on the page: when the curves catch up, one frame is held; a hard clip edge through device pixel centres in y is
+    filled one row lower than natively (the fill rule, above); the zoom's fit is measured once, so a page loaded in a
+    narrow window keeps a slightly large margin when widened.
+  - **Reviews** (every confirmed finding fixed, each with a row shown to fail on the old code):
+    - Sprint A: the silence gate's activity rule above (a Mode change while idle, an edit that shortens the tail) came
+      from its review; the flush rule's band from the x86 CI run of `web.simd`.
+    - Sprint B (six reviewers by area, two skeptics per finding): eight low-severity defects (a separators-only menu
+      that was taken but never opened; live menu rows that could not fail; a second sink on one canvas breaking the
+      first's recovery; the page runner hanging when the browser died; a shader check with a prefix-match hole; an
+      exception on the preview thread terminating the host; the no-thread fallback aborting under wasm; the fill rule
+      undocumented).
+    - Sprint C: 19 findings, 4 medium and 15 low.
+    - Sprint D (ten reviewers by area, two skeptics per finding): 20 low-severity findings; the preview worker,
+      FunkGui's hook and the joints between the cards came back clean. Most were rows that could not fail (a stale
+      preview result in four Modes, the carrier judged by the link's own counter, a worklet fed its stale input); the
+      rest were edges: an editor failure that is not an `abort()` never reached the page, a fault during START was
+      dropped, the browser's name came from the brand list's placeholder entry, an out-of-range new-instance preference
+      was applied, the self-test compared at a non-proportional buffer, the zoom's fit reserved the header twice.
+    - The lead phase: 27 findings, 4 medium and 23 low, and 8 refuted. Among the fixes: `fcmpFrame` on a page whose
+      audio runs, which ran up to 600 frames and wiped the HISTORY plot; the self-test's frame taken before the Panel
+      was at rest; a print-page row (`modes.count`) that could not fail; a browser left running when its WebDriver died
+      first; signals and the results directory in the gate's script; a demo that stops between two groups of the
+      scripted user.
+  - **Follow-ups, each on its trigger** (`docs/sprints/web/plan.md`, "Follow-ups"): the preview in a Web Worker, so the
+    CHARACTERISTICS curves can track a drag; persistence of user presets and the last state in localStorage (when the
+    user asks); preset import and export as an upload and a download through `chooseFiles`; the DSP probes under node
+    (wasm branches in `units`, `hostile`, `analysis`, `selftest` and `telemetry`); the DSP load figures and an
+    acknowledgement of a refused record in the protocol; promoting Firefox or Safari from reported to a gate once each
+    has passed several CI runs.
+  - **What waits for the user:** listening to it (nobody has: the lead checked it with the output silenced, and sound
+    was judged by numbers only; at Sprint D the lead pressed START, dragged THRESHOLD and saw the gain reduction and
+    the curve follow, and opened CHARACTERISTICS, in Chrome by hand); Safari and Firefox by hand, and a machine with an
+    Intel or AMD GPU (the scripted user has run in headless Chrome only; CI's WebDriver runs of Firefox and Safari pass
+    but are reports); recorded loops with a CREDITS file, if the user supplies material of their own; tagging v1.2.0, which the
+    version in the settings follows.
 
 ## HardwareReverb migration
 

@@ -1,0 +1,98 @@
+// Item 3: a drag on THRESHOLD, double-click, the wheel, a typed value, keyboard focus.
+import { serve, chrome, sleep, Report, HERE, cleanUp, PID } from './lib.mjs';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  await p.start(); await sleep(1000); await p.tap(); await sleep(600);
+  const thr = async () => (await p.need('THRESHOLD')).v;
+  const snap = async () => { const t = await p.tapRead(); const st = await p.status(); const ws = await p.stats(); return { n: t.n, thrPosted: t.last ? t.last.v[PID.thr] : null, replyThr: t.reply.thrDb, gr: t.reply.gr[0], posted: st.posted, records: ws.records, refused: ws.refused, replies: st.replies }; };
+  // GR is program-dependent: the largest over 2.2 s (one bar of the loop)
+  const grMax = async () => { let m = 0; for (let i = 0; i < 22; i += 1) { const t = await p.tapRead(); m = Math.max(m, t.reply.blockMaxGr[0]); await sleep(100); } return m; };
+
+  const slot = await p.need('THRESHOLD');
+  const cx = slot.x + slot.w / 2, cy = slot.y + 44;               // on the value text
+  const s0 = await snap(); const g0 = await grMax();
+  // a. drag left by 60 px: 60/240 of the track (-60 ... 0 dB in CLEAN?) lower
+  let held = null;
+  await p.drag(cx, cy, -60, 0, { steps: 30, hold: async () => { held = { footer: await p.footer(), display: await p.value('Display'), png: await p.shot('3-threshold-drag-held.png') }; } });
+  await sleep(400);
+  const s1 = await snap(); const v1 = await thr(); const g1 = await grMax();
+  R.row(v1 < -18 && s1.n > s0.n && Math.abs(s1.replyThr - v1) < 0.01 && g1 > g0 + 1 && s1.refused === 0, '3.drag.threshold',
+        { before: -18, after: v1, paramsRecords: s1.n - s0.n, engineThrDb: s1.replyThr, grMaxBefore: +g0.toFixed(2), grMaxAfter: +g1.toFixed(2), whileHeld: held });
+  // b. double-click resets to the Mode default
+  await p.doubleClick(cx, cy); await sleep(400);
+  const v2 = await thr(); const s2 = await snap();
+  R.row(v2 === -18 && Math.abs(s2.replyThr + 18) < 0.01, '3.doubleclick.resets', { after: v2, engineThrDb: s2.replyThr, records: s2.n - s1.n });
+  // c. the wheel over the slot: deltaY < 0 is "wheel up" (JUCE dy > 0): the value rises; the page must not scroll
+  const y0 = await p.ev('scrollY');
+  for (let i = 0; i < 4; i += 1) await p.wheel(cx, cy, -40);
+  await sleep(800);
+  const v3 = await thr(); const y1 = await p.ev('scrollY');
+  R.row(v3 > -18 && y1 === y0, '3.wheel.up-raises', { after: v3, pageScrolledBy: y1 - y0, footer: await p.footer() });
+  for (let i = 0; i < 8; i += 1) await p.wheel(cx, cy, 40);
+  await sleep(800);
+  const v4 = await thr();
+  R.row(v4 < v3, '3.wheel.down-lowers', { after: v4 });
+  // the wheel off the canvas scrolls the page as usual (not consumed) -- over a non-value area of the panel too
+  await p.ev('scrollTo(0,0)');
+  await p.wheel(300, 240, 120); await sleep(300);                  // over HISTORY: nothing there takes the wheel
+  const y2 = await p.ev('scrollY');
+  R.note('3.wheel.over-history', `page scrolled by ${y2} px (the Panel did not consume it)`);
+  await p.ev('scrollTo(0,0)'); await sleep(200);
+  // d. a typed value: a press focuses the slot silently; digits open the field; Return sets
+  await p.click(cx, cy); 
+  let a = await p.a11y();
+  R.note('3.type.focus-after-click', { focus: a.focus, focusVisible: a.focusVisible, textEntry: a.textEntry, active: await p.ev('document.activeElement && document.activeElement.id') });
+  await p.type('-30');
+  a = await p.a11y();
+  const typing = { textEntry: a.textEntry, png: await p.shot('3-typed-field-open.png') };
+  await p.key('Enter'); await sleep(400);
+  const v5 = await thr(); const s5 = await snap();
+  R.row(typing.textEntry >= 0 && v5 === -30 && Math.abs(s5.replyThr + 30) < 0.01 && (await p.a11y()).textEntry < 0, '3.type.return-sets', { whileTyping: typing, after: v5, engineThrDb: s5.replyThr });
+  // Escape cancels
+  await p.click(cx, cy); await p.type('-12'); const open2 = (await p.a11y()).textEntry;
+  await p.key('Escape'); await sleep(300);
+  const v6 = await thr();
+  R.row(open2 >= 0 && v6 === -30 && (await p.a11y()).textEntry < 0, '3.type.escape-cancels', { fieldWasOpen: open2 >= 0, after: v6 });
+  // a text that is no value keeps the field open
+  await p.click(cx, cy); await p.type('x'); 
+  const openX = (await p.a11y()).textEntry;
+  await p.type('9z'); await p.key('Enter'); await sleep(300);
+  const stillOpen = (await p.a11y()).textEntry;
+  await p.shot('3-typed-refused.png');
+  await p.key('Escape'); await sleep(200);
+  R.row(stillOpen >= 0 && (await thr()) === -30, '3.type.not-a-value-refused', { openedByLetter: openX >= 0, stillOpenAfterReturn: stillOpen >= 0, value: await thr() });
+  // Return opens the field with the value selected; typing replaces; a unit is accepted
+  await p.click(cx, cy); await p.key('Enter'); const open3 = (await p.a11y()).textEntry; await p.type('-24 db'); await p.key('Enter'); await sleep(300);
+  R.row(open3 >= 0 && (await thr()) === -24, '3.type.return-opens-and-replaces', { fieldOpened: open3 >= 0, after: await thr() });
+  // e. keyboard focus: Tab shows the ring and walks; arrows change the focused slot; Tab does not leave the canvas
+  await p.click(300, 240);                                         // a press on nothing: the canvas keeps the DOM focus
+  await p.key('Escape');
+  const f0 = await p.a11y();
+  await p.key('Tab'); const f1 = await p.a11y(); const png1 = await p.shot('3-focus-tab1.png');
+  await p.key('Tab'); const f2 = await p.a11y();
+  await p.key('Tab', { modifiers: 8 }); const f3 = await p.a11y();
+  R.row(f1.focusVisible === 1 && f1.focus !== 0 && f2.focus !== f1.focus && f3.focus === f1.focus && (await p.ev('document.activeElement.id')) === 'fcmp-canvas', '3.focus.tab',
+        { before: [f0.focus, f0.focusVisible], tab1: f1.focus, tab2: f2.focus, shiftTab: f3.focus, activeElement: await p.ev('document.activeElement.id'), png: png1 });
+  // walk Tab until THRESHOLD has the ring, then the arrows
+  let hops = 0; while ((await p.a11y()).focus !== slot.id && hops < 80) { await p.key('Tab', { settle: 30 }); hops += 1; }
+  const vb = await thr();
+  await p.key('ArrowRight'); await p.key('ArrowRight'); await sleep(300);
+  const va = await thr();
+  const png2 = await p.shot('3-focus-threshold.png');
+  R.row((await p.a11y()).focus === slot.id && va > vb, '3.focus.arrows-on-threshold', { tabHops: hops, before: vb, after: va, png: png2 });
+  // a digit on the ringed slot opens the field too
+  await p.type('-20'); await p.key('Enter'); await sleep(300);
+  R.row((await thr()) === -20, '3.focus.typed-on-ringed-slot', { after: await thr() });
+  await p.key('Escape');
+  R.row(p.consoleLines.length === 0, '3.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+  const end = await snap();
+  R.note('3.totals', end);
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

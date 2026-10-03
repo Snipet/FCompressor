@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+# doccheck.py <repo> [--claude <file>]: a prototype of a lint.docs test. Each row compares a document with the file
+# that owns the fact; exit 1 when any row fails.
+import json, re, sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+claude = pathlib.Path(sys.argv[sys.argv.index('--claude') + 1]) if '--claude' in sys.argv else repo / 'CLAUDE.md'
+rd = lambda p: (repo / p).read_text()
+bad = 0
+def row(name, ok, detail):
+    global bad
+    bad += 0 if ok else 1
+    print(f"{'PASS' if ok else 'FAIL'}  {name}: {detail}")
+
+c = claude.read_text()
+presets = [p['name'] for p in json.loads(rd('CMakePresets.json'))['configurePresets'] if not p.get('hidden')]
+missing = [p for p in presets if f'`{p}`' not in c]
+row('claude.presets', not missing, f"{len(presets)} configure presets; not named in CLAUDE.md: {missing or 'none'}")
+
+pin = re.search(r'set\(FCMP_EMSCRIPTEN_VERSION ([0-9.]+)\)', rd('cmake/FcmpDeps.cmake')).group(1)
+ci = re.search(r'FCMP_EMSCRIPTEN: *([0-9.]+)', rd('.github/workflows/ci.yml')).group(1)
+said = {f: re.findall(r'Emscripten ([0-9]+\.[0-9]+\.[0-9]+)', t) for f, t in (('CLAUDE.md', c), ('README.md', rd('README.md')))}
+ok = pin == ci and all(v and set(v) == {pin} for v in said.values())
+row('emscripten.pin', ok, f"FcmpDeps {pin}, ci.yml {ci}, documents {said}")
+
+rules = re.findall(r'^#   ([a-z][a-z.-]+[a-z]) +[A-Za-z]', rd('cmake/LintDeps.cmake'), re.M)
+sec = rd('docs/design/01-core-contracts.md')
+sec = sec[sec.index('### 2.2 Dependency rules'):sec.index('### 2.3 ')]
+undoc = [r for r in rules if r.startswith(('web.', 'editor.juce', 'plugin.portable')) and f'`{r}`' not in sec]
+row('rules.documented', not undoc, f"{len(rules)} lint.deps rules; ADR-93's not named in 01 §2.2: {undoc or 'none'}")
+
+n = len(re.findall(r'^FCMP_MODE\(', rd('Source/fcdsp/modes/Modes.def'), re.M))
+words = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen',
+         'fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty']
+readme = rd('README.md')
+m = re.search(r'\. (\w+) compressor types, called \*\*Modes\*\*', readme)
+table = len(re.findall(r'^\| (?!Mode \||---)', readme[readme.index('## Modes'):readme.index('## Features')], re.M))
+row('readme.modes', bool(m) and m.group(1).lower() == words[n] and table == n,
+    f"Modes.def {n}; README says {m.group(1) if m else '?'} and lists {table}")
+
+jobs = re.findall(r'^  ([a-z][a-z-]*):\n    name:', rd('.github/workflows/ci.yml'), re.M)
+d03 = rd('docs/design/03-build-verify-process.md')
+nojob = [j for j in jobs if f'`{j}`' not in d03[d03.index('### 4.8 '):d03.index('### 4.9 ')]]
+row('ci.jobs', not nojob, f"ci.yml jobs {jobs}; not named in 03 §4.8: {nojob or 'none'}")
+sys.exit(1 if bad else 0)

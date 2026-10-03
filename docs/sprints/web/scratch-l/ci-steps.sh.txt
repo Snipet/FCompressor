@@ -1,0 +1,49 @@
+grep -q "^site $(git rev-parse HEAD) clean " build-web/site/built-from.txt || { cat build-web/site/built-from.txt; exit 1; }NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
+for what in simdbench speed tail; do
+  "$NODE" build-web/fcmp_web_check.js "$what" || true
+done 2>&1 | tee build-web/numbers.txt
+diff -r build-web/site "$RUNNER_TEMP/web-site"
+google-chrome --version
+# Any --chrome-flag replaces the runner's defaults, so the software WebGL path is named too. Always muted.
+"$EMSDK_NODE" build-web/_deps/funkgui-src/tools/web/check-page.mjs "$RUNNER_TEMP/web-site" --page fcmp-ui \
+  --chrome-flag --use-angle=swiftshader --chrome-flag --enable-unsafe-swiftshader --chrome-flag --mute-audio \
+  | tee build-web/page-chrome.txt
+NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
+{
+  echo "### Web demo"
+  echo
+  echo "- built from: \`$(cat build-web/site/built-from.txt 2>/dev/null || echo 'no site was built')\`"
+  echo "- this run: \`$GITHUB_SHA\` ($GITHUB_EVENT_NAME $GITHUB_REF; on a pull request that is the merge commit, and the branch's head is \`$HEAD_SHA\`)"
+  echo "- Emscripten $FCMP_EMSCRIPTEN, node $("$NODE" --version 2>/dev/null)"
+  echo "- $(grep -m1 '^== verify.sh summary' build-web/verify-out.txt 2>/dev/null || echo 'verify.sh printed no summary')"
+  echo "- the page in Chrome: $(grep '^check-page: [PF]' build-web/page-chrome.txt 2>/dev/null || echo 'no verdict')"
+  echo
+  echo "| file | bytes | gzip -9 |"
+  echo "|---|---:|---:|"
+  "$NODE" web/tests/size.mjs build-web/site 2>/dev/null \
+    | sed -n "s/^NOTE       '\(.*\)': \[\([0-9]*\), \([0-9]*\)\],$/| \1 | \2 | \3 |/p" \
+    | awk -F'|' '{ print; raw += $3; gz += $4 } END { printf "| **%d files** | **%d** | **%d** |\n", NR, raw, gz }'
+  echo
+  echo '```'
+  cat build-web/page-chrome.txt 2>/dev/null
+  grep -E 'speed:|hq_worst|row\(s\) passed|^FAIL' build-web/numbers.txt 2>/dev/null
+  echo '```'
+} >> "$GITHUB_STEP_SUMMARY" || true
+Scripts/verify.sh --strict build-web | tee build-web/verify-out.txtNODE=${NODE:-node}
+{
+  echo "### Web demo"
+  echo
+  echo "- built from: \`$(cat build-web/site/built-from.txt 2>/dev/null || echo 'no site was built')\`"
+  echo "- this run: \`$GITHUB_SHA\` (${GITHUB_EVENT_NAME} ${GITHUB_REF}); on a pull request that is the merge commit, head \`${HEAD_SHA}\`"
+  echo "- $(grep -m1 '^== verify.sh summary' build-web/verify-out.txt 2>/dev/null || echo 'verify.sh printed no summary')"
+  echo
+  echo "| file | bytes | gzip -9 |"
+  echo "|---|---:|---:|"
+  "$NODE" web/tests/size.mjs build-web/site 2>/dev/null \
+    | sed -n "s/^NOTE       '\(.*\)': \[\([0-9]*\), \([0-9]*\)\],$/| \1 | \2 | \3 |/p"
+  echo "| **site** | **$(find build-web/site -type f -exec cat {} + | wc -c | tr -d ' ')** | **$(find build-web/site -type f | sort | while read -r f; do gzip -9 -c "$f" | wc -c; done | awk '{s+=$1} END {print s}')** |"
+  echo
+  echo '```'
+  grep -E 'speed:|speed\.hq_worst|tail' build-web/numbers.txt 2>/dev/null
+  echo '```'
+} >> "$GITHUB_STEP_SUMMARY"

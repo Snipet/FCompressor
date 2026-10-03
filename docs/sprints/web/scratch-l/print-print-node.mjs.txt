@@ -1,0 +1,55 @@
+// scratch: the node twin of the browser print page. The SHIPPED worklet script in a stand-in AudioWorkletGlobalScope
+// (as web/tests/worklet.mjs makes it), records through its port, 1500 process() calls per row, against tests/golden.
+import { readFileSync, readdirSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { MessageChannel } from 'node:worker_threads';
+const [workletPath, enginePath, printPath, goldenRoot, via] = process.argv.slice(2);
+let nextPort = null; const registered = {};
+globalThis.AudioWorkletProcessor = class { constructor() { this.port = nextPort; } };
+globalThis.registerProcessor = (name, ctor) => { registered[name] = ctor; };
+globalThis.sampleRate = 48000;
+await import(pathToFileURL(workletPath).href);
+const wasm = readFileSync(enginePath);
+const p = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(printPath)), {}).exports; p._initialize();
+const n = p.fcmp_print_frames();
+const pL = p.malloc(n * 4), pR = p.malloc(n * 4), pRec = p.malloc(140), pHash = p.malloc(8);
+const pf = new Float32Array(p.memory.buffer), pu8 = new Uint8Array(p.memory.buffer), pu32 = new Uint32Array(p.memory.buffer);
+p.fcmp_print_program(pL, pR);
+const progL = pf.slice(pL / 4, pL / 4 + n), progR = pf.slice(pR / 4, pR / 4 + n);
+const cstr = (at) => { let s = ''; for (let i = at; pu8[i] !== 0; i += 1) s += String.fromCharCode(pu8[i]); return s; };
+const hex8 = (v) => v.toString(16).padStart(8, '0');
+const hash = (a) => { pf.set(a, pL / 4); p.fcmp_print_hash(pL, a.length, pHash); return hex8(pu32[pHash / 4 + 1]) + hex8(pu32[pHash / 4]); };
+const record = (m, s, q) => { p.fcmp_print_record(m, s, q, 0, -1, 1, pRec); return pu8.slice(pRec, pRec + 140).buffer; };
+const tick = () => new Promise((r) => setImmediate(r));
+let pass = 0, fail = 0;
+const t0 = performance.now();
+for (let m = 0; m < p.fcmp_print_modes(); m += 1) {
+  const key = cstr(p.fcmp_print_key(m));
+  const golden = Object.fromEntries(readFileSync(`${goldenRoot}/base/modes/${key}/dsp.print.txt`, 'utf8').split('\n').filter((l) => l.startsWith('print.')).map((l) => l.split('\t').slice(0, 2)));
+  for (let s = 0; s < 4; s += 1) {
+    const channel = new MessageChannel(); nextPort = channel.port1;
+    const proc = new registered['fcmp-engine']({ processorOptions: { wasm } });
+    const stats = () => new Promise((r) => { channel.port2.on('message', function hear(d) { if (d && d.fcmp === 'stats') { channel.port2.off('message', hear); r(d); } }); channel.port2.postMessage({ fcmp: 'stats' }); });
+    if (via !== 'plain') channel.port2.postMessage(record(m, s, 2));
+    channel.port2.postMessage(record(m, s, 1));
+    const before = await stats();                                 // the records are in
+    const l = new Float32Array(n), r = new Float32Array(n);
+    const inputs = [[new Float32Array(128), new Float32Array(128)]], outputs = [[new Float32Array(128), new Float32Array(128)]];
+    for (let off = 0; off < n; off += 128) {
+      inputs[0][0].set(progL.subarray(off, off + 128)); inputs[0][1].set(progR.subarray(off, off + 128));
+      outputs[0][0].fill(0); outputs[0][1].fill(0);
+      proc.process(inputs, outputs);
+      l.set(outputs[0][0], off); r.set(outputs[0][1], off);
+    }
+    const set = cstr(p.fcmp_print_set(s));
+    for (const [ch, got] of [['l', hash(l)], ['r', hash(r)]]) {
+      const want = golden[`print.${set}.${ch}.hash`];
+      const ok = got === want && before.refused === 0 && before.quanta === 0;
+      ok ? (pass += 1) : (fail += 1);
+      if (!ok && fail <= 4) console.log(`FAIL     ${key} print.${set}.${ch}.hash: ${got} golden ${want}`);
+    }
+    channel.port1.close(); channel.port2.close();
+  }
+}
+console.log(`${fail === 0 ? 'PASS' : 'FAIL'}     ${pass} row(s) passed, ${fail} failed, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+process.exit(fail === 0 ? 0 : 1);

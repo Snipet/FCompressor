@@ -17,20 +17,44 @@
 //                             is 1 when that frame was drawn and read, else 0; largest is the largest channel
 //                             difference, over2 the samples that differ by more than 2, samples the channel samples
 //                             compared
+//   Module.fcmpFrame()        the browser gate's settled frame (docs/sprints/web-lead.md, "The gate's contract"): it
+//                             runs frames through the host until the Panel no longer asks for the full rate, at most
+//                             600, and stops at one that was not drawn (a hidden document, a lost context); while the
+//                             engine publishes (START pressed, the audio running) it runs one frame and stops there,
+//                             since no frame of the call gets new telemetry; then a text: the line `hooks dpi <g>
+//                             clock <fixed|free> theme <n> dt <g> settle <n> drawn <0|1> idle <0|1>` (the dpi, clock,
+//                             theme and dt of the frame last recorded; the frames this call ran; whether the last of
+//                             them was drawn; whether the Panel is at rest after it: on a page whose audio runs, as
+//                             that one frame left it, never a rest the call ticked it into) and FrameText.h's lines
+//                             for that frame. Each of its frames is the host's own, as the clock runs them (the tick, the
+//                             draw), with one Pull for the call; a second call in a row runs one frame. Nothing in the
+//                             module or the page calls it. An empty text after the shutdown
+//   Module.fcmpA11y()         a JSON text, read and nothing changed: the Panel's state (screen, overlay, scTab: the
+//                             enums' numbers; revision: a11yRevision(); fullRate; focus: the focused item's id, 0
+//                             none; focusVisible; textEntry: the sub-view whose text field is open, -1 none) and
+//                             items: its own accessibility list, the visible ones, each {id, parent, role (A11yRole's
+//                             number), x, y, w, h (logical px), enabled, checked, v, title, value, description}. The
+//                             Mode is the `Mode` item's value. After the shutdown: zeros, textEntry -1, no item
 //   Module.fcmpResetEngine()  WebFacade::resetEngine(): a new source
 //   Module.fcmpShutdown()     the teardown below. Every name above stays callable afterwards: the port and the reset
 //                             do nothing, the status says `ok` 0 with the reason, the self-test draws no frame
 // and calls Module.fcmpReady() last (Emscripten runs Module.onRuntimeInitialized before main(), so that is not the
-// page's signal). Query parameters: view (a ViewSpec id, as FCMP_UI_VIEW) and the capture pins theme, zoom, dt, scale.
+// page's signal). Query parameters: view (a ViewSpec id, as FCMP_UI_VIEW); the host's capture pins theme, zoom, dt,
+// scale; and the pins nohint=1 (no first-use hint, as FCMP_UI_NO_HINT), nolive=1 (the Panel draws as if no telemetry
+// ever came, as FCMP_UI_NO_LIVE) and host=<text> (1 to 31 characters of [A-Za-z0-9 ._-]: it stands in for the browser's
+// name, so the settings screen reads the same in every browser; any other value is ignored). Without a pin the page is
+// exactly the page.
 //
 // What main() sets up, in order (gpu/Editor.cpp is the native counterpart):
 // - Preferences in localStorage, before the Panel exists: a Panel reads them as it is built (keys "FCompressor.<key>").
-// - The link and the facade; the facade's environment is "WEB" and the browser's name (the settings screen's FORMAT).
+// - The link and the facade; the facade's environment is "WEB" and the browser's name, or the `host` pin in its place
+//   (the settings screen's FORMAT).
 // - ADR-85's QUALITY and LOOKAHEAD for new instances, applied as the processor's constructor applies them (a stored
 //   value outside the three choices is ignored): the page load is the new instance, and the settings rows write the
 //   two preferences into localStorage.
 // - The Panel with the asynchronous preview: there is no thread here, so PreviewWorker's no-thread path computes a
-//   request once it has rested, and a control that moves stays smooth.
+//   request once it has rested, and a control that moves stays smooth. Under a pinned dt the preview is synchronous,
+//   as gpu/Editor.cpp's under FCMP_UI_FIXED_DT (02 §3.7 rule 7): a captured frame cannot depend on when it was asked.
 // - The WebHost: the native editor's zoom steps, default and preference key; fit margins measured from where the
 //   canvas lies on the page (what must fit in the window is the canvas, not what the page holds below it);
 //   setUiAttached forwarded; no batch hooks (the Panel's HostProxy already brackets the facade, Editor.h); beforeTick
@@ -44,6 +68,7 @@
 //
 // EM_JS bodies are C string literals to the preprocessor: no trailing semicolon after the macro (-Wextra-semi), no
 // apostrophe in a comment, no regex literal with a backslash.
+#include "web/ui/FrameText.h"
 #include "web/ui/PortLink.h"
 
 #include "web/facade/WebFacade.h"
@@ -55,6 +80,7 @@
 
 #include "fcdsp/params/Pid.h"
 
+#include <funkgui/a11y/A11yItem.h>
 #include <funkgui/canvas/SoftRaster.h>
 #include <funkgui/core/Theme.h>
 #include <funkgui/prefs/UiPreferences.h>
@@ -68,6 +94,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -77,16 +104,20 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 using FcmpUiTextFn = const char* (*)(void);
 using FcmpUiVoidFn = void (*)(void);
 
 EM_JS_DEPS(fcmp_ui_deps, "$UTF8ToString,$stringToUTF8,$getWasmTableEntry")
 
+// A query parameter's value into `out`, cut at a whole character where it does not fit. 0 without the parameter, else
+// 1 + the value's length in UTF-16 units: a caller that takes only a short plain value compares that with what it read,
+// so a value that was cut, or that holds a NUL (where the C string ends), is never taken for its beginning.
 EM_JS(int, fcmp_ui_param, (const char* name, char* out, int size), {
     const value = new URLSearchParams(window.location.search).get(UTF8ToString(name));
     stringToUTF8(value === null ? "" : value, out, size);
-    return value === null ? 0 : 1;
+    return value === null ? 0 : 1 + value.length;
 })
 
 // The browser's name and major version: the brand the browser gives where it gives one, else from the user agent.
@@ -125,14 +156,16 @@ EM_JS(int, fcmp_ui_margin, (const char* selector, int vertical), {
 
 // The page-facing names, the pagehide rule, and last the page's own signal.
 EM_JS(void, fcmp_ui_ready,
-      (FcmpUiTextFn status, FcmpUiTextFn selftest, FcmpUiVoidFn resetEngine, FcmpUiVoidFn shutdown),
+      (FcmpUiTextFn status, FcmpUiTextFn selftest, FcmpUiTextFn frame, FcmpUiTextFn a11y, FcmpUiVoidFn resetEngine,
+       FcmpUiVoidFn shutdown),
 {
-    const statusText = getWasmTableEntry(status);
-    const selftestText = getWasmTableEntry(selftest);
+    const text = (fn) => { const f = getWasmTableEntry(fn); return () => UTF8ToString(f()); };
     const reset = getWasmTableEntry(resetEngine);
     const shutDown = getWasmTableEntry(shutdown);
-    Module['fcmpStatus'] = () => UTF8ToString(statusText());
-    Module['fcmpSelftest'] = () => UTF8ToString(selftestText());
+    Module['fcmpStatus'] = text(status);
+    Module['fcmpSelftest'] = text(selftest);
+    Module['fcmpFrame'] = text(frame);
+    Module['fcmpA11y'] = text(a11y);
     Module['fcmpResetEngine'] = () => { reset(); };
     Module['fcmpShutdown'] = () => { shutDown(); };
     window.addEventListener("pagehide", (event) => { if (!event.persisted) shutDown(); });
@@ -145,6 +178,9 @@ namespace
     constexpr const char* kZoomPrefKey = "uiZoom";       // gpu/Editor.cpp's: UiPreferences, beside the theme (ADR-68)
     constexpr const char* kRenderer = "WEBGL2";          // RenderInfo::renderer: WebGlSink draws with nothing else
     constexpr int kPixelTolerance = 2;                   // fcmpSelftest's over2
+    constexpr int kMaxSettle = 600;                      // fcmpFrame's frames at most (the probes' settle limit)
+    constexpr std::size_t kHostPinMax = 31;              // the `host` pin's characters at most
+    static_assert(kHostPinMax < sizeof(fcmp::Diagnostics::host));
 
     struct App final : fcmp::web::PortLink::Events
     {
@@ -152,6 +188,7 @@ namespace
         fcmp::web::WebFacade facade{ link };
         std::unique_ptr<fcmp::ui::Panel>  panel;
         std::unique_ptr<funkgui::WebHost> host;
+        bool pulled = false;                             // inside fcmpFrame: this call's one Pull has gone
 
         // The page handed over the worklet's port: what its engine runs at, then the values and the attach.
         void connected(double sampleRate, int maxBlock) override
@@ -163,7 +200,7 @@ namespace
     };
 
     std::unique_ptr<App> app;                            // the runtime outlives main(); null again after the shutdown
-    std::unique_ptr<std::string> text;                   // what fcmpStatus and fcmpSelftest last returned
+    std::unique_ptr<std::string> text;                   // what the text export last called returned
 
     double numberParam(const char* name, double lo, double hi, double otherwise)
     {
@@ -173,6 +210,33 @@ namespace
         char* end = nullptr;
         const double v = std::strtod(value, &end);
         return end != value && *end == '\0' && v >= lo && v <= hi ? v : otherwise;
+    }
+
+    // A pin that is on or off: on for the value "1" alone.
+    bool flagParam(const char* name)
+    {
+        char value[2];
+        return fcmp_ui_param(name, value, static_cast<int>(sizeof value)) == 2 && value[0] == '1';
+    }
+
+    // The `host` pin into `out` (a buffer of Diagnostics::host's size, which holds any valid pin). False, and `out`
+    // untouched, without the pin or with a value that is not 1 to kHostPinMax characters of [A-Za-z0-9 ._-]: the name
+    // is drawn on the settings screen, so a link to the page gets a short plain name there and nothing else.
+    bool hostPin(char* out)
+    {
+        char value[kHostPinMax + 1];
+        const int length = fcmp_ui_param("host", value, static_cast<int>(sizeof value)) - 1;
+        const std::string_view pin(value);               // all of the value only when it is as long as `length`
+        const auto allowed = [](char c) {
+            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '.'
+                || c == '_' || c == '-';
+        };
+        if (length < 1 || pin.size() != static_cast<std::size_t>(length)
+            || !std::all_of(pin.begin(), pin.end(), allowed))
+            return false;
+        pin.copy(out, pin.size());
+        out[pin.size()] = '\0';
+        return true;
     }
 
     // `s` as a JSON string: a shader log or a browser's brand may hold quotes, backslashes and line ends.
@@ -317,6 +381,114 @@ namespace
         return text->c_str();
     }
 
+    // Whether the engine is publishing: a reply has come (the page pressed START and its worklet answers), and the
+    // UiFrame's publishCount moved within layout::band::kStaleS of Panel time (Panel::refreshFrame's `fresh`, but
+    // whatever the nolive pin says: PanelOptions::ignoreLive hides the stream from the Panel, it does not stop it).
+    // Before any reply the facade's frame of zeros is no stream: a page with no audio is never publishing.
+    bool publishing(const App& a)
+    {
+        const fcmp::ui::FrameState& f = a.panel->context().frame;
+        return a.facade.replies() != 0u && f.hasFrame && f.staleSeconds < fcmp::ui::layout::band::kStaleS;
+    }
+
+    // Module.fcmpFrame(): frames through the host until the Panel rests, then the hooks line and the frame's text. A
+    // frame here is the clock's frame (WebHost::frame at the performance clock's time), so the Panel is ticked and
+    // drawn exactly as a frame of the page does it, and the clock goes on from wherever this leaves off: under a
+    // pinned dt each frame is that dt, otherwise the time since the frame before (the host's 1 ms at least). The
+    // facade is asked once a call, by the first frame, as one frame of the page asks it: all of a call's frames are
+    // one task, no reply arrives inside it, and a Pull from each would run the facade's patience out on a page whose
+    // worklet answers (a repeated Pull and a new carrier per 30 frames).
+    //
+    // So no frame of a call after its first sees new telemetry, and on a page whose audio runs there is no rest to
+    // settle for: ticked on, the Panel would find the stream stale after kStaleS of its own time, let the meters fall,
+    // scroll HISTORY's window empty by that time and then rest, on a look the page never had (under a pinned dt that
+    // is about 330 frames, 5.5 s ahead of the page). While the engine publishes, the call therefore stops after its
+    // first frame and returns that frame as it is: `settle 1`, and `idle` whatever the Panel says of itself (0 while
+    // the meters move); the Panel's time has moved by one frame, as by one of the page's own, and HISTORY keeps what
+    // it showed. A page with no audio (the gate's capture pages never press START) settles: its frames run until the
+    // Panel rests. A frame that was not submitted ends the loop either way: a hidden document's Panel is not ticked
+    // and would never rest, and a lost context draws nothing to settle for. The text is then that of the frame last
+    // recorded, with `drawn 0` to say so (before any frame: an empty list, whose view is 0 by 0). A Panel still moving
+    // after kMaxSettle frames (without the dt pin each may be the host's 1 ms) gives `idle 0`.
+    const char* frameText()
+    {
+        std::string& out = *text;
+        out.clear();
+        if (app == nullptr)
+            return out.c_str();
+        int frames = 0;
+        bool drawn = true;
+        while (drawn && frames < kMaxSettle)
+        {
+            const funkgui::WebHost::FrameResult r = app->host->frame(emscripten_performance_now());
+            app->pulled = true;
+            ++frames;
+            drawn = r.submitted;
+            if (!r.wantsFullRate || publishing(*app))
+                break;
+        }
+        app->pulled = false;
+        const funkgui::PrimList& frame = app->host->lastFrame();
+        char line[160];
+        std::snprintf(line, sizeof line, "hooks dpi %.9g clock %s theme %d dt %.9g settle %d drawn %d idle %d\n",
+                      static_cast<double>(frame.info.dpi), frame.info.fixedClock ? "fixed" : "free",
+                      frame.info.theme, static_cast<double>(frame.info.dt), frames, drawn ? 1 : 0,
+                      app->panel->wantsFullRate() ? 0 : 1);
+        out += line;
+        fcmp::web::appendFrameText(out, frame);
+        return out.c_str();
+    }
+
+    // A number for a JSON text, which has no spelling for an infinity or a NaN.
+    double jsonNumber(double v) { return std::isfinite(v) ? v : 0.0; }
+
+    // Module.fcmpA11y(): what the Panel says of itself. Nothing is ticked, drawn or written.
+    const char* a11yText()
+    {
+        std::string& out = *text;
+        if (app == nullptr)
+        {
+            out = "{\"screen\":0,\"overlay\":0,\"scTab\":0,\"revision\":0,\"fullRate\":0,\"focus\":0,"
+                  "\"focusVisible\":0,\"textEntry\":-1,\"items\":[]}";
+            return out.c_str();
+        }
+        const fcmp::ui::Panel& panel = *app->panel;
+        char numbers[224];
+        std::snprintf(numbers, sizeof numbers,
+                      "{\"screen\":%d,\"overlay\":%d,\"scTab\":%d,\"revision\":%u,\"fullRate\":%d,\"focus\":%u,"
+                      "\"focusVisible\":%d,\"textEntry\":%d,\"items\":[",
+                      static_cast<int>(panel.screen()), static_cast<int>(panel.overlay()),
+                      static_cast<int>(panel.scTab()), panel.a11yRevision(), panel.wantsFullRate() ? 1 : 0,
+                      panel.context().focus, panel.context().focusVisible ? 1 : 0, panel.context().textEntry);
+        out = numbers;
+        std::vector<funkgui::A11yItem> items;
+        panel.accessibility(items);
+        bool first = true;
+        for (const funkgui::A11yItem& it : items)
+        {
+            if (!it.visible)
+                continue;                                // a hidden sub-view's: not on the screen
+            // "%.6g" is at most 13 characters whatever the value, so the line cannot outgrow its buffer.
+            std::snprintf(numbers, sizeof numbers,
+                          "%s{\"id\":%u,\"parent\":%u,\"role\":%d,\"x\":%.6g,\"y\":%.6g,\"w\":%.6g,\"h\":%.6g,"
+                          "\"enabled\":%d,\"checked\":%d,\"v\":%.6g,\"title\":",
+                          first ? "" : ",", it.id, it.parent, static_cast<int>(it.role),
+                          jsonNumber(static_cast<double>(it.bounds.x)), jsonNumber(static_cast<double>(it.bounds.y)),
+                          jsonNumber(static_cast<double>(it.bounds.w)), jsonNumber(static_cast<double>(it.bounds.h)),
+                          it.enabled ? 1 : 0, it.checked ? 1 : 0, jsonNumber(it.v));
+            first = false;
+            out += numbers;
+            appendJson(out, it.title);
+            out += ",\"value\":";
+            appendJson(out, it.value);
+            out += ",\"description\":";
+            appendJson(out, it.description);
+            out += '}';
+        }
+        out += "]}";
+        return out.c_str();
+    }
+
     void resetEngine()
     {
         if (app != nullptr)
@@ -343,7 +515,8 @@ int main()
     text = std::make_unique<std::string>();
     app = std::make_unique<App>();
     char browser[sizeof(fcmp::Diagnostics::host)] = {};
-    fcmp_ui_browser(browser, static_cast<int>(sizeof browser));
+    if (!hostPin(browser))
+        fcmp_ui_browser(browser, static_cast<int>(sizeof browser));
     app->facade.setEnvironment("WEB", browser);
 
     // ADR-85: a new instance starts from the machine's QUALITY and LOOKAHEAD for new instances, when set
@@ -355,8 +528,11 @@ int main()
         if (const int v = funkgui::UiPreferences::get().getInt(key, -1, INT_MIN, INT_MAX); v >= 0 && v <= 2)
             app->facade.port(pid).setValue01(static_cast<float>(v) / 2.0f);
 
+    const float fixedDt = static_cast<float>(numberParam("dt", 1.0e-6, 1.0, 0.0));
     fcmp::ui::PanelOptions options;
-    options.syncPreview = false;                         // no thread: a request is computed once it has rested
+    options.skipHint = flagParam("nohint");
+    options.syncPreview = fixedDt > 0.0f;                // gpu/Editor.cpp's rule: the preview's panes inside tick()
+    options.ignoreLive = flagParam("nolive");
     app->panel = std::make_unique<fcmp::ui::Panel>(app->facade, options);
     char view[32];
     if (fcmp_ui_param("view", view, static_cast<int>(sizeof view)) != 0)
@@ -371,10 +547,13 @@ int main()
     config.fitMarginX = fcmp_ui_margin(kCanvas, 0);
     config.fitMarginY = fcmp_ui_margin(kCanvas, 1);
     config.setUiAttached = [](bool on) { app->facade.setUiAttached(on); };
-    config.beforeTick = [] { app->facade.pull(); };      // one Pull per frame that ticks, before the tick
+    config.beforeTick = [] {                             // one Pull per frame that ticks, before the tick
+        if (!app->pulled)                                // (Module.fcmpFrame(): one for all the frames of a call)
+            app->facade.pull();
+    };
     config.capture.uiTheme = static_cast<int>(numberParam("theme", 0.0, funkgui::Theme::kCount - 1, -1.0));
     config.capture.uiZoom = static_cast<int>(numberParam("zoom", 25.0, 400.0, 0.0));
-    config.capture.fixedDt = static_cast<float>(numberParam("dt", 1.0e-6, 1.0, 0.0));
+    config.capture.fixedDt = fixedDt;
     config.capture.uiScale = static_cast<float>(numberParam("scale", 0.25, 8.0, 0.0));
     app->host = std::make_unique<funkgui::WebHost>(*app->panel, std::move(config));
 
@@ -394,6 +573,6 @@ int main()
         return r;
     });
     app->host->start();
-    fcmp_ui_ready(&statusText, &selftestText, &resetEngine, &shutdown);
+    fcmp_ui_ready(&statusText, &selftestText, &frameText, &a11yText, &resetEngine, &shutdown);
     return 0;
 }

@@ -1,0 +1,13 @@
+#!/bin/bash
+# scout-l/audio scratch build: the test-only print module, and the option-(i) size measurement.
+set -e
+S="$(cd "$(dirname "$0")" && pwd)"
+FC=/Users/seanfunk/audio/plugins/FCompressor
+FLAGS="-O3 -DNDEBUG -std=c++20 -fvisibility=hidden -fvisibility-inlines-hidden -msimd128 -fno-math-errno -fno-trapping-math -ffp-contract=off -flto -I$FC/Source -I$FC/Tools/probes/common"
+LINK="-sSTANDALONE_WASM=1 --no-entry -sEXPORTED_FUNCTIONS=_malloc,_free -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=16777216 -sSTACK_SIZE=262144"
+cd "$S"
+case "$1" in
+  print)  em++ $FLAGS src/PrintWeb.cpp $FC/build-web/libfcdsp.a $LINK -o out/fcmp-print.wasm ;;
+  plain)  em++ $FLAGS $FC/Source/web/engine/WebEngine.cpp $FC/build-web/libfcdsp.a $LINK -o out/engine-plain.wasm ;;
+  plus)   em++ $FLAGS $FC/Source/web/engine/WebEngine.cpp src/PrintWeb.cpp $FC/build-web/libfcdsp.a $LINK -o out/engine-plus-print.wasm ;;
+esac

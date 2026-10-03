@@ -7,15 +7,22 @@
 #   linux-dsp     the same as dsp, on x86-64 Linux with Clang.
 #   linux-plugin  the same as plugin, on x86-64 Linux with Clang: the VST3 and Standalone (the Vulkan editor), then
 #                 every probe against the same goldens: Linux has no golden overlay of its own.
-#   web           the browser demo's engine (ADR-93; the `web` preset): fcdsp as wasm32 through Emscripten at the pinned
-#                 version, fcmp-engine.wasm and its checks under node, against the same goldens. An x86-64 runner on
+#   web           the browser demo (ADR-93; the `web` preset): Emscripten at the version cmake/FcmpDeps.cmake pins, the
+#                 two modules, the site (build-web/site) and the UI probes under node against the same goldens; then
+#                 the browser gate, Scripts/web-live.sh, in headless Chrome under SwiftShader, on the build and again on
+#                 the site downloaded from this run's artifact, served by a plain static server. An x86-64 runner on
 #                 purpose: denormal cost and V8's code for the wasm compares show there, not on the lead's Mac. The
-#                 module is uploaded as an artifact; nothing is published.
+#                 site (web-site) and the gate's inputs (web-live) are kept as artifacts for 14 days.
+#   web-browsers  reported, never a gate: the same site through each browser's WebDriver (Chrome and Firefox on Linux,
+#                 Safari on macOS; Scripts/web/page-check.mjs).
+#   publish       on a push to main only, when every job above is green: the web-site artifact the gate tested is
+#                 published to GitHub Pages (the user's decision, 2026-10-02); `published` then checks the public page
+#                 with Scripts/web-live.sh --url once it serves this commit.
 #
 # Dependencies: Scripts/deps.sh fetches JUCE and bgfx.cmake at their pinned SHAs and builds shaderc into ~/audio/.deps,
 # which is cached per pin and runner (the key is deps.sh itself, where the pins live). FunkGui is cloned from GitHub at
 # the tag cmake/FcmpDeps.cmake pins. The Linux jobs install Clang, Ninja and the development packages JUCE, bgfx and
-# FunkGui need. Nothing is signed, installed or published here.
+# FunkGui need. Nothing is signed or installed here; the demo's site is the only thing published, by `publish`.
 name: CI
 
 on:
@@ -161,11 +168,12 @@ jobs:
           if-no-files-found: ignore
 
   web:
-    name: Web engine (wasm)
+    name: Web demo (wasm)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45                         # the UI probes run as wasm32 under node here too (web Sprint D)
-    env:
-      FCMP_EMSCRIPTEN: 6.0.3                    # cmake/FcmpDeps.cmake's pin (the configure fails on any other)
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash                            # -eo pipefail: a step that pipes into tee still fails
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain
@@ -173,6 +181,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build
           cmake --version | head -1 && ninja --version
+          google-chrome --version
+          # The one Emscripten pin is cmake/FcmpDeps.cmake's (its configure refuses any other version).
+          V=$(sed -n 's/^ *set(FCMP_EMSCRIPTEN_VERSION \([0-9][0-9.]*\))$/\1/p' cmake/FcmpDeps.cmake)
+          [ -n "$V" ] || { echo "cmake/FcmpDeps.cmake names no FCMP_EMSCRIPTEN_VERSION"; exit 1; }
+          echo "FCMP_EMSCRIPTEN=$V" >> "$GITHUB_ENV"
       - name: Cache emsdk
         uses: actions/cache@v4
         with:
@@ -190,30 +203,190 @@ jobs:
           echo "$HOME/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
           echo "EMSDK=$EMSDK" >> "$GITHUB_ENV"
           echo "EMSDK_NODE=$EMSDK_NODE" >> "$GITHUB_ENV"
+          echo "$(dirname "$EMSDK_NODE")" >> "$GITHUB_PATH"   # node 22 or later on PATH for the browser gate
           emcc --version | head -1 && "$EMSDK_NODE" --version
       - name: Configure
         run: cmake --preset web
       - name: Build
         run: cmake --build --preset web
       - name: Verify
-        run: Scripts/verify.sh --strict build-web
+        run: Scripts/verify.sh --strict build-web | tee build-web/verify-out.txt
       - name: Numbers (the x86 runner's)
         if: always()
         run: |
           NODE=$(sed -n 's/^CMAKE_CROSSCOMPILING_EMULATOR:[A-Z]*=//p' build-web/CMakeCache.txt | cut -d';' -f1)
-          "$NODE" build-web/fcmp_web_check.js simdbench || true
-          "$NODE" build-web/fcmp_web_check.js speed || true
-          "$NODE" build-web/fcmp_web_check.js tail || true
-      - name: Upload the engine
+          for c in simdbench speed tail; do "$NODE" build-web/fcmp_web_check.js "$c" || true; done 2>&1 | tee build-web/numbers.txt
+      - name: The site is this commit's
+        run: |
+          cat build-web/site/built-from.txt
+          grep -q "^site $(git rev-parse HEAD) clean " build-web/site/built-from.txt
+      - name: Browser gate (the build, headless Chrome under SwiftShader)
+        run: Scripts/web-live.sh build-web
+      - name: Upload the site
         uses: actions/upload-artifact@v4
         with:
-          name: web-engine
-          path: build-web/fcmp-engine.wasm
+          name: web-site
+          path: build-web/site
           if-no-files-found: error
+          retention-days: 14
+      - name: Upload the gate's inputs (the test-only pages and the node values; never part of the site)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-live
+          path: |
+            build-web/live
+            build-web/web-live/expect
+          if-no-files-found: error
+          retention-days: 14
+      - name: Download both again
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/dl
+      - name: Browser gate (the downloaded site, from a plain static server)
+        run: |
+          diff -r build-web/site "$RUNNER_TEMP/dl/web-site"
+          Scripts/web-live.sh --dir "$RUNNER_TEMP/dl/web-site" --live "$RUNNER_TEMP/dl/web-live/live" \
+            --expect "$RUNNER_TEMP/dl/web-live/web-live/expect" --out "$RUNNER_TEMP/dl/web-live-run"
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Web demo"
+            echo
+            echo '```'
+            cat build-web/site/built-from.txt 2>/dev/null || echo "no site"
+            grep -h "verify.sh summary" build-web/verify-out.txt 2>/dev/null || true
+            tail -n 1 build-web/web-live/summary.txt 2>/dev/null || true
+            tail -n 1 "$RUNNER_TEMP/dl/web-live-run/summary.txt" 2>/dev/null || true
+            grep -hE "^(NOTE|PASS|FAIL) " build-web/web-live/summary.txt 2>/dev/null | grep -E "renderer|time|load|cost|fpmode|real time" || true
+            grep -hE "real time|tail|simd" build-web/numbers.txt 2>/dev/null | head -n 20 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: web-results
-          path: build-web/verify-ctest.log
+          path: |
+            build-web/verify-ctest.log
+            build-web/web-live
+            ${{ runner.temp }}/dl/web-live-run
           if-no-files-found: ignore
+
+  web-browsers:
+    # Reported, not a gate: the page's self-test, the six captures and the live pages in each browser through its
+    # WebDriver, on the site the web job tested (Scripts/web/page-check.mjs). A browser is promoted to a gate only after
+    # it has passed several runs (ADR-93).
+    name: Web demo in ${{ matrix.browser }} (reported)
+    needs: web
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { browser: chrome,  os: ubuntu-24.04 }
+          - { browser: firefox, os: ubuntu-24.04 }
+          - { browser: safari,  os: macos-26 }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: Scripts/web
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: The browser
+        run: |
+          case "${{ matrix.browser }}" in
+            chrome)  google-chrome --version; "$CHROMEWEBDRIVER/chromedriver" --version ;;
+            firefox) firefox --version; "$GECKOWEBDRIVER/geckodriver" --version | head -n 1 ;;
+            safari)  sudo /usr/bin/safaridriver --enable; /usr/bin/safaridriver --version ;;
+          esac
+      - name: Page check
+        shell: bash
+        run: |
+          args=(Scripts/web/page-check.mjs dl/web-site --live dl/web-live/live --expect dl/web-live/web-live/expect
+                --browser ${{ matrix.browser }} --frames --pages --log "$RUNNER_TEMP/out/page.txt"
+                --driver-log "$RUNNER_TEMP/out/driver.txt" --screenshot "$RUNNER_TEMP/out/page.png")
+          if [ "${{ matrix.browser }}" = firefox ]; then
+            # Headless Firefox on a runner with no GPU gives a page no WebGL2 (PR #68's first run): it runs headed on
+            # a virtual display instead, where Mesa's software renderer serves WebGL2.
+            xvfb-run -a -s "-screen 0 1600x1200x24" node "${args[@]}" --headed
+          else
+            node "${args[@]}"
+          fi
+      - name: Upload what the browser said
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-page-${{ matrix.browser }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    # Every push to main publishes the demo (the user's decision, 2026-10-02), and only when every job is green: the
+    # site deployed is the web-site artifact the browser gate tested, byte for byte. Never on a pull request.
+    name: Publish the demo (GitHub Pages)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [dsp, plugin, linux-dsp, linux-plugin, web]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    outputs:
+      page_url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-site
+          path: site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  published:
+    # The public page, as a visitor gets it: the captures and the self-test against the published URL, once it serves
+    # this commit's site (Scripts/web-live.sh --url waits for built-from.txt to name it).
+    name: The published demo
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: Scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-live
+          path: dl
+      - name: Check the public page
+        run: |
+          Scripts/web-live.sh --url "${{ needs.publish.outputs.page_url }}" --expect dl/web-live/expect \
+            --commit "$GITHUB_SHA" --out "$RUNNER_TEMP/published"
+      - name: Upload what it saw
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-published
+          path: ${{ runner.temp }}/published
+          if-no-files-found: ignore
+          retention-days: 14

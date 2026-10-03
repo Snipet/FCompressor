@@ -16,8 +16,9 @@ Sources: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-nn, Qn), `docs/design/
 
 ### 0.1 Rules
 
-1. **≤ 3 agent cards per sprint across both repositories.** The lead is not one of the 3 (Q1; if the lead counts, run
-   the same cards in the same order two at a time: 21 sprints). Steps marked **LEAD** are serial and run at the sprint
+1. **≤ 3 agent cards per sprint across both repositories** (≤ 6 from 2026-10-01, when the user raised the cap; the web
+   sprints ran up to six). The lead is not one of them (Q1; if the lead counts, run the same cards in the same order
+   two at a time: 21 sprints). Steps marked **LEAD** are serial and run at the sprint
    base (before agents spawn) or at the sprint end. **USER** marks an action only the user may take (system install,
    keychain credentials).
 2. **Merged before use.** A card depends only on work merged at an earlier sprint boundary. FunkGui work is consumed
@@ -47,6 +48,7 @@ Sources: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-nn, Qn), `docs/design/
 | **[DSP]** | `cd "$WT" && cmake --workflow --preset dsp-verify` |
 | **[AGENT]** | `cd "$WT" && cmake --workflow --preset agent-verify && Scripts/verify.sh "$WT/build-agent"` |
 | **[GPU]** | `cd "$WT" && cmake --workflow --preset agent-gui-verify` |
+| **[WEB]** | `cd "$WT" && cmake --workflow --preset web-verify && Scripts/verify.sh --strict "$WT/build-web"` (the browser demo; ADR-93) |
 | **[OWN]** | `cd "$WT" && python3 Scripts/sprint/ownership.py docs/sprints/s<N>.md#<id> "$WT"` (FunkGui cards: the lead runs it from the FCompressor checkout against `$FWT`) |
 | **[FG]** | `cd "$FWT" && cmake --workflow --preset agent-verify && cmake --workflow --preset agent-gui-verify && tools/verify.sh "$FWT/build-agent-gui"` |
 | **[XV]** | FunkGui cards from S1: `RO=/Users/seanfunk/audio/plugins/FCompressor/.claude/worktrees/ro-s<N>-<code>; cd "$RO" && cmake --preset agent -DFETCHCONTENT_SOURCE_DIR_FUNKGUI="$FWT" && cmake --build --preset agent && Scripts/verify.sh "$RO/build-agent"` |
@@ -169,7 +171,7 @@ chain                            F6 ──────────┴───�
 2. FunkGui cards: `git -C /Users/seanfunk/audio/libraries/FunkGui worktree add -b s<N>/<code>
    ../FunkGui.wt/s<N>-<code> v0.<last>.0`, and (from S1) the read-only FCompressor worktree
    `git -C /Users/seanfunk/audio/plugins/FCompressor worktree add --detach .claude/worktrees/ro-s<N>-<code> <base sha>`.
-3. Spawn ≤ 3 agents: FCompressor cards with `isolation: 'worktree'`; FunkGui cards with `$FWT` and the base SHA in the
+3. Spawn ≤ 3 agents (≤ 6 from 2026-10-01): FCompressor cards with `isolation: 'worktree'`; FunkGui cards with `$FWT` and the base SHA in the
    prompt. The lead edits nothing agents own until the sprint end.
 
 ### 3.2 Sprint-end checklist (every sprint; 03 §4.8)
@@ -1330,6 +1332,10 @@ new `Modes.def` lines from slot 8 up), then ≤ 3 Mode DSP cards per sprint; fro
 | W2 | Octo (M18), Opto Tube 1B (M04), Console E (M10), Mu Mastering (M06), Opto 3A (M03), Diode 54 (M17) | none: new policies only |
 | W3 | Twin Stage (M24), RMS 60 (M14), Module Tilt (M13), Module FB (M12), Zener Desk (M19), Pump (M31) | an engine card for serial stage 2 (`Stage2Kind::serialPre`) before M24; tempo-synced release (host BPM into `BlockParams`, a sprint-frozen contract revision) before M31 |
 | later | M20–M23, M25–M27, M07, M08, M29, M32–M34 | M26 negative ratio and M35 Upward need a FunkGui MINOR for GR < 0 in HISTORY/meters (02 §11 Q5) |
+
+**Web demo** (ADR-93; outside this plan): four sprints and a lead phase, 2026-10-01 to 2026-10-02, from
+`docs/sprints/web/plan.md` (manifests `docs/sprints/web-{a,b,c,d}.md`, `web-lead.md`; PRs #64 to #68, FunkGui v0.12.0
+to v0.14.0); the demo is published on GitHub Pages from `main`.
 
 **HardwareReverb → FunkGui migration** (ADR-04; only after FCompressor v1):
 1. FunkGui **v1.0.0**: freeze the public API (pre-1.0 → semver promise), CHANGELOG golden-impact audit, `SEED.tsv` diff

@@ -1,0 +1,1 @@
+{ "modes": "all", "setups": ["std","hq"], "sets": ["default","lo","hi","mid"], "via": "reconfigure", "contexts": "mode", "timing": true, "expectRows": 224, "programHash": "2e3621bff17e9df5 9960d5f0d72e0b18" }

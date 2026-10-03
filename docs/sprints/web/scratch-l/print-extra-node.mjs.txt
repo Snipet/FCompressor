@@ -1,0 +1,39 @@
+// scratch: the same extras through the SHIPPED engine module (wasm) driven directly under node.
+import { readFileSync, writeFileSync } from 'node:fs';
+const x = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(process.argv[2])), {}).exports; x._initialize();
+const p = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(process.argv[3])), {}).exports; p._initialize();
+const n = p.fcmp_print_frames(), half = n / 2;
+const pL = p.malloc(n * 4), pR = p.malloc(n * 4), pRec = p.malloc(140), pHash = p.malloc(8);
+const pf = new Float32Array(p.memory.buffer), pu8 = new Uint8Array(p.memory.buffer), pu32 = new Uint32Array(p.memory.buffer);
+p.fcmp_print_program(pL, pR);
+const progL = pf.slice(pL / 4, pL / 4 + n), progR = pf.slice(pR / 4, pR / 4 + n);
+const flL = progL.slice(), flR = progR.slice();
+for (let i = half; i < n; i += 1) { const v = (i % 96 < 48 ? 1 : -1) * 2 ** -120; flL[i] = v; flR[i] = -v; }
+const cstr = (at) => { let s = ''; for (let i = at; pu8[i] !== 0; i += 1) s += String.fromCharCode(pu8[i]); return s; };
+const hex8 = (v) => v.toString(16).padStart(8, '0');
+const hash = (a) => { pf.set(a, pL / 4); p.fcmp_print_hash(pL, a.length, pHash); return hex8(pu32[pHash / 4 + 1]) + hex8(pu32[pHash / 4]); };
+const xf = new Float32Array(x.memory.buffer), xu8 = new Uint8Array(x.memory.buffer);
+const buf = x.malloc(4 * 128 * 4 + 140);
+const [inL, inR, outL, outR] = [0, 1, 2, 3].map((i) => buf + i * 512), msg = buf + 2048;
+const kinds = [['tail', 48000, 1, 1], ['floor', 48000, 1, 2], ['std@44100', 44100, 1, 0], ['std@96000', 96000, 1, 0], ['hq@44100', 44100, 2, 0]];
+const out = {};
+for (let m = 0; m < p.fcmp_print_modes(); m += 1) for (const [name, fs, q, input] of kinds) {
+  const e = x.fcmp_web_create();
+  p.fcmp_print_record(m, 0, q, 0, -1, 1, pRec); xu8.set(pu8.subarray(pRec, pRec + 140), msg);
+  x.fcmp_web_post(e, msg, 140);
+  const latency = x.fcmp_web_configure(e, fs, 128);
+  const l = new Float32Array(n), r = new Float32Array(n);
+  const srcL = input === 2 ? flL : progL, srcR = input === 2 ? flR : progR;
+  for (let off = 0; off < n; off += 128) {
+    const none = input === 1 && off >= half;
+    if (!none) { xf.set(srcL.subarray(off, off + 128), inL / 4); xf.set(srcR.subarray(off, off + 128), inR / 4); }
+    x.fcmp_web_process(e, none ? 0 : inL, none ? 0 : inR, outL, outR, 128);
+    l.set(xf.subarray(outL / 4, outL / 4 + 128), off); r.set(xf.subarray(outR / 4, outR / 4 + 128), off);
+  }
+  x.fcmp_web_destroy(e);
+  if (process.env.DUMP) writeFileSync(`${process.env.DUMP}/wasm-${cstr(p.fcmp_print_key(m))}-${name}.f32`, Buffer.from(l.buffer));
+  let lastNonZero = -1, tiny = 0;
+  for (let i = 0; i < n; i += 1) { if (l[i] !== 0) lastNonZero = i; const a = Math.abs(l[i]); if (a !== 0 && a < 2 ** -126) tiny += 1; }
+  out[`${cstr(p.fcmp_print_key(m))} ${name}`] = { l: hash(l), r: hash(r), latency, lastNonZero, denormalOut: tiny };
+}
+console.log(JSON.stringify(out, null, 1));

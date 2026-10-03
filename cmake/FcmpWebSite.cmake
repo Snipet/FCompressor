@@ -23,7 +23,8 @@
 #                                    (more than half of fcmp-ui.wasm): the line says dirty unless the FunkGui the
 #                                    build compiled is the pinned commit itself, with nothing changed in its tree
 # It is made afresh every time (a file removed from web/ leaves no copy behind) and swapped in with one rename. Every
-# URL in the page is relative, so the directory works from any path of any static host. Nothing publishes it.
+# URL in the page is relative, so the directory works from any path of any static host (GitHub Pages serves it under
+# /FCompressor/). This script publishes nothing; CI's publish job deploys the site its gate tested.
 cmake_minimum_required(VERSION 3.30)
 if(FCMP_SITE_ARGS)
   include("${FCMP_SITE_ARGS}")

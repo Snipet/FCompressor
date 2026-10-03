@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<link rel="icon" href="data:,">
+</head>
+<body>
+<pre id="funkgui-log"></pre>
+<script>
+// Until the page's module has its own handlers (fcmp-live.js): a script that does not load or does not parse is a
+// FAIL, not a wait.
+addEventListener('error', function (event) {
+  if (globalThis.fcmpLive) return;
+  document.getElementById('funkgui-log').textContent
+    += 'FAIL     web.live.print uncaught: ' + (event.message || 'a script did not load') + '\n';
+  document.title = 'FAIL: uncaught';
+}, true);
+</script>
+<script type="module" src="fcmp-print.js"></script>
+</body>
+</html>
