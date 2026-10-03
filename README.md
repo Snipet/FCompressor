@@ -11,6 +11,9 @@ the same controls in the same places for every Mode, with a Mode free to lock a 
 steps. Everything the display draws (the transfer curve, the operating point, the gain-reduction history, the meters) is
 computed by the same code the audio runs, and the test suite checks that it matches.
 
+The same DSP and the same editor also run in a browser, as a demo:
+[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/) (see [Web demo](#web-demo)).
+
 ![FCompressor running the Opto 2A Mode](docs/images/fcompressor.png)
 
 ## Modes
@@ -87,6 +90,46 @@ cmake --preset owner && cmake --build --preset owner   # Release; installs the V
 The Standalone is `build/FCompressor_artefacts/Release/Standalone/FCompressor`. Clang is the default compiler on Linux
 (set `CC`/`CXX` to choose another Clang); preferences and presets live in `~/.config/FCompressor/`.
 
+## Web demo
+
+The DSP and the editor also build for a browser: two WebAssembly modules and a static page, without JUCE. The engine
+runs in an AudioWorklet with the plugin's arithmetic (the test suite holds it to the plugin's own results); the editor
+is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin format. CI publishes it from `main` to
+[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/), once the jobs that gate it have passed.
+
+Press START. The page plays a loop it synthesises, or an audio file you open or drop on it; the file never leaves
+your browser. It needs a desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address.
+Its tests run in headless Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI
+also opens it in Firefox and Safari and reports the result without failing on it. It has not been tried by hand in
+Firefox or Safari yet.
+
+What differs from the plugin (the page lists the same):
+- No preset import or export; your own presets last until the page is closed.
+- No side-chain key input.
+- The DSP load in the settings shows a dash.
+- With no input the engine idles and the meters stop.
+- A QUALITY or LOOKAHEAD change rebuilds the engine on the audio thread (the plugin uses another thread) and may click.
+- Where the system reverses the scroll direction, the wheel turns a value the other way; a notched wheel moves a
+  stepped control about two steps.
+- Typed values take plain keys only: no input method, no dead keys.
+- No host parameter menu on a right-click.
+- Desktop browsers with WebGL2 only, and nothing for a screen reader in the editor.
+- On the CHARACTERISTICS screen the attack and release curves follow a control once it rests, not while it moves.
+
+To build and serve it yourself you need Emscripten 6.0.3 with `em-config` on the `PATH` (from emsdk:
+`emsdk install 6.0.3 && emsdk activate 6.0.3`; the configure refuses any other version), node 22 or later, CMake 3.30
+or later, Ninja and git. JUCE and bgfx are not needed; FunkGui is fetched at its pinned tag.
+
+```sh
+cmake --preset web && cmake --build --preset web    # the site is build-web/site
+Scripts/web-live.sh --serve build-web                # serves it on 127.0.0.1 and prints the address; Ctrl-C stops it
+```
+
+Any static server works as well, on `127.0.0.1` or `localhost`, for example
+`python3 -m http.server 8000 --bind 127.0.0.1 --directory build-web/site`. An `http` address of another machine on
+your network is not a secure context: there the browser gives the page no AudioWorklet, and the page says so.
+`docs/DECISIONS.md` ADR-93 has the design, the measurements and the reasons.
+
 ## Testing
 
 Every probe is a CTest test, and `Scripts/verify.sh` classifies the results against the blessed goldens:
@@ -95,20 +138,28 @@ Every probe is a CTest test, and `Scripts/verify.sh` classifies the results agai
 cmake --workflow --preset dsp-verify                  # the DSP library alone, no JUCE
 cmake --workflow --preset agent-verify                # the headless plugin and every probe
 Scripts/verify.sh build-agent                         # the pass/fail gate
+cmake --workflow --preset web-verify                  # the web demo: its tests, and every UI probe under node
+Scripts/verify.sh --strict build-web                  # its gate
+Scripts/web-live.sh build-web                         # the browser gate: the built site in headless Chrome
 ```
 
 CI runs the DSP library and the shipping configuration (GPU editor, Release, LTO) through the same gate on every push
-and pull request, on Apple Silicon and on x86-64 Linux, against the same goldens.
+to `main` and every pull request, on Apple Silicon and on x86-64 Linux, against the same goldens. Another job builds
+the web demo on x86-64 Linux and runs its gate and the browser gate, on the build and again on the site downloaded
+from the run's artifact; Firefox and Safari are run and reported, not gated. After a push to `main` on which every
+gating job has passed, CI publishes that tested site to GitHub Pages and checks the published page.
 
 ## Repository map
 
 ```
 Source/fcdsp/      the JUCE-free DSP library: core, parameters, engine, telemetry, analysis, one directory per Mode
-Source/plugin/     the JUCE processor, state and presets
-Source/editor/     the panel and its views (+ gpu/ for the bgfx editor)
-Tools/probes/      the test probes, one self-registering file each
+Source/plugin/     the JUCE processor, state and presets (portable/: the model code, without JUCE)
+Source/editor/     the panel and its views, without JUCE (+ gpu/ for the bgfx editor)
+Source/web/        the web demo: engine/ (the DSP behind a C ABI), facade/ (the editor's processor), ui/ (its main)
+web/               the web demo's page, its AudioWorklet script, its test-only pages and its node tests
+Tools/probes/      the test probes, one self-registering file each; Tools/web/ the web demo's checks
 tests/golden/      the blessed golden results; tests/fixtures/ write-once fixtures
-Scripts/           deps.sh, verify.sh, validate.sh, golden.py, release.sh, gui-live.sh
+Scripts/           deps.sh, verify.sh, validate.sh, golden.py, release.sh, gui-live.sh, web-live.sh (+ web/)
 docs/              ARCHITECTURE.md, DECISIONS.md, the design appendices, the sprint records, the Mode sheets
 ```
 
@@ -124,7 +175,9 @@ The GUI library, [FunkGui](https://github.com/Snipet/FunkGui), is a separate rep
 ## Licence
 
 FCompressor is GPL-3.0 ([`LICENSE`](LICENSE)). It builds on [JUCE 8](https://juce.com) (fetched under its open-source
-AGPLv3 licence), [bgfx](https://github.com/bkaradzic/bgfx) (BSD-2-Clause) and FunkGui (GPL-3.0).
+AGPLv3 licence), [bgfx](https://github.com/bkaradzic/bgfx) (BSD-2-Clause) and FunkGui (GPL-3.0). The web demo has no
+JUCE and no bgfx; its modules contain parts of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt, and the
+published site carries their licences beside the GPL and the typeface's (JetBrains Mono, SIL Open Font License 1.1).
 
 The Mode names describe circuit families. Product names mentioned in the documentation are trademarks of their owners;
 FCompressor is not affiliated with or endorsed by them.

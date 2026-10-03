@@ -1331,6 +1331,10 @@ new `Modes.def` lines from slot 8 up), then ≤ 3 Mode DSP cards per sprint; fro
 | W3 | Twin Stage (M24), RMS 60 (M14), Module Tilt (M13), Module FB (M12), Zener Desk (M19), Pump (M31) | an engine card for serial stage 2 (`Stage2Kind::serialPre`) before M24; tempo-synced release (host BPM into `BlockParams`, a sprint-frozen contract revision) before M31 |
 | later | M20–M23, M25–M27, M07, M08, M29, M32–M34 | M26 negative ratio and M35 Upward need a FunkGui MINOR for GR < 0 in HISTORY/meters (02 §11 Q5) |
 
+**Web demo** (ADR-93; outside this plan): four sprints and a lead phase, 2026-10-01 to 2026-10-02, from
+`docs/sprints/web/plan.md` (manifests `docs/sprints/web-{a,b,c,d}.md`, `web-lead.md`; PRs #64 to #68, FunkGui v0.12.0
+to v0.14.0); the demo is published on GitHub Pages from `main`.
+
 **HardwareReverb → FunkGui migration** (ADR-04; only after FCompressor v1):
 1. FunkGui **v1.0.0**: freeze the public API (pre-1.0 → semver promise), CHANGELOG golden-impact audit, `SEED.tsv` diff
    against HR's current `Source/gui`.
