@@ -13,8 +13,8 @@
 //   --chrome <path>   the Chrome to run (else the library's own choice)
 //   --only <groups>   these groups only, in the order below (a group can always be run alone)
 //   --list            the groups' names, one a line, and nothing else
-//   --timeout <s>     the whole run's bound (default 480, under the gate's own 600): past it the run ends with
-//                     exit 2 and says in which group it was
+//   --timeout <s>     the whole run's bound (default 480; the gate passes four times its own --timeout and stops the
+//                     scenario at five times): past it the run ends with exit 2 and says in which group it was
 //   --chrome-flag <switch>   one more switch for Chrome, through the library's own option (repeatable; the last of two
 //                     wins). For a software renderer: --chrome-flag --use-angle=swiftshader --chrome-flag
 //                     --enable-unsafe-swiftshader; for a machine with no audio device: --chrome-flag

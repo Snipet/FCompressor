@@ -4,8 +4,9 @@ Status: **phase base**, written by the lead from the judged plan (`docs/sprints/
 gate, CI, documents, publish") and five scout reports made on Sprint D's result (`docs/sprints/web/l-weblive.md`,
 `l-print.md`, `l-ci.md`, `l-hand.md`, `l-docs.md`). Manifest format as in `docs/sprints/web-d.md` (read by
 `Scripts/sprint/ownership.py docs/sprints/web-lead.md#<ID> <worktree>`). The user authorised the lead phase.
-**Hosting is still the user's decision: nothing is published, there is no `pages.yml`, and no card may add one.** The
-site stays a build output; CI keeps it as an artifact.
+**Hosting** (decided by the user while the cards ran, 2026-10-02): GitHub Pages, published by CI on every push to `main`
+once every job is green, from the site artifact the gate tested (the lead's `publish` job in `.github/workflows/ci.yml`;
+no card publishes anything).
 
 Goal. `Scripts/web-live.sh build-web` is the browser gate: in headless Chrome the editor's six views equal the node
 values, the pixels equal SoftRaster's, the engine's 112 print rows hold through the real worklet, and a scripted user
@@ -41,7 +42,8 @@ page". Where a scout's open question is answered here, this manifest binds.
   `[A-Za-z0-9 ._-]`: replaces the browser's name in `setEnvironment("WEB", …)`, so an expectation is the same for
   every browser). A pinned `dt` makes the preview synchronous, as the native editor does under `FCMP_UI_FIXED_DT`.
 - **`Module.fcmpFrame()`**: settles the host (frames until the Panel no longer asks for the full rate, at most 600;
-  it stops at a frame that was not drawn) and returns a text: the line `hooks dpi <g> clock <fixed|free> theme <n> dt
+  it stops at a frame that was not drawn, and on a page whose engine is publishing it draws one frame and returns it as
+  it is: a frame of live audio is never reported as settled) and returns a text: the line `hooks dpi <g> clock <fixed|free> theme <n> dt
   <g> settle <n> drawn <0|1> idle <0|1>`, then `geometry <16 hex>`, `text <16 hex>`, `statics`, `live`, `texts`,
   `rrects`, `segments`, `areas`, `max_x`, `max_y`, one `tag.<name> <n>` per tag, `view_w`, `view_h`,
   `glyphs_missing` (one `name value` per line). Empty after shutdown.
@@ -358,8 +360,8 @@ DELIVERABLES
            the capabilities per browser, the Safari refusal, the server. Each rule shown to fail by a mutation.
         ACCEPTANCE (part of DONE)
         [WEB]   FCMP_TIMING_SCALE=3 cmake --workflow --preset web-verify && Scripts/verify.sh --strict "$WT/build-web":
-                web.pagecheck passes with every other test (it also registers natively: on= is absent on purpose;
-                say what the agent preset shows).
+                web.pagecheck passes with every other test (it registers in the web tree only: every web/tests/*.mjs
+                is web-only in cmake/FcmpWeb.cmake, whatever its on= says).
         Say plainly in the handoff that no real driver has been met (none is installed here; Safari must not be
         automated on this machine): the lead verifies on CI's runners. List what you expect to go wrong first.
 NOTES   Keep it small: this is a CI tool. A snap Firefox breaks geckodriver's profile directory; a driver that dies

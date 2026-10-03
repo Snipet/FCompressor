@@ -63,6 +63,8 @@ never built: write your own files in your OWNS paths.
   - Page-private messages: to the worklet `{fcmp: 'stats'}`, `{fcmp: 'selfcheck'}`; from it `{fcmp: 'ready', abi,
     latency, sampleRate}`, `{fcmp: 'error', error}`, `{fcmp: 'stats', …}`, `{fcmp: 'selfcheck', rc, hash, ms}`.
 - **Who pulls:** the module, from `WebHostConfig::beforeTick`. The page never pulls.
+- **Added in the web lead phase** (`docs/sprints/web-lead.md`, "The gate's contract"): `Module.fcmpFrame()` and
+  `Module.fcmpA11y()`, and the query pins `nohint`, `nolive` and `host`.
 - A change to this section is an interface-change request in a handoff, never an edit: the other card depends on it.
 
 **Five agents share the machine** (four cards build): builds at `-j6`, at most two build directories per agent,
