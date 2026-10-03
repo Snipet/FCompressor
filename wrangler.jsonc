@@ -1,0 +1,24 @@
+// wrangler.jsonc: lets Cloudflare build and serve the browser demo (ADR-93) from this repository: a Worker that is
+// static assets only, the site the `web` build makes (build-web/site). Nothing in the project's own build or CI reads
+// this file; CI publishes the same site to GitHub Pages by itself (.github/workflows/ci.yml, `publish`).
+//
+// In the Cloudflare dashboard (Workers & Pages, import a repository), the Worker must be named as `name` below, and:
+//
+//   Build command    pip install cmake ninja && git clone --depth 1 https://github.com/emscripten-core/emsdk.git
+//                    "$HOME/emsdk" && "$HOME/emsdk/emsdk" install 6.0.3 && "$HOME/emsdk/emsdk" activate 6.0.3 &&
+//                    . "$HOME/emsdk/emsdk_env.sh" && cmake --preset web && cmake --build build-web --target
+//                    fcmp_web_site
+//                    (one line. Emscripten must be the version cmake/FcmpDeps.cmake pins, and it is cloned outside the
+//                    checkout on purpose: an untracked directory in the tree makes built-from.txt say `dirty`, and the
+//                    page's footer then drops the link to its source commit.)
+//   Deploy command   npx wrangler deploy   (the default)
+//
+// Cloudflare compiles its own copy: what it serves is this commit's site, but not the artifact CI's browser gate
+// tested (that one is what GitHub Pages serves).
+{
+  "name": "fcompressor",
+  "compatibility_date": "2026-10-03",
+  "assets": {
+    "directory": "./build-web/site"
+  }
+}
