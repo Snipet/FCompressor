@@ -1,181 +1,104 @@
-// Scratch prototype (scout-l/audio): dsp.print's rows through the SHIPPED worklet (fcmp-worklet.js over
-// fcmp-engine.wasm) in an OfflineAudioContext. The material, the Params records and the hash come from the test-only
-// module fcmp-print.wasm (PrintProgram.h compiled as it is); this script only moves bytes.
-const TEST = 'web.live.print';
-const QUANTUM = 128;
-const logEl = document.getElementById('funkgui-log');
-let failure = '';
-let passed = 0, failed = 0;
-const say = (line) => { logEl.textContent += `${line}\n`; };
-const row = (ok, name, detail = '') => {
-  if (!ok && failure === '') failure = name;
-  ok ? (passed += 1) : (failed += 1);
-  say(`${ok ? 'PASS' : 'FAIL'}     ${TEST} ${name}${detail ? ': ' + detail : ''}`);
-  return ok;
-};
-const note = (text) => say(`NOTE     ${text}`);
-window.addEventListener('error', (e) => { row(false, 'uncaught', e.message); document.title = `FAIL: uncaught`; });
-window.addEventListener('unhandledrejection', (e) => { row(false, 'uncaught', String(e.reason)); document.title = 'FAIL: uncaught'; });
+// web/live/fcmp-print.js: dsp.print's blessed rows through the SHIPPED worklet in a browser (ADR-93, the web lead
+// phase). The page of fcmp-print.html; fcmp-live.js has the method and the protocol.
+//
+// The native probe dsp.print renders a 4 s program through each Mode at four parameter sets and blesses a hash per
+// channel: 8 rows a Mode in tests/golden/base/modes/<key>/dsp.print.txt, which the gate serves verbatim as
+// golden/<key>.dsp.print.txt. Here the same program goes through ../fcmp-worklet.js over ../fcmp-engine.wasm in an
+// OfflineAudioContext at the plugin's default setup (STD, no lookahead, 48 kHz), and every blessed row must come out
+// bit for bit: the engine's arithmetic inside process(), in this browser's compiler, for every Mode.
+//
+//   program.hash                     the input is the program the goldens were made from (PrintProgram.h's, hashed
+//                                    natively): guards a wrong test module
+//   <key> print.<set>.<l|r>.hash     the blessed rows. Each also asserts that its engine was armed at the row's first
+//                                    quantum with both records in, none refused, at the setup's latency
+//   <key> golden                     only when a Mode has no golden file, or one that is not 8 exact print rows
+//   rows.count                       8 rows a Mode and no golden row left over: guards an empty run
+//   <key> quantum.<l|r>.hash         the default set again at a render quantum of 320 frames, which the worklet hands
+//                                    to the engine in pieces of 128, 128 and 64 (its other path). Web Audio 1.1's
+//                                    renderSizeHint; a NOTE where the browser renders in quanta of 128 only
+import { Page, QUANTUM, environment, goldenRows, hashRows, render, textOf } from './fcmp-live.js';
 
-const within = (ms, what, promise) => {
-  let timer = 0;
-  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: no answer in ${ms} ms`)), ms); });
-  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
-};
-const makeNode = (ctx, wasm) => within(10000, 'the audio processor', new Promise((made, bad) => {
-  const n = new AudioWorkletNode(ctx, 'fcmp-engine', {
-    numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit',
-    channelInterpretation: 'speakers', processorOptions: { wasm } });
-  n.onprocessorerror = () => bad(new Error('the audio processor stopped'));
-  const hear = (event) => {
-    const m = event.data;
-    if (!m || (m.fcmp !== 'ready' && m.fcmp !== 'error')) return;
-    n.port.removeEventListener('message', hear);
-    if (m.fcmp === 'ready') made({ node: n, ready: m }); else bad(new Error(m.error));
-  };
-  n.port.addEventListener('message', hear);
-  n.port.start();
-}));
-const ask = (n, what) => within(10000, `the worklet's ${what}`, new Promise((answered) => {
-  const hear = (event) => {
-    if (!event.data || event.data.fcmp !== what) return;
-    n.port.removeEventListener('message', hear);
-    answered(event.data);
-  };
-  n.port.addEventListener('message', hear);
-  n.port.postMessage({ fcmp: what });
-}));
-const hex8 = (v) => v.toString(16).padStart(8, '0');
+const PROGRAM_HASH = '2e3621bff17e9df5 9960d5f0d72e0b18';     // PrintProgram.h's L and R, from a native build
+const RATE = 48000;
+const STD = { quality: 1, budget: 0, look: -1 };
+const ROWS_PER_MODE = 8;
+const HINT = 320;                                               // frames: neither 128 nor a multiple of it
 
-async function main() {
-  const cfg = await (await fetch('fcmp-print-config.json')).json();
-  note(navigator.userAgent);
-  note(`config ${JSON.stringify(cfg)}`);
-  const golden = await (await fetch('fcmp-print-golden.json')).json();
-  const expect = await (await fetch('fcmp-print-expect.json')).json();
-  const engineBytes = await (await fetch('fcmp-engine.wasm')).arrayBuffer();
-  const p = (await WebAssembly.instantiate(await (await fetch('fcmp-print.wasm')).arrayBuffer(), {})).instance.exports;
-  p._initialize();
-  const frames = p.fcmp_print_frames();
-  const pL = p.malloc(frames * 4), pR = p.malloc(frames * 4), pRec = p.malloc(140), pHash = p.malloc(8);
-  const u8 = new Uint8Array(p.memory.buffer), u32 = new Uint32Array(p.memory.buffer), f32 = new Float32Array(p.memory.buffer);
-  const cstr = (at) => { let s = ''; for (let i = at; u8[i] !== 0; i += 1) s += String.fromCharCode(u8[i]); return s; };
-  const t0 = performance.now();
-  p.fcmp_print_program(pL, pR);
-  const inL = f32.slice(pL / 4, pL / 4 + frames), inR = f32.slice(pR / 4, pR / 4 + frames);
-  note(`program: ${frames} frames made in ${(performance.now() - t0).toFixed(0)} ms by fcmp-print.wasm`);
-  const hash = (samples) => {
-    f32.set(samples, pL / 4);
-    p.fcmp_print_hash(pL, samples.length, pHash);
-    return hex8(u32[pHash / 4 + 1]) + hex8(u32[pHash / 4]);
-  };
-  // The input is the golden program: its own hash is checked against the native value held by the expectation file.
-  const inHash = `${hash(inL)} ${hash(inR)}`;
-  row(inHash === cfg.programHash, 'program.hash', `${inHash} (want ${cfg.programHash})`);
-  const record = (mode, set, quality, budget, look, snap) => {
-    if (p.fcmp_print_record(mode, set, quality, budget, look, snap, pRec) !== 140) throw new Error('no record');
-    return u8.slice(pRec, pRec + 140).buffer;
-  };
-  const SETUP = { std: [1, 0, -1], eco: [0, 0, -1], hq: [2, 0, -1], hqla: [2, 1, 2] };
-  const modes = [];
-  for (let i = 0; i < p.fcmp_print_modes(); i += 1) modes.push(cstr(p.fcmp_print_key(i)));
-  const sets = [0, 1, 2, 3].map((s) => cstr(p.fcmp_print_set(s)));
-  note(`modes: ${modes.join(' ')}`);
-  const wantedModes = cfg.modes === 'all' ? modes : cfg.modes;
-  const all0 = performance.now();
-  let renderMs = 0, setupMs = 0, hashMs = 0, compared = 0;
+const page = new Page('web.live.print');
 
-  // One row: { key, m, setup, s }. `group` rows share one context and one engine: the program loops, and at each
-  // multiple of its length the context is suspended, the next row's records go in (a reconfigure: a fresh engine,
-  // snapped at the row's values) and the context resumes.
-  const armRow = async (node, r) => {
-    const [quality, budget, look] = SETUP[r.setup];
-    if (cfg.via === 'reconfigure') {
-      node.port.postMessage(record(r.m, r.s, quality === 1 ? 2 : 1, budget, look, 1));   // another QUALITY first
-      node.port.postMessage(record(r.m, r.s, quality, budget, look, 1));
-      return 2;
+page.run(async () => {
+  const env = await environment(page);
+  const { print } = env;
+  const started = performance.now();
+
+  const programHash = `${print.hash(print.programL)} ${print.hash(print.programR)}`;
+  page.row(programHash === PROGRAM_HASH, 'program.hash', `${programHash} (want ${PROGRAM_HASH})`);
+
+  // The goldens, parsed here: every exact print.* row of every registered Mode.
+  const goldens = [];
+  let blessed = 0;
+  for (const key of print.modes) {
+    let rows = new Map();
+    let why = '';
+    try {
+      rows = goldenRows(await textOf(`golden/${key}.dsp.print.txt`));
+    } catch (error) {
+      why = String(error.message || error);
     }
-    node.port.postMessage(record(r.m, r.s, quality, budget, look, 1));                     // 'plain': the trap
-    return 1;
-  };
-  const renderGroup = async (group) => {
-    const a = performance.now();
-    const n = group.length;
-    const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: frames * n, sampleRate: 48000 });
-    await ctx.audioWorklet.addModule('fcmp-worklet.js');
-    const made = await makeNode(ctx, engineBytes);
-    const armed = [];
-    let sent = await armRow(made.node, group[0]);
-    armed.push({ stats: await ask(made.node, 'stats'), sent });
-    for (let k = 1; k < n; k += 1) {
-      ctx.suspend(k * frames / 48000).then(async () => {
-        sent += await armRow(made.node, group[k]);
-        armed.push({ stats: await ask(made.node, 'stats'), sent });
-        ctx.resume();
-      });
-    }
-    const buffer = ctx.createBuffer(2, frames, 48000);
-    buffer.copyToChannel(inL, 0);
-    buffer.copyToChannel(inR, 1);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.loop = n > 1;
-    source.connect(made.node).connect(ctx.destination);
-    source.start();
-    const b = performance.now();
-    const rendered = await within(120000, 'the offline render', ctx.startRendering());
-    const c = performance.now();
-    const after = await ask(made.node, 'stats');
-    const allL = rendered.getChannelData(0), allR = rendered.getChannelData(1);
-    setupMs += b - a; renderMs += c - b;
-    for (let k = 0; k < n; k += 1) {
-      const r = group[k];
-      const d0 = performance.now();
-      const gotL = hash(allL.subarray(k * frames, (k + 1) * frames)), gotR = hash(allR.subarray(k * frames, (k + 1) * frames));
-      hashMs += performance.now() - d0;
-      const name = `${r.key} ${r.setup} ${sets[r.s]}`;
-      const want = r.setup === 'std' ? { l: (golden[r.key] || {})[`print.${sets[r.s]}.l.hash`], r: (golden[r.key] || {})[`print.${sets[r.s]}.r.hash`] }
-                                     : expect[name] || {};
-      const wantLatency = (expect[name] || {}).latency;
-      const before = armed[k] || { stats: {} };
-      const ran = before.stats.quanta === k * frames / QUANTUM && before.stats.records === before.sent
-               && before.stats.refused === 0 && before.stats.latency === wantLatency && after.ok === true
-               && after.quanta === n * frames / QUANTUM && after.oddQuanta === 0 && after.inChannels === 2;
-      compared += 2;
-      const from = r.setup === 'std' ? 'golden' : 'native';
-      row(ran && gotL === want.l, `${r.key} ${r.setup} print.${sets[r.s]}.l.hash`, gotL === want.l ? gotL : `${gotL} ${from} ${want.l}`);
-      row(ran && gotR === want.r, `${r.key} ${r.setup} print.${sets[r.s]}.r.hash`, gotR === want.r ? gotR : `${gotR} ${from} ${want.r}`);
-      if (!ran) note(`${name}: armed ${JSON.stringify(before)} after ${JSON.stringify(after)} want latency ${wantLatency}`);
-    }
-    if (cfg.timing) note(`${group[0].key} ${group[0].setup} x${n}: setup ${(b - a).toFixed(0)} ms, render ${(c - b).toFixed(0)} ms (${(4000 * n / (c - b)).toFixed(1)}x real time)`);
-  };
-  const rowsWanted = [];
-  for (const key of wantedModes) {
-    const m = modes.indexOf(key);
-    if (m < 0) { row(false, `${key}`, 'not a registered Mode'); continue; }
-    for (const setup of cfg.setups)
-      for (let s = 0; s < 4; s += 1)
-        if (cfg.sets.includes(sets[s])) rowsWanted.push({ key, m, setup, s });
+    const prints = [...rows.keys()].filter((k) => k.startsWith('print.'));
+    blessed += prints.length;
+    if (prints.length !== ROWS_PER_MODE)
+      page.row(false, `${key} golden`, why || `${prints.length} exact print rows, not ${ROWS_PER_MODE}`);
+    goldens.push(rows);
   }
-  const groups = [];
-  if (cfg.contexts === 'one') groups.push(rowsWanted);
-  else if (cfg.contexts === 'mode') {
-    for (const r of rowsWanted) {
-      const last = groups[groups.length - 1];
-      if (last && last[0].key === r.key && last[0].setup === r.setup) last.push(r); else groups.push([r]);
-    }
-  } else for (const r of rowsWanted) groups.push([r]);
-  note(`${rowsWanted.length} renders in ${groups.length} context(s)`);
-  for (const g of groups) {
-    await renderGroup(g);
-    if (cfg.gc && typeof globalThis.gc === 'function') { globalThis.gc(); await new Promise((r) => setTimeout(r, 20)); }
-  }
-  const total = performance.now() - all0;
-  note(`${compared} rows in ${(total / 1000).toFixed(1)} s: contexts and worklets ${(setupMs / 1000).toFixed(1)} s, renders ${(renderMs / 1000).toFixed(1)} s, hashes ${(hashMs / 1000).toFixed(1)} s`);
-  row(compared === cfg.expectRows, 'rows.count', `${compared} compared, ${cfg.expectRows} expected`);
-}
 
-main().catch((error) => row(false, 'ran', String((error && error.stack) || error))).then(() => {
-  say(`${failed === 0 ? 'PASS' : 'FAIL'}     ${TEST}: ${passed} row(s) passed, ${failed} failed`);
-  document.title = failure === '' ? 'PASS' : `FAIL: ${failure}`;
+  let compared = 0;
+  let renderMs = 0;
+  for (let mode = 0; mode < print.modes.length; mode += 1) {
+    const key = print.modes[mode];
+    const rows = print.sets.map((_, set) => ({ mode, set, ...STD, input: 'program' }));
+    const results = await render(env, RATE, rows);
+    rows.forEach((row, k) => {
+      const name = (channel) => `${key} print.${print.sets[row.set]}.${channel}.hash`;
+      const want = { l: goldens[mode].get(name('l').slice(key.length + 1)),
+                     r: goldens[mode].get(name('r').slice(key.length + 1)) };
+      compared += hashRows(page, env, RATE, row, results[k], name, want, 'golden');
+      renderMs += results[k].laps.reduce((a, b) => a + b, 0);
+    });
+  }
+  page.row(compared === ROWS_PER_MODE * print.modes.length && compared === blessed && compared > 0, 'rows.count',
+           `${compared} rows compared, ${blessed} blessed print rows in ${print.modes.length} golden files`);
+  page.note(`web.live.print latency: ${print.latency(STD.quality, STD.budget, RATE)} samples at STD and ${RATE} Hz `
+            + "(fcdsp's figure for the setup, which a row's engine must report)");
+  const seconds = compared / 2 * print.frames / RATE;
+  page.note(`web.live.print time: ${compared} rows in ${((performance.now() - started) / 1000).toFixed(1)} s, `
+            + `${env.contexts} contexts; the renders ${(renderMs / 1000).toFixed(1)} s for ${seconds.toFixed(0)} s of `
+            + `audio (${(seconds * 1000 / renderMs).toFixed(0)}x real time)`);
+
+  // Another render quantum, where the browser gives one.
+  let quantum;
+  try {
+    quantum = new OfflineAudioContext({ numberOfChannels: 2, length: HINT, sampleRate: RATE, renderSizeHint: HINT })
+      .renderQuantumSize;
+  } catch (error) {
+    quantum = String(error);
+  }
+  if (typeof quantum !== 'number' || quantum === QUANTUM) {
+    page.note(`web.live.print quantum: this browser renders in quanta of ${QUANTUM} frames only (renderSizeHint `
+              + `${HINT} gives renderQuantumSize ${quantum}): the worklet's other path is not run here`);
+  } else {
+    const rows = print.modes.map((_, mode) => ({ mode, set: 0, ...STD, input: 'program' }));
+    const results = await render(env, RATE, rows, { hint: HINT, quantum });
+    rows.forEach((row, k) => {
+      const key = print.modes[row.mode];
+      const want = { l: goldens[row.mode].get('print.default.l.hash'),
+                     r: goldens[row.mode].get('print.default.r.hash') };
+      hashRows(page, env, RATE, row, results[k], (channel) => `${key} quantum.${channel}.hash`, want, 'golden');
+    });
+    const z = results[0].context.after;
+    page.note(`web.live.print quantum: renderSizeHint ${HINT} gives quanta of ${quantum} frames; the worklet saw `
+              + `${z.quanta} quanta of ${z.lastFrames} frames in the last context, ${z.oddQuanta} of them not of `
+              + `${QUANTUM}`);
+  }
+  page.note(`web.live.print instances: ${env.instances} engine instances in this page load`);
 });
