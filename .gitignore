@@ -1,5 +1,7 @@
 # build trees
 /build*/
+# wrangler's local state (wrangler.jsonc: a Cloudflare import of the browser demo)
+/.wrangler/
 /out/
 # macOS / editors
 .DS_Store
