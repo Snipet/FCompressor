@@ -5,16 +5,24 @@
 // In the Cloudflare dashboard (Workers & Pages, import a repository), the Worker must be named as `name` below, and:
 //
 //   Build command    bash Scripts/cloudflare-build.sh
-//                    (by bash, by name: a build command runs in plain sh there, where Emscripten's environment script
-//                    cannot find itself. The script installs CMake and Ninja with pip and Emscripten at the version
-//                    cmake/FcmpDeps.cmake pins, outside the checkout, and builds the site alone.)
+//                    (name bash: the builder was seen to run a build command in plain sh, where Emscripten's
+//                    environment script cannot find itself; Cloudflare's documentation names no shell. The script
+//                    installs CMake and Ninja with pip and Emscripten at the version cmake/FcmpDeps.cmake pins,
+//                    outside the checkout, and builds the site alone.)
 //   Deploy command   npx wrangler deploy   (the default)
+//   Preview builds   off (Settings, Build, Branch control): only `main` is built and served. The user's decision,
+//                    2026-10-03: a pull request's branch is work in progress, and CI's gate has not seen it.
 //
 // Cloudflare compiles its own copy: what it serves is this commit's site, but not the artifact CI's browser gate
 // tested (that one is what GitHub Pages serves).
 {
   "name": "fcompressor",
   "compatibility_date": "2026-10-03",
+  // Served at the Worker's workers.dev address, https://fcompressor.seantfunk.workers.dev, and nowhere else:
+  // `preview_urls` false gives an uploaded version no address of its own (a Version URL) and a Preview of another
+  // branch none either. Both keys are stated so that a deploy does not have to warn about a default.
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./build-web/site"
   }

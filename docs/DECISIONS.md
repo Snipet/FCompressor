@@ -1032,7 +1032,7 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
 - **ADR-93 A browser demo: FCompressor as WebAssembly (on `main` after v1.1.0; published on GitHub Pages from `main`,
-  first when PR #68 merged).** The user asked for web builds through WASM, to demo the plugin in a browser. The demo
+  first when PR #68 merged, and by Cloudflare from 2026-10-03).** The user asked for web builds through WASM, to demo the plugin in a browser. The demo
   runs the real DSP and shows the real editor; it is not a port and not a second code base. Design pass: five scouts,
   three independent designs and a judge (`docs/sprints/web/plan.md` and the reports beside it). Built from 2026-10-01
   to 2026-10-02 in four sprints and a lead phase (manifests `docs/sprints/web-{a,b,c,d}.md` and `web-lead.md`): A, the
@@ -1214,7 +1214,25 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     gate. **Hosting** (the user's decision, 2026-10-02): on a push to `main` on which `dsp`, `plugin`, `linux-dsp`,
     `linux-plugin` and `web` passed, `publish` deploys the `web-site` artifact the gate tested, byte for byte, to GitHub
     Pages, https://snipet.github.io/FCompressor/, and `published` runs `Scripts/web-live.sh --url` against the public
-    page once its `built-from.txt` names the commit. Nothing else is published.
+    page once its `built-from.txt` names the commit. **A second host** (the user's decision, 2026-10-03): Cloudflare
+    serves the site at https://fcompressor.seantfunk.workers.dev, as a Worker that is static assets only
+    (`wrangler.jsonc`: `build-web/site`). Cloudflare's own builder compiles it from `main` when a commit is pushed
+    there; the build command for its dashboard is `bash Scripts/cloudflare-build.sh` (CMake and Ninja from pip, emsdk
+    at the pinned version outside the checkout, the target `fcmp_web_site` alone), and the deploy command is the
+    default, `npx wrangler deploy`. Bash must be named: the builder was seen to run a build command in plain sh
+    (Cloudflare's documentation names no shell), where emsdk's `emsdk_env.sh` cannot find its own directory and
+    returns without failing, which is how the first import's build stopped (no `em-config` on the PATH); the first
+    deploy ran the same steps, typed into the dashboard as one line under `bash -c`, before the script was on `main`.
+    So that copy is the commit's own site, built `clean`, but not the artifact CI's gate tested, and no job of CI
+    checks it. No previews (the user's decision): `preview_urls` is false, so an uploaded version has no address of
+    its own, and the dashboard's Preview builds are off, so only `main` is built (while they were on, Cloudflare built
+    PR #70's branch too and added its own check, `Workers Builds: fcompressor`, to the pull request). On its first
+    deploy (`main` f49add3; 13 files; the two modules at the sizes of CI's build as GitHub Pages serves it, 1,330,842
+    and 545,704 bytes, served as `application/wasm`) the lead ran `Scripts/web-live.sh --url` against it from the
+    Mac: 28 of 28 (`published`; the six views in both themes equal to the node values, and their pixel rows; the
+    asynchronous preview; the self-test suspended and running). Cloudflare's default `html_handling` redirects
+    `/index.html` to `/` and `/fcmp-ui.html` to `/fcmp-ui` (307) and keeps the query, so on that host the self-test
+    starts from `?selftest=1` only, not from the path `fcmp-ui.html`. Nothing else is published.
   - **Tests under node** (`cmake/FcmpWeb.cmake`, 03 §2.12). `fcmp_web_check` is built from `Tools/web/*.cpp` in every
     configuration, and its subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels
     `verify;web;global`, judged by exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms
