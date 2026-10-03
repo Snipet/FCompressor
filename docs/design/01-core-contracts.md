@@ -110,7 +110,7 @@ FCompressor/
       Processor.{h,cpp} ProcessorFacade.h SetupWatcher.h ParamLayout.cpp HostText.cpp
       State.{h,cpp} StateMigration.cpp Presets.cpp factory/FactoryBank.cpp factory/<key>.inc
       CreateEditorGpu.cpp CreateEditorGeneric.cpp        (exactly one per target, chosen by CMake, no #if)
-    editor/                       GPU-free UI (namespace fcmp::ui); JUCE + FunkGui::core
+    editor/                       GPU-free UI (namespace fcmp::ui); FunkGui::core, no JUCE outside gpu/ (ADR-93)
       Panel.{h,cpp} SubView.h Layout.h Tags.h SlotModel.{h,cpp} HistoryStore.h PreviewWorker.{h,cpp}
       views/      Header DisplayRow SlotGrid Band HistoryPlot TransferPlot MeterColumn CharScreen ControlPathPlot
                   StepPlot SidechainPlot ColourPlot Readouts ModeBrowser PresetStrip PresetBrowser Footer (.h/.cpp each)
@@ -168,6 +168,32 @@ Targets (the full table, with link lines, is 03 §2.7):
    cannot be inferred, so those declarations must carry it; an out-of-line definition repeats it. Stage policies and
    Traits hooks are header-inline, so `-Wfunction-effects` (rtsan preset, `fcdsp` only) infers them; they may carry it
    explicitly. The macro sits after `noexcept` and before `override`, `= 0`, `= default` or the body.
+
+Rules 7 to 10 keep what the browser demo compiles free of JUCE (ADR-93). Each is a rule of `cmake/LintDeps.cmake`, named
+in brackets; the list there is the full text.
+
+7. **`plugin/portable` is JUCE-free** (`plugin.portable`). `Source/plugin/portable/**` is the plugin's model code
+   (`EditHistory`, `FactoryData`), which the processor and the browser's facade both build: no JUCE header, of FunkGui
+   only `funkgui/params/ParamPort.h`, and of `plugin/` only `plugin/portable/*` and `plugin/ProcessorFacade.h`.
+8. **The editor outside `gpu/` is JUCE-free** (`editor.juce`). `Source/editor/**` outside `gpu/` includes no JUCE
+   header and no FunkGui header that needs JUCE (`funkgui/juce/*`, `funkgui/presets/*`, `JuceParamPort.h`), and names
+   no `juce::`, `JUCE_*`, `jassert`, `MenuLook` or `ownerComponent`: a `#if JUCE_MAC` would turn silently false once
+   the include is gone. A menu, a file chooser and the clipboard are `HostServices` calls.
+9. **`Source/web` has no JUCE** (`web.juce`), and its three parts keep to their own (`web.engine`, `web.facade`,
+   `web.ui`):
+   - `web/engine/**` is portable C++ over `fcdsp` alone: no Emscripten header, nothing under `funkgui/`, `plugin/` or
+     `editor/`, so the same sources build natively for the checks and the module is standalone wasm with no
+     JavaScript glue.
+   - `web/facade/**` is the browser's `ProcessorFacade`: no Emscripten header, nothing under `editor/`, of `plugin/`
+     only `plugin/portable/*` and `plugin/ProcessorFacade.h`, of FunkGui only `funkgui/params/ParamPort.h`, of
+     `web/engine/` only `WebProtocol.h`, and no `EngineHost` token: the engine is reached through an `EngineLink` that
+     moves bytes.
+   - `web/ui/**` is the editor module's glue: of the engine only `web/engine/WebProtocol.h` (`WebEngine.h`'s functions
+     carry `export_name`: including it would export the engine's ABI from the editor module), of `plugin/` only
+     `plugin/portable/*` and `plugin/ProcessorFacade.h`, nothing of the GPU editor or of FunkGui's JUCE and GPU parts,
+     and no `EngineHost`.
+10. **An Emscripten header is included only under `Source/web/ui`** (`web.emscripten`): every other source of ours
+    builds natively too.
 
 `ProcessorFacade` (defined in 02 §9.5) exposes `port(Pid)`, `currentRaw()`, `readUiFrame`, `history()`,
 `setUiAttached`, `uiState()`, `stateNotice()`, `beginBatch/endBatch` and `presets()`. The registry is reached through

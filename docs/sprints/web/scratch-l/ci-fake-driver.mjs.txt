@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// fake-driver.mjs --port N | --port=N: a WebDriver server that plays one scenario (FAKE_SCENARIO) and records what it
+// was asked (FAKE_RECORD, a JSON file rewritten after every event). No browser: on Navigate it fetches the page and a
+// few other paths from the runner's server itself, so the record also says what that server serves.
+import { writeFileSync } from 'node:fs';
+import { createServer, request as httpRequest } from 'node:http';
+
+const scenario = process.env.FAKE_SCENARIO || 'pass';
+const recordPath = process.env.FAKE_RECORD || '';
+let port = 0;
+for (let i = 2; i < process.argv.length; i += 1) {
+  if (process.argv[i] === '--port') port = Number(process.argv[i + 1]);
+  else if (process.argv[i].startsWith('--port=')) port = Number(process.argv[i].slice(7));
+}
+const record = { pid: process.pid, argv: process.argv.slice(2), scenario, capabilities: null, url: '', polls: 0,
+                 deleted: 0, screenshots: 0, served: {}, commands: [] };
+const save = () => { if (recordPath) writeFileSync(recordPath, JSON.stringify(record, null, 1)); };
+save();
+if (scenario === 'slowquit') process.on('SIGTERM', () => { record.sigterm = true; save(); });
+console.error(`fake-driver: scenario ${scenario} on port ${port}`);
+
+// One raw request to the runner's server (a raw path: fetch would normalise ../ away).
+const raw = (base, method, path) => new Promise((done) => {
+  const u = new URL(base);
+  const r = httpRequest({ host: u.hostname, port: u.port, method, path }, (response) => {
+    let bytes = 0;
+    response.on('data', (d) => { bytes += d.length; });
+    response.on('end', () => done({ status: response.statusCode, type: response.headers['content-type'] || '', bytes }));
+  });
+  r.on('error', (e) => done({ status: 0, type: String(e.code), bytes: 0 }));
+  r.end();
+});
+
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const LOG = 'NOTE     a fake browser\nPASS     web.selftest browser: everything\n';
+
+const server = createServer((request, response) => {
+  let body = '';
+  request.on('data', (d) => { body += d; });
+  request.on('end', async () => {
+    const send = (status, value) => {
+      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ value }));
+    };
+    const error = (status, code, message) => send(status, { error: code, message, stacktrace: '' });
+    const path = request.url;
+    record.commands.push(`${request.method} ${path.replace(/\/session\/[^/]+/, '/session/<id>')}`);
+    save();
+    if (request.method === 'GET' && path === '/status')
+      return send(200, { ready: scenario !== 'notready', message: '' });
+    if (request.method === 'POST' && path === '/session') {
+      const asked = JSON.parse(body);
+      record.capabilities = asked.capabilities && asked.capabilities.alwaysMatch;
+      save();
+      if (scenario === 'nosession')
+        return error(500, 'session not created', 'session not created: the browser binary was not found\nat line 2');
+      return send(200, { sessionId: 'fake-session-1',
+                         capabilities: { browserName: record.capabilities.browserName, browserVersion: '1.2.3',
+                                         platformName: 'fake' } });
+    }
+    if (!path.startsWith('/session/fake-session-1')) return error(404, 'invalid session id', 'no such session');
+    const rest = path.slice('/session/fake-session-1'.length);
+    if (request.method === 'POST' && rest === '/url') {
+      record.url = JSON.parse(body).url;
+      const base = new URL(record.url).origin;
+      const page = new URL(record.url).pathname;
+      record.served.page = await raw(base, 'GET', page + new URL(record.url).search);
+      record.served.wasm = await raw(base, 'GET', '/fcmp-engine.wasm');
+      record.served.script = await raw(base, 'GET', '/main.js');
+      record.served.head = await raw(base, 'HEAD', page);
+      record.served.missing = await raw(base, 'GET', '/no-such-file.js');
+      record.served.above = await raw(base, 'GET', '/../secret.txt');
+      record.served.aboveEncoded = await raw(base, 'GET', '/%2e%2e/secret.txt');
+      record.served.aboveSlash = await raw(base, 'GET', '/licences/..%2f..%2fsecret.txt');
+      record.served.post = await raw(base, 'POST', page);
+      record.served.directory = await raw(base, 'GET', '/');
+      save();
+      return send(200, null);
+    }
+    if (request.method === 'POST' && rest === '/execute/sync') {
+      const script = JSON.parse(body).script;
+      if (/getContext/.test(script)) return send(200, 'Fake Renderer (software)');
+      record.polls += 1;
+      save();
+      if (scenario === 'hang') return undefined;                        // never answered
+      if (scenario === 'garbage') { response.writeHead(200); return response.end('<html>not json</html>'); }
+      if (scenario === 'scripterror') return error(500, 'javascript error', 'javascript error: document is not defined');
+      if (scenario === 'crash' && record.polls === 3) process.exit(7);
+      if (scenario === 'lost' && record.polls === 3) return error(404, 'invalid session id', 'the browser has closed');
+      if (scenario === 'running' || record.polls <= 3) return send(200, ['RUNNING', 'NOTE     a fake browser\n']);
+      if (scenario === 'fail')
+        return send(200, ['FAIL: editor.pixels', `${LOG}FAIL     web.selftest editor.pixels: 7 of 255\n`]);
+      return send(200, ['PASS', LOG]);
+    }
+    if (request.method === 'GET' && rest === '/screenshot') {
+      record.screenshots += 1;
+      save();
+      if (scenario === 'noshot') return error(500, 'unable to capture screen', 'no screen');
+      return send(200, PNG);
+    }
+    if (request.method === 'DELETE' && rest === '') {
+      record.deleted += 1;
+      save();
+      return send(200, null);
+    }
+    return error(404, 'unknown command', `${request.method} ${path}`);
+  });
+});
+server.listen(port, '127.0.0.1');

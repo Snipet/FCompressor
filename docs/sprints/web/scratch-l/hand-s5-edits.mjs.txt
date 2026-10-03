@@ -1,0 +1,121 @@
+// Item 5: undo and redo (the chord), A/B and its DOM menu, COPY REPORT and the clipboard.
+import { serve, chrome, sleep, Report, HERE, cleanUp, PID, pasteboardCount } from './lib.mjs';
+import { execFileSync } from 'node:child_process';
+const R = new Report();
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  await p.start(); await sleep(1000); await p.tap(); await sleep(400);
+  const thr = async () => (await p.need('THRESHOLD')).v;
+  const ratio = async () => (await p.need('RATIO')).v;
+  const slot = await p.need('THRESHOLD'); const cx = slot.x + slot.w / 2, cy = slot.y + 44;
+  const en = async () => ({ undo: (await p.need('Undo')).enabled, redo: (await p.need('Redo')).enabled });
+  const hover = async (title) => { const it = await p.need(title); await p.move(it.x + it.w / 2, it.y + it.h / 2); await sleep(350); return p.footer(); };
+
+  // the command key, as the host reports it: the footer of UNDO names the chord
+  const e0 = await en();
+  await p.drag(cx, cy, -40, 0); await sleep(700);
+  const v1 = await thr(); const e1 = await en();
+  const undoLine = await hover('Undo');
+  R.note('5.command-key', { footerOverUndo: undoLine, platform: await p.ev('navigator.userAgentData ? navigator.userAgentData.platform : navigator.platform') });
+  // Cmd-Z / Shift-Cmd-Z (Meta = 4; Shift = 8); Ctrl-Z (2) must do nothing on macOS
+  await p.click(300, 240);                                         // the canvas has the DOM focus; no ring
+  await p.key('z', { modifiers: 2 }); await sleep(300);
+  const vCtrl = await thr();
+  await p.key('z', { modifiers: 4 }); await sleep(400);
+  const v2 = await thr(); const e2 = await en(); const t2 = await p.tapRead();
+  await p.key('z', { modifiers: 12 }); await sleep(400);
+  const v3 = await thr(); const e3 = await en();
+  R.row(e0.undo === 0 && e1.undo === 1 && v1 < -18 && vCtrl === v1 && v2 === -18 && e2.redo === 1 && v3 === v1 && /CMD-Z/.test(undoLine) && Math.abs(t2.reply.thrDb + 18) < 0.01, '5.undo-redo.chord',
+        { undoEnabledAtStart: e0.undo, afterDrag: v1, afterCtrlZ: vCtrl, afterCmdZ: v2, engineAfterCmdZ: t2.reply.thrDb, afterShiftCmdZ: v3, buttons: [e1, e2, e3] });
+  // the buttons
+  await p.clickItem('Undo'); await sleep(400); const v4 = await thr();
+  await p.clickItem('Redo'); await sleep(400); const v5 = await thr();
+  R.row(v4 === -18 && v5 === v1, '5.undo-redo.buttons', { afterUndo: v4, afterRedo: v5, redoLine: await hover('Redo') });
+  // two steps, undone in order
+  const rs = await p.need('RATIO');
+  await p.drag(rs.x + rs.w / 2, rs.y + 44, 40, 0); await sleep(700);
+  const r1 = await ratio();
+  await p.click(300, 240);
+  await p.key('z', { modifiers: 4 }); await sleep(300); const u1 = { thr: await thr(), ratio: await ratio() };
+  await p.key('z', { modifiers: 4 }); await sleep(300); const u2 = { thr: await thr(), ratio: await ratio() };
+  await p.key('z', { modifiers: 4 }); await sleep(300); const u3 = { thr: await thr(), ratio: await ratio() };
+  R.row(r1 !== 4 && u1.ratio === 4 && u1.thr === v1 && u2.thr === -18 && u3.thr === -18 && u3.ratio === 4, '5.undo.two-steps-in-order', { ratioAfterDrag: r1, undo1: u1, undo2: u2, undo3_nothingLeft: u3 });
+  await p.key('z', { modifiers: 12 }); await p.key('z', { modifiers: 12 }); await sleep(300);
+
+  // A | B
+  const a0 = { thr: await thr(), ratio: await ratio(), compare: await p.value('Compare') };
+  await p.clickItem('B', { parent: 'Compare' }); await sleep(400);
+  const b0 = { thr: await thr(), ratio: await ratio(), compare: await p.value('Compare') };
+  await p.drag(cx, cy, 50, 0); await sleep(600);
+  const b1 = { thr: await thr(), compare: await p.value('Compare') };
+  await p.clickItem('A', { parent: 'Compare' }); await sleep(400);
+  const a1 = { thr: await thr(), compare: await p.value('Compare') }; const tA = await p.tapRead();
+  await p.clickItem('B', { parent: 'Compare' }); await sleep(400);
+  const b2 = { thr: await thr(), compare: await p.value('Compare') };
+  R.row(a0.compare === 'A' && b0.compare === 'B' && b1.thr !== a0.thr && a1.thr === a0.thr && a1.compare === 'A' && b2.thr === b1.thr && Math.abs(tA.reply.thrDb - a0.thr) < 0.01, '5.ab.switch',
+        { A: a0, firstB: b0, BafterDrag: b1, backToA: a1, engineOnA: tA.reply.thrDb, backToB: b2, switchRecordSnap: tA.last.snap });
+  // the right-click menu
+  const grp0 = await p.need('Compare'); const grp = await p.need('A', { parent: 'Compare' });   // the letters: the 2 px between them hit nothing
+  R.note('5.ab.right-click-between-letters', 'x 581 (between A 562..580 and B 582..600) opens nothing: by design the hit is the letters; group ' + JSON.stringify([grp0.x, grp0.y, grp0.w, grp0.h]));
+  await p.rightClick(grp.x + grp.w / 2, grp.y + grp.h / 2); await sleep(400);
+  const m1 = await p.menu();
+  const shot1 = await p.shot('5-ab-menu.png', { canvasOnly: false });
+  R.row(!!m1 && m1.items.length >= 1 && /Copy [AB] to [AB]/.test(m1.items[0].text), '5.ab.menu-opens', { items: m1 && m1.items.map((i) => i.text), box: m1 && m1.box, anchor: [grp.x, grp.y, grp.w, grp.h], menuHasFocus: m1 && m1.focused, activeElement: await p.ev('document.activeElement && (document.activeElement.id || document.activeElement.getAttribute("role") || document.activeElement.tagName)'), png: shot1 });
+  // an outside press dismisses and goes no further on the canvas
+  const vb = await thr();
+  await p.click(cx, cy); await sleep(300);
+  const aOut = await p.a11y();
+  R.row((await p.menu()) === null, '5.ab.menu-outside-press-dismisses', { menuGone: (await p.menu()) === null, focusAfter: aOut.focus, thresholdUnchanged: (await thr()) === vb, activeElement: await p.ev('document.activeElement && document.activeElement.id') });
+  // Escape dismisses; the arrow keys and Return choose
+  await p.rightClick(grp.x + grp.w / 2, grp.y + grp.h / 2); await sleep(400);
+  await p.key('Escape'); await sleep(300);
+  const escGone = (await p.menu()) === null; const escOverlay = (await p.a11y()).overlay;
+  await p.rightClick(grp.x + grp.w / 2, grp.y + grp.h / 2); await sleep(400);
+  const label = (await p.menu()).items[0].text;
+  await p.key('ArrowDown'); await sleep(100); await p.key('Enter'); await sleep(500);
+  const afterKeys = { menuGone: (await p.menu()) === null, compare: await p.value('Compare') };
+  await p.clickItem('A', { parent: 'Compare' }); await sleep(400);
+  const a2 = { thr: await thr() };
+  R.row(escGone && afterKeys.menuGone && /Copy B to A/.test(label) && a2.thr === b2.thr, '5.ab.menu-keys-choose', { escapeDismisses: escGone, chose: label, afterKeys, AnowHasBs: a2, Bwas: b2.thr, activeElement: await p.ev('document.activeElement && document.activeElement.id') });
+  // a real click on the item
+  await p.drag(cx, cy, -30, 0); await sleep(600);                   // A differs from B again
+  const a3 = await thr();
+  await p.rightClick(grp.x + grp.w / 2, grp.y + grp.h / 2); await sleep(400);
+  const it = await p.menuChoose(/Copy A to B/);
+  await p.clickItem('B', { parent: 'Compare' }); await sleep(400);
+  R.row((await thr()) === a3, '5.ab.menu-click-chooses', { chose: it.text, A: a3, BafterCopy: await thr() });
+
+  // COPY REPORT. The page's clipboard call is watched, not replaced; the system pasteboard's change count says whether
+  // headless Chrome wrote to the real one (its text is saved first and put back if so; it is never printed or kept).
+  await p.clickItem('Settings'); await sleep(500);
+  await p.ev(`(() => { const c = navigator.clipboard; globalThis.__clip = { calls: 0, text: null, outcome: 'pending', perm: null };
+    const orig = c.writeText.bind(c);
+    c.writeText = (t) => { __clip.calls += 1; __clip.text = t; const pr = orig(t); pr.then(() => { __clip.outcome = 'resolved'; }, (e) => { __clip.outcome = 'rejected: ' + e; }); return pr; };
+    navigator.permissions.query({ name: 'clipboard-write' }).then((s) => { __clip.perm = s.state; }, (e) => { __clip.perm = 'query failed: ' + e; }); })()`);
+  let saved = null; try { saved = execFileSync('pbpaste', { maxBuffer: 64 * 1024 * 1024 }); } catch {}
+  const count0 = pasteboardCount();
+  const cr = await p.need('Copy report');
+  const shotSet = await p.shot('5-settings.png');
+  await p.click(cr.x + cr.w / 2, cr.y + cr.h / 2); await sleep(500);
+  const said = (await p.a11y()).items.filter((i) => /cop/i.test(i.title) || /COPIED/.test(i.value)).map((i) => `${i.title} = ${i.value}`);
+  const shotCopied = await p.shot('5-copy-report.png');
+  const clip = JSON.parse(await p.ev('JSON.stringify(__clip)'));
+  const count1 = pasteboardCount();
+  let restored = 'not needed';
+  if (count1 !== count0 && saved !== null) { try { execFileSync('pbcopy', { input: saved }); restored = 'the previous text was put back'; } catch { restored = 'could not restore'; } }
+  saved = null;
+  await sleep(2300);
+  const saidLater = (await p.a11y()).items.filter((i) => /cop/i.test(i.title)).map((i) => `${i.title} = ${i.value}`);
+  R.row(clip.calls === 1 && typeof clip.text === 'string' && clip.text.length > 200, '5.copy-report', { writeTextCalls: clip.calls, outcome: clip.outcome, permission: clip.perm, reportChars: clip.text && clip.text.length, reportHead: clip.text && clip.text.split('\n').slice(0, 6), editorSays: said, after2s: saidLater, systemPasteboardChanged: count1 !== count0, restored, pngs: [shotSet, shotCopied] });
+  await p.key('Escape');
+  R.row(p.consoleLines.length === 0, '5.console', p.consoleLines.length ? p.consoleLines : 'nothing on the console');
+  const st = await p.status(); const ws = await p.stats();
+  R.row(st.refused === 0 && ws.refused === 0 && ws.ok, '5.engine-took-every-record', { posted: st.posted, records: ws.records, refused: ws.refused });
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);

@@ -1,5 +1,9 @@
 # Web demo: the judged plan (ADR-93 design pass, 2026-10-01)
 
+Status: carried out. Sprints A to D and the lead phase ran from 2026-10-01 to 2026-10-02 (PRs #64 to #68); the demo is
+published on GitHub Pages from `main`. ADR-93 in `docs/DECISIONS.md` records what was built; where it differs from
+this plan, ADR-93 is right.
+
 Synthesised by a judge from three independent designs over the five scout reports in this directory. The lead's
 sprint manifests (docs/sprints/web-a.md, ...) are binding where they differ.
 

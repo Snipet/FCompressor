@@ -1,0 +1,28 @@
+import { serve, chrome, sleep, HERE, cleanUp } from './lib.mjs';
+const server = await serve(`${HERE}/plain`);
+const variants = {
+  A_rawKeyDown_vk_native: [{ type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 }, { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 }],
+  B_rawKeyDown_vk_only: [{ type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }],
+  C_keyDown_vk_only: [{ type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }],
+  D_keyDown_no_vk: [{ type: 'keyDown', key: 'Escape', code: 'Escape' }, { type: 'keyUp', key: 'Escape', code: 'Escape' }],
+  E_char_a_text: [{ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, text: 'a', unmodifiedText: 'a' }, { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 }],
+  F_tab: [{ type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }],
+  G_enter: [{ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }],
+};
+for (const [name, events] of Object.entries(variants)) {
+  const b = await chrome({ width: 1280, height: 800 });
+  const p = await b.page(null);
+  await p.go(`${server.base}/index.html?raf=loop${process.argv[2] || ''}`, 800);
+  await p.s('Input.dispatchMouseEvent', { type: 'mousePressed', x: 50, y: 50, button: 'left', buttons: 1, clickCount: 1 });
+  await p.s('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 50, y: 50, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(200);
+  let done = false;
+  const all = (async () => { for (const e of events) await p.s('Input.dispatchKeyEvent', e); done = true; })().catch((e) => console.log(name, 'dispatch error', e.message));
+  await Promise.race([all, sleep(3000)]);
+  await sleep(1000);
+  let d = '?';
+  try { d = await Promise.race([p.ev('JSON.stringify(__d)'), sleep(4000).then(() => 'evaluate unanswered in 4 s')]); } catch (e) { d = String(e); }
+  console.log(`${name.padEnd(24)} dispatch answered: ${done}  ${d}  active: ${await Promise.race([p.ev('document.activeElement && document.activeElement.id'), sleep(2000).then(() => '?')])}`);
+  b.kill();
+}
+server.kill(); cleanUp(); process.exit(0);

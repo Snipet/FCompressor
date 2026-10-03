@@ -11,20 +11,22 @@
 //
 // Measured at web Sprint D's merge (the three cards with their review fixes, FunkGui v0.14.0), Emscripten 6.0.3, on
 // arm64 macOS (another host's build of the same toolchain may differ by a little: the 20 % is also for that).
+// fcmp-ui.js, fcmp-ui.wasm and main.js were measured again at the web lead phase's merge (the module's frame and
+// accessibility exports; the self-test's pixel rule by renderer class, on a still frame).
 const MEASURED = {
   'built-from.txt': [73, 89],
   'demo.css': [3240, 1418],
   'fcmp-engine.wasm': [545704, 136515],
   'fcmp-ui.html': [4144, 2077],
-  'fcmp-ui.js': [55707, 16119],
-  'fcmp-ui.wasm': [1323756, 447506],
+  'fcmp-ui.js': [55742, 16153],
+  'fcmp-ui.wasm': [1330842, 451250],
   'fcmp-worklet.js': [10548, 3556],
   'index.html': [4144, 2077],
   'licences/GPL-3.0.txt': [35149, 12091],
   'licences/JetBrainsMono-OFL.txt': [4399, 1969],
   'licences/THIRD-PARTY.txt': [62770, 9135],
   'loop.js': [7409, 2658],
-  'main.js': [39399, 12925],
+  'main.js': [45260, 14897],
 };
 const HEADROOM = 1.2;
 //

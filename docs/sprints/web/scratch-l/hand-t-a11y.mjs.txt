@@ -1,0 +1,13 @@
+import { serve, chrome, sleep, HERE, cleanUp } from './lib.mjs';
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+const p = await b.page(null);
+await p.metrics(1280, 800, 1);
+for (const id of ['panel', 'presetbrowser', 'settings', 'modebrowser', 'chars.sidechain']) {
+  await p.go(`${server.base}/?view=${id}`, 1200);
+  await p.start(); await sleep(800);
+  const a = await p.a11y();
+  console.log(`== ${id}: screen ${a.screen} overlay ${a.overlay} mode ${a.mode}`);
+  for (const it of a.items) console.log(`${String(it.id).padStart(7)} p${String(it.parent).padStart(7)} r${it.role} [${it.x},${it.y},${it.w},${it.h}] e${it.enabled} c${it.checked} v=${it.v} "${it.title}" = "${it.value}" (${it.description})`);
+}
+b.kill(); server.kill(); cleanUp(); process.exit(0);

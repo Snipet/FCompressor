@@ -26,7 +26,8 @@
 // uncaught error or an unhandled rejection is a FAIL at once, and no PASS replaces it. When this file never runs
 // (it or loop.js is missing or does not parse), index.html says so itself, until boot() sets fcmpBooted.
 //
-// Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest. It
+// Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest; and,
+// in the self-test only, Module.fcmpA11y's fullRate where the module has it (the web lead phase's contract). It
 // never pulls (the module does, once a frame), and it calls neither Module.fcmpResetEngine (a new source runs into
 // the engine as the next song would into the plugin) nor Module.fcmpShutdown (the module ends itself when the page
 // goes).
@@ -141,6 +142,52 @@ export function builtFrom(line) {
   const commit = m[1].slice(0, 12).toUpperCase();
   return m[2] === 'clean' ? { text: SAY.built(commit, m[3]), commit, href: `${REPOSITORY}/tree/${m[1]}` }
                           : { text: SAY.builtDirty(commit, m[3]), commit, href: '' };
+}
+
+// The self-test's pixel rule, by the class of the WebGL renderer. A GPU's frame is SoftRaster's within 2 of 255 in
+// every sample. A software renderer filters the atlas more coarsely (SwiftShader: up to 8 on a glyph's edge) and gets
+// the bound FunkGui holds its own sink's page to (its test/web/page.cpp: kWorst, kOverPerMille): no sample over 16, and
+// at most 10 per mille over 2. Software is what the renderer's name says it is: any other name, and none, is a GPU.
+// `pixels` is Module.fcmpSelftest()'s {frames, largest, over2, samples}; where no frame was drawn and read there is
+// nothing to judge, and no pass.
+export const SOFTWARE_PIXELS = { worst: 16, perMille: 10 };
+export function softwareRenderer(name) {
+  return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(String(name));
+}
+export function pixelRule(pixels, renderer) {
+  const software = softwareRenderer(renderer);
+  const share = pixels.samples > 0 ? 1000 * pixels.over2 / pixels.samples : Infinity;      // per mille over 2
+  const read = pixels.frames >= 1 && pixels.samples > 0;
+  const within = software ? pixels.largest <= SOFTWARE_PIXELS.worst && share <= SOFTWARE_PIXELS.perMille
+                          : pixels.over2 === 0;
+  return { ok: read && within, read, software, share,
+           rule: software ? `software: at most ${SOFTWARE_PIXELS.worst}, and ${SOFTWARE_PIXELS.perMille} per mille `
+                            + 'over 2'
+                          : 'a GPU: none over 2' };
+}
+
+// The Panel at rest, for the self-test's still frame: it no longer asks for the full frame rate (Module.fcmpA11y's
+// fullRate 0: what Scripts/web/scenario calls a still frame). Before START no reply has come, so no trace, dot or
+// HISTORY moves; but the IN and OUT meters fall from the facade's first frame for some 2.5 s after the editor is
+// ready, and the first-use hint holds the full rate for 6 s. Asked every REST.step ms, for at most REST.bound ms. A
+// module that does not say (no fcmpA11y, or no fullRate in it) is given a quiet time of REST.quiet ms instead, longer
+// than those: then the rest is assumed, not seen, and `how` says so. wait(ms) sleeps; now() is in ms.
+// {still, ms, how, fullRate}: how is 'fullRate' (and fullRate is the last answer) or 'quiet'.
+export const REST = { bound: 20000, step: 50, quiet: 7000 };
+export async function untilRest(module, wait, now) {
+  const t0 = now();
+  const fullRate = () => (typeof module.fcmpA11y === 'function' ? JSON.parse(module.fcmpA11y()).fullRate : undefined);
+  let rate = fullRate();
+  if (typeof rate !== 'number') {
+    await wait(REST.quiet);
+    return { still: true, ms: Math.round(now() - t0), how: 'quiet' };
+  }
+  for (;;) {
+    const ms = Math.round(now() - t0);
+    if (rate === 0 || ms >= REST.bound) return { still: rate === 0, ms, how: 'fullRate', fullRate: rate };
+    await wait(REST.step);
+    rate = fullRate();
+  }
 }
 
 // The self-test's verdict. show(title, line) is told the title after every change and each log line once. A failing
@@ -260,6 +307,17 @@ function boot() {
     webgl2: webgl2(),
   });
   const lackText = lack === '' ? '' : lack === 'file' ? $('fcmp-status').dataset.file : SAY[lack];
+  // The WebGL renderer's name, which the self-test's pixel rule goes by: asked of a canvas of its own as well, and
+  // only when the self-test runs. '' when the browser gives no context.
+  const rendererName = () => {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return '';
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+    const lose = gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+    return name;
+  };
 
   // ---- the editor module --------------------------------------------------------------------------------------------
   // The page's half of the seam: Module.fcmpReady and Module.onAbort exist before fcmp-ui.js runs. That file is a
@@ -612,8 +670,57 @@ function boot() {
     }
     if (lack !== '') return;
 
-    // 4. The page itself: the editor, and the live context (without a gesture it stays suspended, which is the RESUME
-    //    state: messages are answered all the same, so the link is judged either way; the audio only when it runs).
+    // 4. The editor's own check (the seam's Module.fcmpSelftest), before START: the atlas it draws with is the
+    //    committed bake, and one frame through the WebGL2 sink, read back inside that call, is SoftRaster's by
+    //    pixelRule(). A still frame, on purpose: it is asked for once the Panel is at rest (untilRest(): before START
+    //    the meters' first fall and the first-use hint keep it moving for some 6 s; a Panel that does not rest within
+    //    the bound fails the row; a module that cannot say gets a quiet time, and the NOTE says which), in the same
+    //    task as the answer that said so, so no frame of the host's comes between. After START the engine answers,
+    //    and a moving trace is a pixel off SoftRaster's in a share of the frames that depends on the state, which
+    //    says nothing about the sink. An editor that is not there is page.start's failure below.
+    let drawing = false;
+    try {
+      await within(20000, 'the editor', editor);
+      drawing = true;
+    } catch (error) {
+      fail(error);
+    }
+    if (drawing && typeof Module.fcmpSelftest !== 'function') {
+      row(false, 'editor.selftest', 'the module does not provide Module.fcmpSelftest');
+    } else if (drawing) {
+      const renderer = rendererName();
+      note(`renderer: ${renderer || 'not named'} (${softwareRenderer(renderer) ? 'software' : 'judged as a GPU'})`);
+      const rest = await untilRest(Module, sleep, () => performance.now());
+      note(rest.how === 'fullRate'
+        ? `the still frame: the Panel ${rest.still ? 'at rest' : 'NOT at rest'} after ${rest.ms} ms (Module.fcmpA11y's `
+          + `fullRate ${rest.fullRate}; at most ${REST.bound} ms)`
+        : `the still frame: after a quiet time of ${rest.ms} ms (the module does not say whether the Panel is at rest: `
+          + 'no Module.fcmpA11y with fullRate)');
+      let self = null;
+      try {
+        self = JSON.parse(Module.fcmpSelftest());
+      } catch (error) {
+        row(false, 'editor.selftest', `Module.fcmpSelftest() did not return JSON (${error})`);
+      }
+      if (self !== null) {
+        const pixels = self.pixels || {};
+        const judged = pixelRule(pixels, renderer);
+        row(self.atlasHash === ATLAS_HASH, 'editor.atlas', `${self.atlasHash} (want ${ATLAS_HASH})`);
+        const numbers = `${pixels.samples} samples against SoftRaster, the largest difference ${pixels.largest} of `
+                        + `255, ${pixels.over2} over 2 (${judged.share.toFixed(2)} per mille; ${judged.rule})`;
+        const moving = rest.still ? '' : `; the Panel was not at rest within ${rest.ms} ms`;
+        const atRest = rest.how === 'quiet' ? `after a quiet time of ${rest.ms} ms` : 'the Panel at rest';
+        row(judged.ok && rest.still, 'editor.pixels',
+            !judged.read ? `no still frame was drawn and read back before START (frames ${pixels.frames}, samples `
+                           + `${pixels.samples}${moving}): nothing to judge. A hidden document draws none`
+            : !rest.still ? `the Panel was not at rest within ${rest.ms} ms: no still frame before START (what was `
+                            + `read of the moving one: ${pixels.frames} frame(s), ${numbers})`
+            : `${pixels.frames} still frame(s), before START, ${atRest}, read back through the sink: ${numbers}`);
+      }
+    }
+
+    // 5. The page itself, and the live context (without a gesture it stays suspended, which is the RESUME state:
+    //    messages are answered all the same, so the link is judged either way; the audio only when it runs).
     try {
       await within(20000, 'the start', start());
     } catch (error) {
@@ -635,25 +742,6 @@ function boot() {
                          : status.textContent === SAY.paused && !button.hidden && focused),
           'page.status', `the status line says "${status.textContent}" and is ${heard ? '' : 'NOT '}rendered; `
           + (button.hidden ? 'no button' : `${button.textContent} ${focused ? 'has' : 'has NOT'} the focus`));
-    }
-    // The editor's own check (the seam's Module.fcmpSelftest): the atlas it draws with is the committed bake, and one
-    // frame through the WebGL2 sink, read back inside that call, is SoftRaster's within 2 of 255 a channel.
-    if (typeof Module.fcmpSelftest !== 'function') {
-      row(false, 'editor.selftest', 'the module does not provide Module.fcmpSelftest');
-    } else {
-      let self = null;
-      try {
-        self = JSON.parse(Module.fcmpSelftest());
-      } catch (error) {
-        row(false, 'editor.selftest', `Module.fcmpSelftest() did not return JSON (${error})`);
-      }
-      if (self !== null) {
-        const pixels = self.pixels || {};
-        row(self.atlasHash === ATLAS_HASH, 'editor.atlas', `${self.atlasHash} (want ${ATLAS_HASH})`);
-        row(pixels.frames >= 1 && pixels.samples > 0 && pixels.over2 === 0, 'editor.pixels',
-            `${pixels.frames} frame(s) read back through the sink: ${pixels.samples} samples against SoftRaster, the `
-            + `largest difference ${pixels.largest} of 255, ${pixels.over2} over 2`);
-      }
     }
     // Watched for 0.6 s, and for up to 3 s until both counts have moved.
     const before = JSON.parse(Module.fcmpStatus());

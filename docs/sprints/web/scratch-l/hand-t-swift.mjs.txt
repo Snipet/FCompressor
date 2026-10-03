@@ -1,0 +1,18 @@
+import { serve, chrome, sleep, HERE, cleanUp } from './lib.mjs';
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 900 });
+const p = await b.page(null);
+await p.metrics(1280, 800, 1);
+for (const view of ['panel', 'settings', 'presetbrowser', 'chars.sidechain']) {
+  for (const theme of [0, 1]) {
+    await p.go(`${server.base}/?view=${view}&theme=${theme}`, 500);
+    const t0 = Date.now(); while (!(await p.ev("typeof Module === 'object' && typeof Module.fcmpSelftest === 'function'")) && Date.now() - t0 < 15000) await sleep(100);
+    const readyMs = Date.now() - t0; await sleep(800);
+    const r = JSON.parse(await p.ev('Module.fcmpSelftest()'));
+    console.log(`${view} theme ${theme}: largest ${r.pixels.largest} at ${JSON.stringify(r.largestAt || null)}, ${r.pixels.over2} over 2 (ready after ${readyMs} ms)`);
+    if (r.grid) { for (const row of r.grid) console.log('   ' + row.map((n) => String(n).padStart(5)).join('')); console.log('   first: ' + r.offenders.map((o) => `(${o[0]},${o[1]})c${o[2]}:${o[3]}v${o[4]}`).join(' ')); }
+  }
+}
+console.log(await p.ev("(() => { const g = document.createElement('canvas').getContext('webgl2'); const e = g.getExtension('WEBGL_debug_renderer_info'); return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER); })()"));
+await p.shot('swiftshader-panel.png');
+b.kill(); server.kill(); cleanUp(); process.exit(0);

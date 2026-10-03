@@ -1,0 +1,22 @@
+// Scratch (scout-l/audio): what floating-point environment a wasm call runs in. Bits in, bits out, so no JavaScript
+// number conversion takes part.
+#include <stdint.h>
+#include <string.h>
+#include <wasm_simd128.h>
+#define EXPORT(n) __attribute__((export_name(#n)))
+static float f(uint32_t b) { float x; memcpy(&x, &b, 4); return x; }
+static uint32_t u(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
+EXPORT(mul32) uint32_t mul32(uint32_t a, uint32_t b) { return u(f(a) * f(b)); }
+EXPORT(add32) uint32_t add32(uint32_t a, uint32_t b) { return u(f(a) + f(b)); }
+EXPORT(mulv) uint32_t mulv(uint32_t a, uint32_t b)
+{
+    return u(wasm_f32x4_extract_lane(wasm_f32x4_mul(wasm_f32x4_splat(f(a)), wasm_f32x4_splat(f(b))), 0));
+}
+// (double) a * (double) b demoted to float: the conversion's own underflow.
+EXPORT(demote) uint32_t demote(uint32_t a, uint32_t b) { return u((float) ((double) f(a) * (double) f(b))); }
+// a double product that is denormal in double: its high word.
+EXPORT(mul64hi) uint32_t mul64hi(uint32_t ahi, uint32_t bhi)
+{
+    uint64_t ab = (uint64_t) ahi << 32, bb = (uint64_t) bhi << 32; double x, y; memcpy(&x, &ab, 8); memcpy(&y, &bb, 8);
+    double z = x * y; uint64_t zb; memcpy(&zb, &z, 8); return (uint32_t) (zb >> 32) | (uint32_t) (zb != 0);
+}

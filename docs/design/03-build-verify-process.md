@@ -43,19 +43,22 @@ Evidence tags:
    - Its include path has no JUCE, so a JUCE include fails to compile. The rule is enforced by construction.
    - The oversampler is FCompressor's own, not `juce::dsp::Oversampling` (§3.10 #5).
    - The test tap is a runtime pointer, not a compile flag (§3.10 #4).
-6. **Three configurations** (options `FCOMPRESSOR_*`, Release by default):
+6. **Four configurations** (options `FCOMPRESSOR_*`, Release by default):
    - GPU: bgfx, the real editor.
    - **Headless** (`FCOMPRESSOR_HEADLESS=ON`): no bgfx, but every UI probe still runs, because FunkGui's recorder is
      GPU-free.
    - **DSP-only** (`FCOMPRESSOR_DSP_ONLY=ON`): no JUCE at all. Configure takes about 2 s.
+   - **Web** (`FCOMPRESSOR_WEB=ON`, ADR-93): the browser demo, wasm32 through Emscripten; no JUCE, no bgfx, no
+     threads (§2.12).
 7. **Floating point is the same on every target:**
    - `-ffp-contract=off -fno-math-errno -fno-trapping-math -O3`, and never `-ffast-math`.
    - ISA flags per slice as `SHELL:-Xarch_<arch> <flag>` pairs (§2.6).
    - LTO only in Release, and only on the plugin and on `fcdsp`'s bitcode. Probes never LTO-compile JUCE.
-8. **Three probe executables.**
+8. **Three probe executables**, and a fourth in the web configuration.
    - `fcmp_probe_dsp`: `fcdsp` + harness. No JUCE.
    - `fcmp_probe_plugin`: processor + editor `Panel` + FunkGui core + harness. JUCE is compiled once for all probes.
    - `fcmp_bench`: not gating.
+   - `fcmp_probe_web` (web only): the editor, the web facade and every `ui.*` probe as a node program (§2.12).
 
    Each executable takes a subcommand `<layer>.<name>`. **Probes self-register**: one file per probe,
    `Tools/probes/{dsp,plugin}/<name>.cpp`, whose first line declares its layer, scope and timeout; CMake reads that
@@ -80,7 +83,8 @@ Evidence tags:
       arm64-only** unless an x86 verify has passed: `release.sh` refuses a universal build without
       `build-lead-x86/verify-passed-<sha>` (§5; K2 #15; user confirmation `DECISIONS.md` Q6).
 12. **Agents.**
-    - At most 3 at once **across both repositories**, each building with `-j4 -l 12` and testing with `ctest -j4`.
+    - At most 6 at once **across both repositories** (3 until 2026-10-01), each building with `-j6` (no load limit)
+      and testing with `ctest -j6`.
     - Each works in its own worktree and its own build directories (`<worktree>/build-<preset>`), on files it owns
       (§4.6). The build is designed so that no task needs to edit a shared file (§2.1, §2.9).
     - Agents never commit, never bless and never install. The lead commits, merges, blesses, tags FunkGui, bumps the
@@ -112,8 +116,15 @@ FCompressor/
     FcmpProbes.cmake             probe executables, self-registered CTest tests (§2.9), verify / verify-gui-live
     FcmpProduct.h.in             configure_file -> ${binary}/generated/FcmpProduct.h (name, version, codes, env prefix)
     FcmpBuiltFrom.cmake          -P script: built-from-{probes,plugin}.txt, the tree a build came from (FZ0 errata, §2.9)
+    FcmpPlatform.cmake           FCMP_PLATFORM (macos, linux, web), the formats per platform, Clang only (ADR-92)
+    FcmpWeb.cmake                the web targets and the FCMP_WEB_TEST registration (§2.12; ADR-93)
+    FcmpWebSite.cmake, FcmpWebLive.cmake   -P scripts: build-web/site and the test-only build-web/live (§2.12)
     LintDeps.cmake               -P script: the lint.deps test (01 §2.2 include, libm and static rules)
-  Source/                        01 §2.1: fcdsp/ (core params engine modes telemetry analysis), plugin/, editor/ (+ gpu/)
+    LintDocs.cmake               -P script: the lint.docs test (facts the documents state that another file owns)
+  Source/                        01 §2.1: fcdsp/ (core params engine modes telemetry analysis), plugin/ (+ portable/),
+                                 editor/ (+ gpu/), web/ (engine facade ui: the browser demo, §2.12)
+  web/                           the demo's page, its AudioWorklet script, live/ (test-only pages), tests/ (node tests)
+  .github/workflows/ci.yml       CI (§4.10)
   Tools/
     probes/common/               ProbeMain.cpp (subcommand dispatch over the self-registration list, Mode loop,
                                  ScopedFtz), ProbeRegistry.h (FCMP_PROBE macro), Signals.h (own PCG32; no
@@ -123,6 +134,8 @@ FCompressor/
     probes/dsp/<name>.cpp        one file per dsp.* probe (§3.4)
     probes/plugin/<name>.cpp     one file per proc.* or ui.* probe (§3.5, §3.6); FakeFacade.{h,cpp}
     bench/Bench.cpp              fcmp_bench (E §3.7, C §5.8 CPU bench)
+    web/*.cpp, web/port/, web/live/   fcmp_web_check's checks, the port check, the test-only print module and the
+                                 browser gate's expectation tool (§2.12)
   tests/
     golden/base/global/<layer>.<name>.txt            arch-neutral rows
     golden/base/modes/<key>/<layer>.<name>.txt       (+ <layer>.<name>.<key>.lines sidecars)
@@ -138,6 +151,7 @@ FCompressor/
     golden.py                    5-line wrapper: runs FunkGui's tools/golden.py (the format owner, located through
                                  build-*/fcmp-deps.txt) with FCompressor defaults; report | diff | adopt (§3.2.5)
     gui-live.sh                  live Standalone capture and headless parity, serialised with lockf (§3.6)
+    web-live.sh, web/            the browser gate and its runners: live.mjs, cdp.mjs, scenario.mjs, page-check.mjs
     release.sh                   sign, verify, notarise, package (§5)
     sprint/ownership.py          checks a worktree's changed paths against the task's OWNS globs (§4.6); ignores .claude/
   Resources/  FCompressor.entitlements     (the font and the bgfx/bx/bimg licences come from FunkGui, 02 §1.6)
@@ -150,8 +164,10 @@ FCompressor/
 |---|---|---|
 | `Source/fcdsp/**` | std, SIMD intrinsics, each other | `fcdsp` only |
 | `Source/plugin` | `fcdsp` headers, JUCE, FunkGui core (`ParamPort`) and presets, `FcmpProduct.h` | `FCompressor` (shared code) and `fcmp_probe_plugin` |
-| `Source/editor` | `fcdsp` headers, `Source/plugin/ProcessorFacade.h`, FunkGui core, JUCE | GPU plugin and `fcmp_probe_plugin` |
-| `Source/editor/gpu` | the above plus FunkGui gpu | GPU plugin only |
+| `Source/plugin/portable` | std, `fcdsp` headers, FunkGui's `ParamPort.h`, `ProcessorFacade.h` (01 §2.2 rule 7) | as `Source/plugin`, and the web targets |
+| `Source/editor` | `fcdsp` headers, `Source/plugin/ProcessorFacade.h`, FunkGui core; no JUCE outside `gpu/` (01 §2.2 rule 8) | GPU plugin, `fcmp_probe_plugin`, and (web) `fcmp_web_ui`, `fcmp_probe_web` |
+| `Source/editor/gpu` | the above plus JUCE and FunkGui gpu | GPU plugin only |
+| `Source/web/{engine,facade,ui}` | 01 §2.2 rules 9 and 10 | §2.12 |
 | `Tools/probes/dsp` | `fcdsp`, `FunkGui::harness`, `probes/common` | `fcmp_probe_dsp` |
 | `Tools/probes/plugin` | everything above except `editor/gpu` | `fcmp_probe_plugin` |
 
@@ -257,6 +273,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)                    # 
 endif()
 # (ADR-92: the macOS-only check became include(cmake/FcmpPlatform.cmake): macOS or Linux, Clang only, the formats per
 #  platform, and JUCE 8.0.4's upstream-Clang workaround. Linux defaults CMAKE_CXX_COMPILER to clang++ before project().)
+# (ADR-93: before project(), the option FCOMPRESSOR_WEB takes Emscripten's toolchain file from em-config, and
+#  include(cmake/FcmpWeb.cmake) follows FcmpProbes.cmake; §2.12.)
 # options (§2.2) ...
 include(cmake/FcmpArch.cmake)     # flags need FCMP_ARCHS; must precede targets
 include(cmake/FcmpDeps.cmake)     # JUCE -> bgfx (GPU) -> FunkGui, with assertions
@@ -301,6 +319,8 @@ generated `ModeIncludes.h` (01 §8.3).
 | `FCOMPRESSOR_FUNKGUI_REPO` | `/Users/seanfunk/audio/libraries/FunkGui` | The FunkGui `GIT_REPOSITORY`. |
 | `FCMP_TEST_JOBS` | 4 | `-j` for the `verify` convenience target. |
 | `FCOMPRESSOR_RELEASE` | OFF | ON only in the `universal` and release builds: `dsp.registry` then fails on any `provisional` Mode (01 §4.3). |
+| `FCOMPRESSOR_WEB` | OFF | The browser demo (ADR-93, §2.12): wasm32 through Emscripten's toolchain, found by `em-config` before `project()`. Implies DSP-only for every JUCE branch. |
+| `FCOMPRESSOR_WEB_FMA` | `exact` | Web only: `unfused` builds the two-rounding fma, for measurement; never shipped (ADR-93). |
 | `FCOMPRESSOR_RTSAN` | OFF | `-fsanitize=realtime` (the `rtsan` preset, §2.10). A configure-time `check_cxx_source_compiles` probes support; if the toolchain lacks it, the option is refused with a message and the interposer fallback is used. |
 
 Definitions on the plugin target: `JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0` (HR `:296-299`).
@@ -521,6 +541,9 @@ Rules:
 | `verify` | custom | `ctest --test-dir <bin> -L verify -j ${FCMP_TEST_JOBS} --output-on-failure`, `DEPENDS fcmp_probes`. No `&&` chain. | no |
 | `verify-gui-live` | custom (GPU only) | `Scripts/gui-live.sh ${CMAKE_BINARY_DIR}`; depends on `FCompressor_Standalone`, `fcmp_probe_plugin`, `funkgui_framerender` | no |
 
+The web targets (`fcmp_web_engine_lib` and `fcmp_web_check` in every configuration; the modules, the site,
+`fcmp_probe_web` and the browser gate's targets in the web configuration) are §2.12.
+
 Why two probe executables and not C's three (C §5.14):
 - `FcmpProcProbe` and `FcmpUiProbe` are merged into `fcmp_probe_plugin`. The UI probe needs a prepared processor anyway
   (C §5.9).
@@ -654,6 +677,12 @@ endif()
 Changing an `FCMP_PROBE` line (a new timeout, say) needs a reconfigure, which every preset's workflow runs anyway.
 A duplicate `<layer>.<name>` is a CTest error at configure time.
 
+The block above is FZ0's; `cmake/FcmpProbes.cmake` is the truth. Since then the line takes an optional
+` platform=<apple|linux|web>[,…]` (ADR-92, ADR-93): the test registers on those platforms only (`FCMP_PLATFORM`, with
+`apple` for `macos`), and the file compiles everywhere. `ui.font` is `platform=apple,web` and `ui.font_linux`
+`platform=linux`. The web configuration registers the `layer=ui` probes on `fcmp_probe_web` (§2.12). The lint tests are
+`lint.deps` and `lint.docs` (`cmake/LintDocs.cmake`) in every configuration, and `lint.headers` in the native ones.
+
 **The v1 probe set** (union of Draft 1 §8.3 and Draft 3; K1 #4). Global probes: `dsp.selftest` (B0: the harness
 and registration plumbing), `dsp.registry`, `dsp.simd`,
 `dsp.units`, `dsp.sc`, `dsp.os`, `dsp.telemetry`, one `dsp.<policy>` unit probe per stage policy that has one,
@@ -701,21 +730,24 @@ Rules for the test set:
 | `agent` | `${sourceDir}/build-agent` | **headless**, RelWithDebInfo, install OFF | default for FCompressor agents |
 | `agent-gui` | `${sourceDir}/build-agent-gui` | GPU, RelWithDebInfo, install OFF | GPU editor work (`EditorHost`, shaders) |
 | `dsp` | `${sourceDir}/build-dsp` | DSP-only, RelWithDebInfo | inner loop for `fcdsp` tasks |
+| `web` | `${sourceDir}/build-web` | web (`FCOMPRESSOR_WEB=ON`), Release | the browser demo: agents whose card touches what the browser builds, the lead's gate, CI (§2.12) |
 | `asan` / `tsan` | `${sourceDir}/build-{asan,tsan}` | DSP-only, RelWithDebInfo + `-fsanitize=address,undefined -fno-sanitize-recover=undefined` (FZ0 errata, R-B0 #5: UBSan halts instead of printing `runtime error:` and exiting 0) / `thread` | lead at milestones (S4, S8, S12; §4.8) |
 | `tsan-agent` | `${sourceDir}/build-tsan-agent` | **headless**, RelWithDebInfo + `-fsanitize=thread`; runs `proc.*` and `ui.*` too, including a scripted editor attach/detach and the message-thread `SetupWatcher` | lead at milestones (K2 #18) |
 | `rtsan` | `${sourceDir}/build-rtsan` | headless, RelWithDebInfo, `FCOMPRESSOR_RTSAN=ON` (`-fsanitize=realtime`; `[[clang::nonblocking]]` on `EngineHost::process`, the `IEngine` per-chunk calls and `Processor::processBlock`; `-Wfunction-effects` on `fcdsp` only, because JUCE functions carry no effect annotations). If unsupported, `fcmp_probe_plugin` interposes `malloc`, `free`, `pthread_mutex_lock`, `os_unfair_lock_lock`, `write` and `mach_msg` and counts calls on the audio thread | lead at milestones (K2 #18) |
 
 Build presets:
-- `<p>` builds `["all","fcmp_probes"]`. `agent-probes` builds `["fcmp_probes"]` only.
-- Agents get `"jobs": 4, "nativeToolOptions": ["-l","12"]`.
+- `<p>` builds `["all","fcmp_probes"]`. `agent-probes` builds `["fcmp_probes"]` only. `web` builds `["fcmp_web"]`.
+- The agents' build presets (`agent`, `agent-probes`, `agent-gui`, `dsp`, `web`) have `"jobs": 6` and no load limit
+  (`-l` serialised the builds under load); the lead's take Ninja's default.
 
 Test presets:
-- `<p>` uses `"filter": {"include": {"label": "verify"}}`, `"execution": {"jobs": 4}` and
+- `<p>` uses `"filter": {"include": {"label": "verify"}}`, `"execution": {"jobs": 6}` and
   `"output": {"outputOnFailure": true}`.
 
 Workflow presets:
-- `agent-verify`, `lead-verify`, `dsp-verify`, `asan-verify`, `tsan-verify`, `tsan-agent-verify` and `rtsan-verify`
-  each run configure, build and test. `cmake --workflow --preset agent-verify` is one command.
+- `agent-verify`, `agent-gui-verify`, `lead-verify`, `lead-x86-verify`, `dsp-verify`, `web-verify`, `asan-verify`,
+  `tsan-verify`, `tsan-agent-verify` and `rtsan-verify` each run configure, build and test:
+  `cmake --workflow --preset agent-verify` is one command.
 
 FunkGui's own `CMakePresets.json` uses the same names for its three presets: `agent` (headless), `agent-gui`, `lead`.
 
@@ -767,6 +799,60 @@ Measured inputs:
 
 The "edit one Mode .cpp" column holds because no TU instantiates every Mode: `FCDSP_DEFINE_MODE` instantiates each
 `ModeEngine<T>` in its own Mode TU, and `Registry.cpp` only collects addresses (01 §8.2; K3 #6).
+
+### 2.12 The web configuration (ADR-93)
+
+The browser demo (`docs/ARCHITECTURE.md` §3.1) is the configuration `FCOMPRESSOR_WEB=ON`, the `web` preset
+(`build-web`, Release). Before `project()`, `CMakeLists.txt` takes Emscripten's toolchain file from `em-config`;
+`cmake/FcmpPlatform.cmake` then sets `FCMP_PLATFORM` to `web` and refuses the option without the toolchain or the
+toolchain without the option. `cmake/FcmpDeps.cmake` pins Emscripten to 6.0.3 (`FCMP_EMSCRIPTEN_VERSION`: any other
+version is a configure error, the version is a row of `fcmp-deps.txt`, and CI installs the version that line names).
+The option implies DSP-only for every JUCE branch, and FunkGui is configured without JUCE, bgfx or presets
+(`FunkGui::core`, `FunkGui::web`, `FunkGui::harness`). The one architecture is wasm32, with `-msimd128` and never
+`-mrelaxed-simd`; `FCOMPRESSOR_WEB_FMA=unfused` exists for measurement only (§2.2).
+
+**Targets** (`cmake/FcmpWeb.cmake`; sources by per-directory glob, so a new file edits no CMake):
+
+| Target | Built in | What |
+|---|---|---|
+| `fcmp_web_engine_lib` | every configuration | `Source/web/engine` over `fcdsp` (STATIC). Natively `fcmp_probe_plugin` links it and compiles `Source/web/facade` (`proc.webnull`, `proc.webpresets`, `ui.web`). |
+| `fcmp_web_check` | every configuration | `Tools/web/*.cpp`, one subcommand per check; a node program in the web configuration |
+| `fcmp_web_engine` | web | `fcmp-engine.wasm`: standalone, no JavaScript glue, no imports; it exports the wrapper's `export_name` functions, `malloc` and `free` |
+| `fcmp_web_ui` | web | `fcmp-ui.js` and `fcmp-ui.wasm`: the editor outside `gpu/`, `plugin/portable`, the facade and `Source/web/ui` over FunkGui's core and web host |
+| `fcmp_web_port_check` | web | `fcmp-port-check.mjs` from `Tools/web/port`: PortLink and the facade for `web/tests/port.mjs` |
+| `fcmp_probe_web` | web | the editor outside `gpu/`, the model code, the facade, the engine archive and every `layer=ui` probe, as a node program (`cmake/FcmpProbes.cmake`) |
+| `fcmp_web_site` | web | `build-web/site` (`cmake/FcmpWebSite.cmake`) |
+| `fcmp_web_print`, `fcmp_web_live` | web | the test-only side: `build-web/live-obj/fcmp-print.wasm` from `Tools/web/live`, and `build-web/live` (`cmake/FcmpWebLive.cmake`) |
+| `verify-web-live` | web | `Scripts/web-live.sh` on this tree (§3.6); never labelled `verify` |
+| `fcmp_web` | web | the engine, the checks, the editor module, the port check, the site, the live directory and `fcmp_probes`: the `web` build preset's target |
+
+**Tests.** In the web tree the probes register on `fcmp_probe_web`, `layer=ui` only (the `proc.*` files need the JUCE
+processor), with `--arch wasm32` and three times their timeout; `dsp.*`, `proc.*` and `lint.headers` are native only,
+and `lint.deps` and `lint.docs` run everywhere. A web test registers itself from a line
+
+```
+// FCMP_WEB_TEST name=web.<x> timeout=<s> [on=native|web|all] [args=<a,b,...>]
+```
+
+in a `Tools/web/*.cpp` (default `on=all`; it runs `fcmp_web_check <args>`, under node in the web tree) or a
+`web/tests/*.mjs` (web only, whatever `on=` says; it runs `node <file> <args>`), with the placeholders `{golden}`,
+`{source}`, `{build}` and `{engine}`. Labels `verify;web;global`; the verdict is the exit code (no results JSON, no
+candidates); a name ending `.speed` or `.tail` runs alone. Natively four register (`web.simd`, `web.engine.print`,
+`.selfcheck`, `.tail`). wasm32 has no golden overlay and `golden.py adopt` takes no wasm32 candidate, so the web tree's
+gate is `Scripts/verify.sh --strict build-web`.
+
+**The site.** `build-web/site` is what a static server serves and what CI publishes (§4.10): `index.html`,
+`fcmp-ui.html` (the page again, the path FunkGui's page runner opens as the self-test), `main.js`, `loop.js`,
+`fcmp-worklet.js`, `demo.css`, the two modules, `licences/` (GPL-3.0, the typeface's OFL, and `THIRD-PARTY.txt` for what
+the modules link from the toolchain) and `built-from.txt`, one line `site <sha|none> <clean|dirty> <UTC>`: `clean` only
+when FCompressor's tree is clean and the FunkGui compiled in is the pinned commit unchanged, since the page's footer
+links that commit as the source. It is made afresh by every build and swapped in with one rename; `fcmp_probes`
+depends on it, so the gate's stamp covers it, and `web.size` holds it to its exact list of files.
+
+**The live directory.** `build-web/live` holds what only the browser gate uses: the pages of `web/live` (the print rows
+through the shipped worklet, the rows that have no golden, the denormal range and the load), `fcmp-print.wasm` and the
+`dsp.print` goldens as `golden/<key>.dsp.print.txt`. `Scripts/web-live.sh` serves it at `/live/` beside the site, so a
+page reaches the shipped files as `../<name>`; nothing of it is ever in the site.
 
 ---
 
@@ -1074,6 +1160,51 @@ writes the settled frame; `funkgui_framerender x.dump x.png 2` renders any dump 
   gallery parity via G7, S10 first FCompressor parity via U7, S12), or by a GPU-editor agent on request, never in
   parallel.
 
+**Browser parity, `web.live` (`Scripts/web-live.sh`; not `verify`)**: gui-live's counterpart for the browser demo
+(ADR-93). The built site in a real headless Chrome must draw, view for view, what the same editor code draws under node,
+its pixels must be SoftRaster's, the page's own self-test must pass, and every page of the live directory (§2.12) and
+the scripted user must find nothing wrong. Its forms, from the script's header:
+
+```
+Scripts/web-live.sh <build-web> [options]                      the gate on a web build tree: node values from the
+                                                               build, <build>/site and <build>/live in Chrome
+Scripts/web-live.sh --dir <site> --live <dir> --expect <dir> [options]
+                                                               the gate on a downloaded artifact: nothing is built
+                                                               or computed
+Scripts/web-live.sh --url <base> --expect <dir> [--commit <sha>] [--wait <s>] [options]
+                                                               the published site, after a push: no server, nothing
+                                                               built or computed (below)
+Scripts/web-live.sh --serve <build-web>                        serves only and prints the URLs, for a human with
+Scripts/web-live.sh --serve --dir <site> --live <dir> --expect <dir>   another browser; Ctrl-C stops it
+```
+
+with the options `--out <dir>` (default `<build-web>/web-live`), `--chrome <path>`, `--timeout <s>` (one page's
+verdict, default 120) and `--gpu default|swiftshader`. The steps:
+- **Node values** (a build tree only): for the views `panel`, `chars.sidechain`, `chars.colour`, `modebrowser`,
+  `presetbrowser`, `settings` × themes 0 and 1, `fcmp_probe_web.js ui.dump --mode clean … -- --view <id> --dpi 2
+  --theme <t> --facade web --host WEB-LIVE --nolive 1 --fp <out>/expect/<id>.theme<t>.node.fp`: the editor as wasm32
+  under node over a `WebFacade` whose link drops everything (the page before START), settled at 1/60 s. Then
+  `Tools/web/live/expect.mjs` writes what the live pages compare with and node can compute.
+- **The runner**, `Scripts/web/live.mjs` over `Scripts/web/cdp.mjs`: its own server on 127.0.0.1 (the site at `/`, the
+  live directory at `/live/`, the expectations at `/expect/`), and headless Chrome, always muted, with a throwaway
+  profile (ANGLE on Metal on macOS, SwiftShader elsewhere; `--gpu swiftshader` forces the software renderer). The
+  twelve capture pages `index.html?view=<id>&theme=<t>&zoom=100&scale=2&dt=0.0166666675&nohint=1&nolive=1&host=WEB-LIVE`
+  (START never pressed): `Module.fcmpFrame()` equals the node value in every line but `live` and `hooks`, the hooks
+  line says `dpi 2 clock fixed … drawn 1 idle 1`, and a pixel row compares the frame read back through the sink with
+  SoftRaster's (a GPU: no sample over 2 of 255; a software renderer: none over 16 and at most 10 per mille over 2).
+  One row for the shipped asynchronous preview; the page's self-test (`?selftest=1`) with the context suspended and
+  with a running one; every page of the live directory; then the scripted user, `Scripts/web/scenario.mjs`.
+- **Lines**: `EQUAL|DIFFERS|FAIL <view>.theme<t>: …`, the rows `PASS|FAIL|NOTE web.live <row>: …`, the pages' own lines,
+  and last `web-live: N/M passed (results in <out>)`. Results in `<out>`: `expect/`, `frames/`, `png/`, the pages'
+  logs, `scenario.log`, `summary.txt`.
+- **Exit**: "0 every row passed; 1 a view differs or a row failed (with --url: the published site never said the
+  commit); 2 usage, no node 22 or later, no Chrome, the results directory refused, no verdict, a signal."
+
+It takes no lock (headless Chrome takes no window) and builds nothing (the target `verify-web-live` builds first). The
+lead runs it at the gate (§4.8), CI's `web` job on the build and on the downloaded artifact, and CI's `published` job
+with `--url` against the public page (§4.10). `Scripts/web/page-check.mjs` runs the self-test, the capture pages and
+the live pages in any browser a WebDriver drives (CI's Firefox and Safari).
+
 ### 3.7 Tolerances
 
 C §5.13 is adopted as the table in `Tools/probes/common/Tolerances.h`, indexed by `Rigor`. Changing it is a lead-owned
@@ -1191,10 +1322,11 @@ Outside `verify`:
     `docs/design/`, and the frozen interfaces;
   - touches the main checkouts of both repositories;
   - installs plugins (the `owner` preset).
-- **Agents:** at most **3 at once across both repositories** (the user's usage limit). The lead is not one of the 3.
-  Each agent has one task, one worktree per repository it edits, and its own build directories.
-- **CPU:** 3 agents × `-j4` with ninja `-l 12`, plus `ctest -j4`, on 10 cores. A single JUCE TU is already 30–51 s
-  (C §4, §2.11), so oversubscribing only thrashes (C §6.9). `fcmp_bench` never runs while agents are building.
+- **Agents:** at most **6 at once across both repositories** (the user's limit, raised from 3 on 2026-10-01). The lead
+  is not one of them. Each agent has one task, one worktree per repository it edits, and its own build directories.
+- **CPU:** each agent builds with `-j6` and no load limit and tests with `ctest -j6`, on 10 cores. A single JUCE TU is
+  already 30–51 s (C §4, §2.11), so oversubscribing only thrashes (C §6.9). `fcmp_bench` never runs while agents are
+  building.
 
 ### 4.2 Sprint start (lead)
 
@@ -1225,7 +1357,7 @@ Outside `verify`:
    DONE   §4.7 for an fcdsp task, plus: <task-specific acceptance, e.g. "dsp.static.clean spec rows all PASS">
    ```
 
-4. The lead spawns ≤ 3 agents: FCompressor tasks with `isolation: 'worktree'`, and FunkGui tasks with the FunkGui
+4. The lead spawns ≤ 6 agents: FCompressor tasks with `isolation: 'worktree'`, and FunkGui tasks with the FunkGui
    worktree path and base SHA in the prompt.
 
 ### 4.3 FCompressor agent
@@ -1308,7 +1440,7 @@ cd "$WT" && cmake --preset agent -DFETCHCONTENT_SOURCE_DIR_FUNKGUI=/Users/seanfu
 | `Source/plugin/factory/<key>.inc` | the Mode's task, once the bank exists (P3) (K1 #31, K3 #18) | – |
 | `docs/modes/<key>.md` | the Mode's task (the one exception to `docs/**`) | – |
 | `tests/golden/**`, `tests/fixtures/**` | lead (`golden.py adopt`; fixtures are write-once) | never; candidates go to `build-*/golden-candidates` |
-| `CMakeLists.txt`, `cmake/**`, `CMakePresets.json`, `Scripts/**`, `.gitignore`, `CLAUDE.md`, `docs/**`, `Resources/**` | lead (or a Sprint-0 build task named in its manifest) | never |
+| `CMakeLists.txt`, `cmake/**`, `CMakePresets.json`, `Scripts/**`, `.github/**`, `.gitignore`, `CLAUDE.md`, `README.md`, `LICENSE`, `docs/**`, `Resources/**`, `web/**` | lead (or a task whose manifest names the path in its `OWNS`) | never otherwise |
 | FunkGui `include/funkgui/**` public headers | lead approves; any change bumps MINOR at tagging | the FunkGui task that owns them |
 | `/Users/seanfunk/audio/plugins/HardwareReverb/**`, `~/audio/.deps/**` | nobody | read only |
 
@@ -1387,6 +1519,8 @@ Every task:
 5. **Integration verify** with the pin and no override:
    - `cmake --preset lead`, then `cmake --build --preset lead`, then `Scripts/verify.sh --integration build-lead`
      (fails if `fcmp-deps.txt` shows any override; K2 #26c).
+   - The web tree (ADR-93): `cmake --workflow --preset web-verify`, then `Scripts/verify.sh --strict build-web`, then
+     `Scripts/web-live.sh build-web`, the browser gate in headless Chrome (§3.6).
    - The run must have no blocking results.
 6. **Bless.**
    - `FCMP_ALLOW_BLESS=1 Scripts/golden.py adopt build-lead --only '<globs>' --reason '<why>'`, once per reason
@@ -1562,6 +1696,37 @@ This is the **only** sprint plan; it replaces Draft 2 §10 and Draft 3's S0/S1 o
 | FunkGui `GalleryPanel.cpp`, `Glyphs.def`, `Canvas.cpp` | G4, G5, G6 | per-widget gallery files; G4 alone owns glyphs; `emit()` + `CanvasShapes.cpp` (02 §3.3) |
 | `Tolerances.h`, `tests/golden/**`, `tests/fixtures/**`, `CMakePresets.json`, `CLAUDE.md` | – | lead only (§4.6) |
 | `docs/modes/<key>.md` | Mode tasks | owned by that Mode's task (§4.6) |
+
+### 4.10 CI (`.github/workflows/ci.yml`)
+
+GitHub Actions runs the workflow on every push to `main`, on every pull request and by hand, with `FCMP_TIMING_SCALE=3`
+(ADR-87, ADR-92, ADR-93). Its jobs:
+
+- `dsp` (macos-26): the `dsp` preset and `Scripts/verify.sh --strict build-dsp`.
+- `plugin` (macos-26): `Scripts/deps.sh --no-pluginval` (cached), the `lead` preset and
+  `Scripts/verify.sh --integration --strict build-lead`: the AU, the VST3, the Standalone and every probe.
+- `linux-dsp` (ubuntu-24.04): as `dsp`, with Clang.
+- `linux-plugin` (ubuntu-24.04): as `plugin`, with Clang and the development packages: the VST3 and the Standalone,
+  and every probe against the same goldens.
+- `web` (ubuntu-24.04, "Web demo (wasm)"): emsdk at the version `cmake/FcmpDeps.cmake` pins (the job reads
+  `FCMP_EMSCRIPTEN_VERSION` from it), the `web` preset, `Scripts/verify.sh --strict build-web`, the x86 runner's
+  numbers (`fcmp_web_check simdbench`, `speed` and `tail`, reported and never judged), a check that `built-from.txt`
+  names this commit and `clean`, and `Scripts/web-live.sh build-web` under SwiftShader. It uploads the artifacts
+  `web-site` (`build-web/site`) and `web-live` (`build-web/live` and the node values in `build-web/web-live/expect`),
+  kept 14 days, downloads them again, checks the site is the one built, and runs the gate on the downloaded copy
+  (`Scripts/web-live.sh --dir … --live … --expect …`).
+- `web-browsers` (reported, never a gate): the downloaded site in Chrome and Firefox on ubuntu-24.04 and in Safari on
+  macos-26, through each browser's WebDriver (`Scripts/web/page-check.mjs --frames --pages`). A browser becomes a gate
+  only after it has passed several runs.
+- `publish` (a push to `main` only, once `dsp`, `plugin`, `linux-dsp`, `linux-plugin` and `web` have passed): the
+  `web-site` artifact the gate tested, byte for byte, deployed to GitHub Pages, https://snipet.github.io/FCompressor/
+  (the user's decision, 2026-10-02).
+- `published` (after `publish`): `Scripts/web-live.sh --url <the page's address> --expect … --commit <sha>` waits until
+  the public `built-from.txt` names this commit, then runs the capture pages and the self-test against the public page.
+
+Nothing is signed or installed; the demo's site is the only thing published. A failing job uploads its results
+(`dsp-results`, `plugin-results`, `linux-dsp-results`, `linux-plugin-results`, `web-results`); `web-browsers` uploads
+`web-page-<browser>` and `published` uploads `web-published`, kept 14 days.
 
 ---
 

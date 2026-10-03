@@ -4,7 +4,8 @@
 //
 //   fcmp_probe_plugin ui.dump --mode <key> --golden-root <dir> --arch <arch> -- --view <id> --out <x.dump> [--png <x.png>]
 //                                  [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] [--live <seconds>]
-//                                  [--focus <view>:<local>] [--keys <spec>]
+//                                  [--focus <view>:<local>] [--keys <spec>] [--facade fake|web] [--host <name>]
+//                                  [--nolive 0|1] [--fp <x.fp>]
 //                                  (flags after "--" are ui.dump's own; S5 lead revision)
 //
 // It renders one view of fcmp::ui::views() for one Mode exactly as ui.geometry does (a FakeFacade, Panel{skipHint,
@@ -20,6 +21,14 @@
 // (v1.2, the README's screenshot) puts the Panel over EngineFacade, a real EngineHost, and plays a deterministic groove
 // through it for that many seconds at 60 frames per second before the frame is written, so the meters, the GR readout,
 // the history and the operating point show real signal. A live frame is written as it stands, without settling.
+// --facade web, --host, --nolive and --fp (web lead phase; docs/sprints/web-lead.md, "The gate's contract") make the
+// node value the browser gate compares a capture page with. --facade web puts the Panel over the browser demo's facade
+// (web/facade/WebFacade.h) on a link that drops every record: the page before START, where no worklet exists. Its
+// environment is "WEB" and --host's name (the module's `host` pin), which the settings screen shows. That facade's
+// Mode is its own, the page's, so --mode must name it; --preset and --live, which need the fake's ports, are refused
+// with it, and --host without it. --nolive 1 is PanelOptions::ignoreLive (FCMP_UI_NO_LIVE; the module's `nolive` pin).
+// --fp also writes the frame's fingerprint as web/ui/FrameText.h's lines: what Module.fcmpFrame() returns after its
+// `hooks` line, written by the same function.
 //
 // Exit: 0 written; 1 a usage error, an unknown view or Mode, an unsettled panel or a write error. ui.dump reads its
 // own flags from the process arguments, which ProbeMain (frozen at FZ0) also hands to the harness: the harness prints
@@ -34,6 +43,9 @@
 #include "editor/Layout.h"
 #include "editor/Panel.h"
 #include "plugin/portable/FactoryData.h"
+#include "web/facade/EngineLink.h"
+#include "web/facade/WebFacade.h"
+#include "web/ui/FrameText.h"
 
 #include "fcdsp/modes/ModeDescriptor.h"
 #include "fcdsp/modes/Registry.h"
@@ -46,8 +58,8 @@
 
 #include <funkgui/panel/HeadlessGuiScope.h>
 
-
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -78,9 +90,12 @@ namespace
         float       liveSeconds = 0.0f;                          // --live: seconds of the groove through the engine
         std::string focus;                                       // --focus <view>:<local>
         std::string keys;                                        // --keys <HeadlessHost::keys spec>
+        std::string facade = "fake";                             // --facade fake|web
+        std::string host;                                        // --host <name>: the web facade's host name
+        int         nolive = 0;                                  // --nolive 0|1: PanelOptions::ignoreLive
+        std::string fp;                                          // --fp <x.fp>: FrameText.h's lines
         std::string error;                                       // non-empty: a usage error
     };
-
 
     // "<view>:<local>": both decimal, the view a ViewIndex.
     bool focusValid(const std::string& f)
@@ -107,7 +122,7 @@ namespace
             const std::string value = hasValue ? argv[i + 1] : "";
             if (flag == "--view" || flag == "--out" || flag == "--png" || flag == "--dpi" || flag == "--theme"
                 || flag == "--wheel" || flag == "--preset" || flag == "--live" || flag == "--focus"
-                || flag == "--keys")
+                || flag == "--keys" || flag == "--facade" || flag == "--host" || flag == "--fp" || flag == "--nolive")
             {
                 if (!hasValue || value.empty() || value.starts_with("--"))
                 {
@@ -115,7 +130,15 @@ namespace
                     return a;
                 }
                 ++i;
-                if (flag == "--view")
+                if (flag == "--facade")
+                    a.facade = value;
+                else if (flag == "--host")
+                    a.host = value;
+                else if (flag == "--fp")
+                    a.fp = value;
+                else if (flag == "--nolive")
+                    a.nolive = value == "0" ? 0 : value == "1" ? 1 : -1;
+                else if (flag == "--view")
                     a.view = value;
                 else if (flag == "--out")
                     a.out = value;
@@ -147,7 +170,34 @@ namespace
             a.error = "--live must be 0 to 60 seconds";
         else if (!a.focus.empty() && !focusValid(a.focus))
             a.error = "--focus must be <view 0-" + std::to_string(ui::kSubViewCount - 1) + ">:<local>";
+        else if (a.facade != "fake" && a.facade != "web")
+            a.error = "--facade must be fake or web";
+        else if (a.nolive < 0)
+            a.error = "--nolive must be 0 or 1";
+        else if (a.facade == "web" && (!a.preset.empty() || a.liveSeconds > 0.0f))
+            a.error = "--facade web takes neither --preset nor --live";
+        else if (a.facade != "web" && !a.host.empty())
+            a.error = "--host needs --facade web";
         return a;
+    }
+
+    // --facade web's link: the page before START has no port, so every record is dropped and no reply ever comes.
+    struct NullLink final : fcmp::web::EngineLink
+    {
+        void post(std::span<const std::uint8_t>) override {}
+        void setSink(fcmp::web::ReplySink*) override {}
+    };
+
+    // --fp: FrameText.h's lines for `frame`, and nothing else, into `path`.
+    bool writeFrameText(const std::string& path, const funkgui::PrimList& frame)
+    {
+        std::string text;
+        fcmp::web::appendFrameText(text, frame);
+        std::FILE* f = std::fopen(path.c_str(), "wb");
+        if (f == nullptr)
+            return false;
+        const bool written = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        return std::fclose(f) == 0 && written;
     }
 
     bool makeParent(const std::string& path)
@@ -196,7 +246,8 @@ namespace
         {
             std::fprintf(stderr, "ui.dump: %s\nusage: fcmp_probe_plugin ui.dump --view <id> --mode <key> --out <x.dump> "
                                  "[--png <x.png>] [--dpi 1|2] [--theme 0|1] [--wheel <points>] [--preset <name>] "
-                                 "[--live <seconds>] [--focus <view>:<local>] [--keys <spec>]\n", a.error.c_str());
+                                 "[--live <seconds>] [--focus <view>:<local>] [--keys <spec>] [--facade fake|web] "
+                                 "[--host <name>] [--nolive 0|1] [--fp <x.fp>]\n", a.error.c_str());
             return 1;
         }
         const ui::ViewSpec* view = ui::findView(a.view);
@@ -218,18 +269,32 @@ namespace
         const funkgui::HeadlessGuiScope gui;                     // FontService bakes the atlas through JUCE's fonts
         std::unique_ptr<fcmp::probe::FakeFacade> fake;
         std::unique_ptr<fcmp::probe::EngineFacade> engine;
-        if (a.liveSeconds > 0.0f)
+        NullLink nullLink;
+        std::unique_ptr<fcmp::web::WebFacade> web;
+        if (a.facade == "web")
+        {
+            web = std::make_unique<fcmp::web::WebFacade>(nullLink);
+            web->setEnvironment("WEB", a.host);                  // WebMain's: the wrapper, and the browser's name
+            if (fcdsp::bySlot(static_cast<int>(web->currentRaw().modeSlot)) != entry)
+            {
+                std::fprintf(stderr, "ui.dump: --facade web is the page as it loads, and its Mode is not '%s'\n",
+                             a.mode.c_str());
+                return 1;
+            }
+        }
+        else if (a.liveSeconds > 0.0f)
             engine = std::make_unique<fcmp::probe::EngineFacade>(a.mode, 1);
         else
             fake = std::make_unique<fcmp::probe::FakeFacade>(a.mode);
-        fcmp::ProcessorFacade& facade = engine ? static_cast<fcmp::ProcessorFacade&>(*engine) : *fake;
-        fcmp::probe::FakeFacade& ports = engine ? engine->params() : *fake;
-        if (!a.preset.empty() && !applyPreset(ports, a.mode, a.preset))
+        fcmp::ProcessorFacade& facade = web ? static_cast<fcmp::ProcessorFacade&>(*web)
+                                      : engine ? static_cast<fcmp::ProcessorFacade&>(*engine) : *fake;
+        fcmp::probe::FakeFacade* ports = engine ? &engine->params() : fake.get();   // null over the web facade
+        if (!a.preset.empty() && (ports == nullptr || !applyPreset(*ports, a.mode, a.preset)))
         {
             std::fprintf(stderr, "ui.dump: Mode '%s' has no factory preset '%s'\n", a.mode.c_str(), a.preset.c_str());
             return 1;
         }
-        ui::Panel panel(facade, { true, true, false });
+        ui::Panel panel(facade, { true, true, a.nolive == 1 });  // skipHint, syncPreview, ignoreLive
         funkgui::HeadlessHost host(panel, a.theme, a.dpi);
         panel.setView(*view, true);
         if (a.wheelPoints != 0.0f && std::isfinite(a.wheelPoints))
@@ -281,6 +346,11 @@ namespace
         if (!makeParent(a.out) || !host.writeDump(a.out.c_str()))
         {
             std::fprintf(stderr, "ui.dump: cannot write %s\n", a.out.c_str());
+            return 1;
+        }
+        if (!a.fp.empty() && (!makeParent(a.fp) || !writeFrameText(a.fp, pl)))
+        {
+            std::fprintf(stderr, "ui.dump: cannot write %s\n", a.fp.c_str());
             return 1;
         }
         std::printf("ui.dump: %s  view %s  mode %s  dpi %g  theme %d  %s %d frames  %zu prims  %u missing glyphs\n",

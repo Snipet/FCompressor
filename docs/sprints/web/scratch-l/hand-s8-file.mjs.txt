@@ -1,0 +1,92 @@
+// Item 8: a dropped file plays (real drag events through Input.dispatchDragEvent, and the file input through
+// DOM.setFileInputFiles); an undecodable file leaves the source unchanged with the notice; BUILT-IN LOOP returns.
+import { serve, chrome, sleep, Report, HERE, cleanUp } from './lib.mjs';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const R = new Report();
+// a WAV made here: 16-bit PCM, `ch` channels, a sine at `hz` and `db` dBFS
+const wav = (name, seconds, hz, db, ch = 2, rate = 48000) => {
+  const n = Math.round(seconds * rate); const data = Buffer.alloc(n * ch * 2); const amp = 10 ** (db / 20) * 32767;
+  for (let i = 0; i < n; i += 1) for (let c = 0; c < ch; c += 1) data.writeInt16LE(Math.round(amp * Math.sin(2 * Math.PI * hz * i / rate)), (i * ch + c) * 2);
+  const h = Buffer.alloc(44); h.write('RIFF', 0); h.writeUInt32LE(36 + data.length, 4); h.write('WAVEfmt ', 8); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(ch, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * ch * 2, 28); h.writeUInt16LE(ch * 2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(data.length, 40);
+  const f = join(HERE, 'files', name); writeFileSync(f, Buffer.concat([h, data])); return f;
+};
+const tone = wav('scout-tone.wav', 2, 1000, -12);
+const mono = wav('scout-mono-44k.wav', 1, 500, -6, 1, 44100);
+const short = wav('scout-short.wav', 0.05, 1000, -12);
+const bad = join(HERE, 'files', 'scout-not-audio.wav'); writeFileSync(bad, 'this is not audio\n'.repeat(50));
+
+const server = await serve(`${HERE}/site-hook`);
+const b = await chrome({ width: 1280, height: 800 });
+try {
+  const p = await b.page(null);
+  await p.metrics(1280, 800, 1);
+  await p.go(`${server.base}/`, 1500);
+  const src = () => p.ev("document.getElementById('fcmp-source-name').textContent");
+  const notice = () => p.ev("document.getElementById('fcmp-notice').textContent");
+  const drop = async (file, x = 400, y = 300) => {
+    const data = { items: [], files: [file], dragOperationsMask: 1 };
+    await p.s('Input.dispatchDragEvent', { type: 'dragEnter', x, y, data });
+    await p.s('Input.dispatchDragEvent', { type: 'dragOver', x, y, data });
+    const dragging = await p.ev("document.body.classList.contains('dragging')");
+    await p.s('Input.dispatchDragEvent', { type: 'drop', x, y, data });
+    await sleep(900);
+    return dragging;
+  };
+  // before START: a drop says to press START first
+  await drop(tone);
+  R.row((await notice()) === 'PRESS START FIRST, THEN CHOOSE A FILE.' && (await src()) === 'SOURCE: BUILT-IN LOOP', '8.drop-before-start', { notice: await notice(), source: await src(), state: await p.ev('fcmpPage.state()') });
+
+  await p.start(); await sleep(1000); await p.tap(); await sleep(400);
+  // the spectrum's strongest bin at the engine's INPUT side is not reachable; the output's is (BYPASS is not needed: a
+  // sine through the compressor is still that sine)
+  await p.ev(`(() => { const c = fcmpPage.context(); const a = c.createAnalyser(); a.fftSize = 8192; a.smoothingTimeConstant = 0; fcmpPage.node().connect(a);
+    globalThis.__peakHz = () => { const f = new Float32Array(a.frequencyBinCount); a.getFloatFrequencyData(f); let k = 0; for (let i = 1; i < f.length; i += 1) if (f[i] > f[k]) k = i; const t = new Float32Array(a.fftSize); a.getFloatTimeDomainData(t); let pk = 0; for (const v of t) pk = Math.max(pk, Math.abs(v)); return { hz: Math.round(k * c.sampleRate / a.fftSize), db: +f[k].toFixed(1), peak: +pk.toFixed(3) }; }; })()`);
+  const io = async () => { const t = await p.tapRead(); const ws = await p.stats(); return { inPeakDb: t.reply.inPeak.map((v) => +v.toFixed(1)), outPeakDb: t.reply.outPeak.map((v) => +v.toFixed(1)), gated: (t.reply.flags & 8) !== 0, inChannels: ws.inChannels, quanta: ws.quanta, ok: ws.ok, out: JSON.parse(await p.ev('JSON.stringify(__peakHz())')) }; };
+  const loop0 = await io();
+  // a. a real drop on the page (over the editor's canvas)
+  const dragging = await drop(tone);
+  const s1 = await src(); const io1 = await io(); const loopBtn = await p.ev("document.getElementById('fcmp-loop').disabled");
+  const shot1 = await p.shot('8-dropped-tone.png', { canvasOnly: false });
+  R.row(s1 === 'SOURCE: SCOUT-TONE.WAV' && Math.abs(io1.out.hz - 1000) < 12 && Math.abs(io1.inPeakDb[0] + 12) < 0.6 && !io1.gated && loopBtn === false && (await notice()) === '', '8.drop.plays',
+        { draggingClassDuringDragOver: dragging, source: s1, engineIn: io1.inPeakDb, output: io1.out, loopButtonDisabled: loopBtn, notice: await notice(), withTheLoopBefore: { in: loop0.inPeakDb, out: loop0.out }, png: shot1 });
+  // b. an undecodable file: the source stays, the notice says so
+  await drop(bad);
+  const s2 = await src(); const n2 = await notice(); const io2 = await io();
+  R.row(s2 === s1 && /COULD NOT READ SCOUT-NOT-AUDIO\.WAV AS AUDIO/.test(n2) && /THE SOURCE IS UNCHANGED/.test(n2) && Math.abs(io2.out.hz - 1000) < 12, '8.undecodable.leaves-source', { source: s2, notice: n2, output: io2.out });
+  // c. too short
+  await drop(short);
+  const n3 = await notice();
+  R.row((await src()) === s1 && /SHORTER THAN 0\.1 S/.test(n3), '8.too-short.refused', { notice: n3, source: await src() });
+  // d. BUILT-IN LOOP returns
+  const lb = JSON.parse(await p.ev("JSON.stringify((()=>{const r=document.getElementById('fcmp-loop').getBoundingClientRect(); return [r.left+r.width/2, r.top+r.height/2];})())"));
+  await p.clickClient(lb[0], lb[1]); await sleep(1200);
+  const io4 = await io();
+  R.row((await src()) === 'SOURCE: BUILT-IN LOOP' && (await notice()) === '' && (await p.ev("document.getElementById('fcmp-loop').disabled")) === true && Math.abs(io4.out.hz - 1000) > 12, '8.loop-returns', { source: await src(), notice: await notice(), output: io4.out, engineIn: io4.inPeakDb });
+  // e. the file input (OPEN AN AUDIO FILE): DOM.setFileInputFiles, a mono 44.1 kHz file (decoded at the context's rate, up-mixed)
+  const { root } = await p.s('DOM.getDocument', {});
+  const { nodeId } = await p.s('DOM.querySelector', { nodeId: root.nodeId, selector: '#fcmp-file' });
+  await p.s('DOM.setFileInputFiles', { nodeId, files: [mono] });
+  await sleep(1200);
+  const io5 = await io();
+  R.row((await src()) === 'SOURCE: SCOUT-MONO-44K.WAV' && Math.abs(io5.out.hz - 500) < 12 && Math.abs(io5.inPeakDb[0] + 6) < 0.8 && Math.abs(io5.inPeakDb[1] + 6) < 0.8, '8.file-input.mono-44k', { source: await src(), engineIn: io5.inPeakDb, output: io5.out, inChannels: io5.inChannels, inputValueCleared: await p.ev("document.getElementById('fcmp-file').value === ''") });
+  // f. the same file twice in a row (the input's value is cleared, so a change fires again)
+  await p.clickClient(lb[0], lb[1]); await sleep(800);
+  await p.s('DOM.setFileInputFiles', { nodeId, files: [mono] }); await sleep(1000);
+  R.row((await src()) === 'SOURCE: SCOUT-MONO-44K.WAV', '8.file-input.same-file-again', await src());
+  // g. two files dropped quickly: the later one wins
+  await drop(tone); 
+  const data2 = { items: [], files: [mono], dragOperationsMask: 1 };
+  await p.s('Input.dispatchDragEvent', { type: 'dragEnter', x: 400, y: 300, data: { items: [], files: [tone], dragOperationsMask: 1 } });
+  await p.s('Input.dispatchDragEvent', { type: 'drop', x: 400, y: 300, data: { items: [], files: [tone], dragOperationsMask: 1 } });
+  await p.s('Input.dispatchDragEvent', { type: 'dragEnter', x: 400, y: 300, data: data2 });
+  await p.s('Input.dispatchDragEvent', { type: 'drop', x: 400, y: 300, data: data2 });
+  await sleep(1200);
+  R.row((await src()) === 'SOURCE: SCOUT-MONO-44K.WAV', '8.drop.two-quickly-later-wins', await src());
+  const st = await p.status(); const ws = await p.stats();
+  R.row(p.consoleLines.length === 0 && ws.ok && ws.refused === 0 && st.ok === 1, '8.console-and-engine', { console: p.consoleLines, refused: ws.refused, status: st.ok });
+} catch (e) { R.row(false, 'driver', String(e && e.stack || e)); }
+finally { b.kill(); server.kill(); cleanUp(); }
+console.log(`\n${R.rows.filter((r) => r.ok === false).length} FAIL of ${R.rows.filter((r) => r.ok !== null).length}`);
+process.exit(0);
