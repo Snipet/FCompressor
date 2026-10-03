@@ -95,9 +95,10 @@ if (!need.every((path) => existsSync(path))) {
 
 // The expectation tool runs beside the rows below (it has threads of its own) and writes into a directory of the
 // build tree, one run at a time as the gate's <build>/web-live. However this test ends, the tool is stopped and the
-// directory removed: at its exit (the end, a row that stops it, an error thrown) and on SIGINT, SIGTERM or SIGHUP
-// (then exit 2), the tool killed and gone before its directory is. Only a SIGKILL (ctest's timeout) skips both: the
-// tool then ends by itself within seconds, and the next run removes what is left before it starts.
+// directory removed: at its exit (the end, a row that stops it, an error thrown), and on SIGINT, SIGTERM or SIGHUP,
+// where the tool is killed and its end waited for (at most 2 s) before the directory goes, then exit 2. Only a SIGKILL
+// (ctest's timeout) skips both: the tool then ends by itself within seconds, and the next run removes what is left
+// before it starts.
 const expectDir = join(build, 'web-worklet-print.expect');
 const removeExpectDir = () => rmSync(expectDir, { recursive: true, force: true });
 removeExpectDir();
