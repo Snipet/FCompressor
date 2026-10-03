@@ -7,11 +7,14 @@
 //
 // The runner is run as CI runs it, a child process, with support/fake-driver.mjs as its driver: a WebDriver server
 // that plays one scenario, runs the runner's scripts against a model of the page and records what it was asked. The
-// site, the live directory and the expectations are scratch files; nothing here needs a build.
+// fake starts a process of its own in the browser's place, in its process group, and leaves it there: a run's driver
+// is gone when the fake and that process both are. The site, the live directory and the expectations are scratch
+// files; nothing here needs a build.
 //   pass.*, fail.*, timeout.*    the three verdicts and their exit codes; the log, the versions first, the files
 //   server.*                     the runner's server: the three roots, types, HEAD, no caching, nothing above a root
 //   hang, nosession, crash, ...  what can go wrong on the way: exit 2, one message that says what was sent and what
 //                                came back and names the driver's log; the session deleted and the driver gone
+//   cleanup.*, protocol.*        every run: the driver and its browser gone; no request a real driver would refuse
 //   frames.*                     the six capture pages against the expectations, as the gate compares them
 //   pages.*                      the live pages by the live-page protocol
 //   caps.*, driver.*             what each browser and each driver is asked for; the Safari refusal; where a driver
@@ -86,15 +89,19 @@ VIEWS.forEach((view, i) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const scale = Math.max(1, Number(process.env.FCMP_TIMING_SCALE) || 1);
 const seconds = (s) => String(Math.round(s * scale));       // a --timeout that the run is meant to reach
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// A process that is still there. A zombie is not (Linux: one whose parent has not reaped it yet still answers kill 0).
+const alive = (pid) => {
+  try { process.kill(pid, 0); } catch { return false; }
+  try { return !/^\d+ \(.*\) Z/s.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
+};
 const readRecord = (path) => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
 const textOf = (path) => { try { return readFileSync(path, 'utf8'); } catch { return ''; } };
 let runs = 0;
 let running = 0;
 const queue = [];
-// One run of the runner, at most six at a time. → { code, out, err, ms, record, driverLog, gone }
-// signalWhen(record): SIGTERM to the runner once the fake's record says so.
-async function run(scenario, args, { env = {}, signalWhen = null, ownDriverLog = true } = {}) {
+// One run of the runner, at most six at a time. → { code, out, err, ms, record, driverLog, left, gone }
+// signalWhen(record): `signal` to the runner once the fake's record says so.
+async function run(scenario, args, { env = {}, signalWhen = null, signal = 'SIGTERM', ownDriverLog = true } = {}) {
   runs += 1;
   const n = runs;
   if (running >= 6) await new Promise((free) => queue.push(free));
@@ -114,19 +121,20 @@ async function run(scenario, args, { env = {}, signalWhen = null, ownDriverLog =
     if (signalWhen) {
       watch = setInterval(() => {
         const record = readRecord(recordPath);
-        if (record && signalWhen(record)) { clearInterval(watch); child.kill('SIGTERM'); }
+        if (record && signalWhen(record)) { clearInterval(watch); child.kill(signal); }
       }, 50);
     }
     child.on('exit', (code) => { clearInterval(watch); done({ code, out, err, ms: Date.now() - t0 }); });
   });
   result.record = readRecord(recordPath);
   result.driverLog = textOf(driverLogPath);
-  // The driver is gone: looked at for a moment, since a killed process takes one to leave the table.
-  result.gone = result.record !== null;
-  for (let i = 0; result.gone && alive(result.record.pid); i += 1) {
-    if (i === 60) result.gone = false;
-    else await sleep(50);
-  }
+  // The driver and its browser are gone: looked at for a moment, since a killed process takes one to leave the table.
+  // What is left is named, and killed here, so that a run that failed leaves nothing behind.
+  const pids = result.record === null ? {} : { driver: result.record.pid, browser: result.record.browser };
+  for (let i = 0; i < 60 && Object.values(pids).some(alive); i += 1) await sleep(50);
+  result.left = Object.keys(pids).filter((k) => alive(pids[k]));
+  for (const k of result.left) { try { process.kill(pids[k], 'SIGKILL'); } catch { /* gone */ } }
+  result.gone = result.record !== null && Number.isInteger(result.record.browser) && result.left.length === 0;
   running -= 1;
   if (queue.length > 0) queue.shift()();
   return result;
@@ -138,6 +146,12 @@ const frames = [...chrome, '--expect', expect, '--frames'];
 const pages = [...chrome, '--live', live, '--pages'];
 const count = (text, pattern) => (text.match(pattern) || []).length;
 const said = (r) => `exit ${r.code} after ${r.ms} ms`;
+const capsOf = (r) => (r.record && r.record.capabilities) || {};   // what New Session was asked for, if it was
+// What the runner's server answered the fake (server.* below); an answer never given is status 0.
+const unanswered = { status: 0, type: '', bytes: 0, cache: '', secret: false };
+const answers = (record) => new Proxy(record ? record.served : {}, { get: (o, k) => o[k] || unanswered });
+const leftOf = (r) => (r.gone ? 'the driver and its browser gone' : r.record === null ? 'no record'
+                              : `still there: ${r.left.join(', ') || 'none, but the fake named no browser'}`);
 const shot = join(scratch, 'pass.png');
 const logFile = join(scratch, 'pass.txt');
 const lateShot = join(scratch, 'running.png');
@@ -169,6 +183,8 @@ const R = {
   notimeouts: run('notimeouts', chrome),
   slowquit: run('slowquit', chrome),
   sigterm: run('running', [...chrome, '--timeout', '90'], { signalWhen: (record) => record.polls >= 2 }),
+  sigint: run('running', [...chrome, '--timeout', '90'], { signalWhen: (record) => record.polls >= 2,
+                                                           signal: 'SIGINT' }),
   defaultLog: run('pass', chrome, { env: { TMPDIR: join(scratch, 'tmp') }, ownDriverLog: false }),
   all: run('pass', all),
   framediff: run('framediff', all),
@@ -218,8 +234,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /"fake:driverVersion":"1\.0"/.test(o[1])
       && /^page-check: http:\/\/127\.0\.0\.1:\d+\/index\.html\?selftest=1$/.test(o[2]), 'pass.versions',
       'the driver\'s version and command line, then the browser\'s answer, before the page is opened');
-  row(r.record.deleted === 1 && r.gone, 'pass.cleanup',
-      `sessions deleted ${r.record.deleted}, the driver is ${r.gone ? 'gone' : 'ALIVE'}`);
+  row(r.record.deleted === 1 && r.gone, 'pass.cleanup', `sessions deleted ${r.record.deleted}, ${leftOf(r)}`);
   row(existsSync(shot) && readFileSync(shot).subarray(1, 4).toString() === 'PNG' && r.record.screenshots === 1,
       'pass.screenshot', `${r.record.screenshots} picture(s) asked for`);
   row(textOf(logFile) === r.out, 'pass.logfile', '--log holds what was printed');
@@ -237,8 +252,8 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /^page-check: exit 0$/m.test(d), 'pass.driverlog',
       'the driver\'s log holds each command, each reply, the driver\'s own output and the exit');
 
-  // The runner's own server, as the fake asked it.
-  const s = r.record.served;
+  // The runner's own server, as the fake asked it on the first Navigate.
+  const s = answers(r.record);
   row(s.page.status === 200 && s.page.type.startsWith('text/html'), 'server.page', JSON.stringify(s.page));
   row(s.wasm.status === 200 && s.wasm.type === 'application/wasm' && s.wasm.bytes === 8, 'server.wasm',
       JSON.stringify(s.wasm));
@@ -251,7 +266,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(caches.join() === 'no-store', 'server.nocache',
       `Cache-Control of ${Object.keys(s).length} answers: ${caches.join(', ')}`);
   const above = ['above', 'aboveEncoded', 'aboveSlash', 'liveAbove', 'liveSibling', 'expectAbove'];
-  row(above.every((k) => s[k].status !== 200 && !s[k].secret), 'server.above',
+  row(above.every((k) => s[k].status > 0 && s[k].status !== 200 && !s[k].secret), 'server.above',
       `nothing above a root is served: ${above.map((k) => `${k} ${s[k].status}`).join(', ')}`);
   row(s.malformed.status === 400 && s.nul.status === 404, 'server.malformed',
       `a path that does not decode ${s.malformed.status}, one with a NUL ${s.nul.status}`);
@@ -263,7 +278,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       `a live page reaches the site as ../<name>: ${JSON.stringify(s.liveUp)}`);
   row(s.expect.status === 200 && s.expect.bytes > 100, 'server.expect',
       `/expect/ is --expect: ${JSON.stringify(s.expect)}`);
-  const n = R.fail.record.served;
+  const n = answers(R.fail.record);
   row(n.live.status === 404 && n.expect.status === 404, 'server.roots.absent',
       `with no --live and no --expect: /live/a.html ${n.live.status}, /expect/panel.theme0.node.fp ${n.expect.status}`);
 }
@@ -272,7 +287,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(r.code === 1 && /^FAIL {5}web\.selftest editor\.pixels/m.test(r.out)
       && /^FAIL {5}selftest: editor\.pixels \(/m.test(r.out)
       && /^page-check: 0\/1 passed\npage-check: FAIL: selftest: editor\.pixels$/m.test(r.out), 'fail.exit', said(r));
-  row(r.record.deleted === 1 && r.gone, 'fail.cleanup');
+  row(r.record.deleted === 1 && r.gone, 'fail.cleanup', leftOf(r));
   row(/^page-check: the driver's log: .*driver-\d+\.log$/m.test(r.err) && !/the driver said/.test(r.err)
       && textOf(join(scratch, 'fail.txt')).includes('the driver\'s log:'), 'fail.driverlog',
       'a FAIL names the driver\'s log, on stderr and in --log');
@@ -284,7 +299,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(/^NOTE {5}a fake browser$/m.test(r.out) && !/passed/.test(r.out), 'timeout.log',
       'the log as last read is printed');
   row(r.record.deleted === 1 && r.gone && existsSync(lateShot), 'timeout.cleanup',
-      'session deleted, driver gone, a picture taken');
+      `session deleted, a picture taken; ${leftOf(r)}`);
 }
 // ---- what can go wrong on the way -----------------------------------------------------------------------------------
 {
@@ -293,7 +308,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /^ {2}sent: POST \/session\/fake-session-1\/execute\/sync \{"script":"return \[document\.title/m.test(r.err)
       && /^ {2}got: {2}no reply in \d+ ms$/m.test(r.err), 'hang.exit',
       `${said(r)}; what was sent and that nothing came back`);
-  row(r.record.deleted === 1 && r.gone, 'hang.cleanup');
+  row(r.record.deleted === 1 && r.gone, 'hang.cleanup', leftOf(r));
 }
 {
   const r = R.nosession;
@@ -319,12 +334,14 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(count(r.err, /^page-check: (?!the driver's log|the driver said)/mg) === 1, 'crash.once',
       'one message: the driver\'s exit, not the failed command as well');
   row(/^NOTE {5}a fake browser$/m.test(r.out), 'crash.log', 'the log as last read is printed');
+  row(r.record.deleted === 0 && r.gone, 'crash.cleanup',
+      `a driver that went away first leaves its browser in its group, and the group is killed: ${leftOf(r)}`);
 }
 {
   const r = R.lost;
   row(r.code === 2 && /the browser went away before a verdict: the self-test/.test(r.err)
       && /got: {2}HTTP 404 \{"value":\{"error":"invalid session id"/.test(r.err) && r.ms < 45000, 'lost.exit', said(r));
-  row(r.gone, 'lost.cleanup');
+  row(r.gone, 'lost.cleanup', leftOf(r));
 }
 {
   const r = R.notready;
@@ -380,10 +397,13 @@ for (const key of Object.keys(R)) R[key] = await R[key];
 {
   const r = R.slowquit;
   row(r.code === 0 && r.record.sigterm === true && r.gone, 'slowquit.killed',
-      `a driver that ignores SIGTERM is killed (${said(r)})`);
+      `a driver and a browser that ignore SIGTERM are killed (${said(r)}; ${leftOf(r)})`);
   const t = R.sigterm;
   row(t.code === 2 && /terminated/.test(t.err) && t.record.deleted === 1 && t.gone, 'sigterm.cleanup',
-      `the runner told to stop ends the session and the driver (${said(t)})`);
+      `the runner told to stop ends the session, the driver and its browser (${said(t)}; ${leftOf(t)})`);
+  const i = R.sigint;
+  row(i.code === 2 && /^page-check: interrupted$/m.test(i.err) && i.record.deleted === 1 && i.gone, 'sigint.cleanup',
+      `the runner interrupted ends the session, the driver and its browser (${said(i)}; ${leftOf(i)})`);
   const d = R.defaultLog;
   const path = join(scratch, 'tmp', 'page-check-chrome-driver.log');
   row(d.code === 0 && /> POST \/session /.test(textOf(path))
@@ -409,7 +429,7 @@ for (const key of Object.keys(R)) R[key] = await R[key];
       && /^page-check: 9\/9 passed\npage-check: PASS$/m.test(r.out),
       'pages.pass', 'each live page\'s log and verdict, and the count');
   row(r.record.screenshots === 0 && r.record.deleted === 1 && r.gone, 'frames.cleanup',
-      'one session, deleted; the driver gone; no picture unless asked for');
+      `one session, deleted; no picture unless asked for; ${leftOf(r)}`);
 }
 {
   const r = R.framediff;
@@ -477,31 +497,31 @@ for (const key of Object.keys(R)) R[key] = await R[key];
 // ---- what each browser and each driver is asked for -----------------------------------------------------------------
 {
   const r = R.capsChrome;
-  const o = (r.record.capabilities || {})['goog:chromeOptions'] || {};
+  const o = capsOf(r)['goog:chromeOptions'] || {};
   const a = o.args || [];
   const gl = process.platform === 'darwin' ? ['--use-angle=metal']
                                            : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
-  row(r.record.capabilities.browserName === 'chrome' && a.includes('--headless=new') && a.includes('--mute-audio')
+  row(capsOf(r).browserName === 'chrome' && a.includes('--headless=new') && a.includes('--mute-audio')
       && gl.every((f) => a.includes(f)) && a.includes('--autoplay-policy=no-user-gesture-required')
       && a[a.length - 1] === '--use-angle=gl' && o.binary === '/opt/x/chrome'
-      && Object.keys(r.record.capabilities).sort().join() === 'browserName,goog:chromeOptions', 'caps.chrome',
+      && Object.keys(capsOf(r)).sort().join() === 'browserName,goog:chromeOptions', 'caps.chrome',
       JSON.stringify(o));
   row(/^--port=\d+ --verbose$/.test(r.record.argv.join(' ')), 'caps.chrome.driver', r.record.argv.join(' '));
-  const d = R.pass.record.capabilities['goog:chromeOptions'].args;
+  const d = (capsOf(R.pass)['goog:chromeOptions'] || {}).args || [];
   row(d.includes('--mute-audio') && d.includes('--headless=new') && !d.some((f) => f.startsWith('--autoplay-policy')),
       'caps.chrome.default', 'headless and muted, and no autoplay unless asked');
-  const h = R.capsHeaded.record.capabilities['goog:chromeOptions'].args;
+  const h = (capsOf(R.capsHeaded)['goog:chromeOptions'] || {}).args || [];
   row(!h.includes('--headless=new') && h.includes('--mute-audio'), 'caps.chrome.headed');
 }
 {
   const r = R.capsFirefox;
-  const o = (r.record.capabilities || {})['moz:firefoxOptions'] || {};
+  const o = capsOf(r)['moz:firefoxOptions'] || {};
   const p = o.prefs || {};
-  row(r.code === 0 && r.record.capabilities.browserName === 'firefox' && o.args.includes('-headless')
+  row(r.code === 0 && capsOf(r).browserName === 'firefox' && (o.args || []).includes('-headless')
       && p['media.volume_scale'] === '0.0' && p['webgl.force-enabled'] === true && p['media.autoplay.default'] === 0
       && p['media.autoplay.blocking_policy'] === 0 && o.binary === '/opt/x/firefox', 'caps.firefox', JSON.stringify(o));
   row(/^--port \d+ --log debug$/.test(r.record.argv.join(' ')), 'caps.firefox.driver', r.record.argv.join(' '));
-  const d = R.capsFirefoxDefault.record.capabilities['moz:firefoxOptions'];
+  const d = capsOf(R.capsFirefoxDefault)['moz:firefoxOptions'] || { prefs: {}, args: [] };
   row(d.prefs['media.volume_scale'] === '0.0' && !('media.autoplay.default' in d.prefs) && d.args.includes('-headless')
       && !('binary' in d), 'caps.firefox.default');
   // A snap Firefox (a Linux machine that has one): the profile goes where the snap can read it, unless --binary
@@ -518,14 +538,14 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(refused.code === 2 && refused.record === null && /only on a CI runner/.test(refused.err), 'caps.safari.refused',
       'outside GitHub Actions Safari is not driven: no driver was started');
   const r = R.safari;
-  const c = r.record ? r.record.capabilities : {};
+  const c = capsOf(r);
   row(r.code === 0 && JSON.stringify(c) === '{"browserName":"safari"}', 'caps.safari', JSON.stringify(c));
   row(r.record !== null && /^--port \d+ --diagnose$/.test(r.record.argv.join(' '))
       && /---- .*com\.apple\.WebDriver\/fake\/safaridriver\.txt ----\nfake-driver: a diagnose file/.test(r.driverLog)
       && /--autoplay does nothing for Safari/.test(r.out), 'caps.safari.driver',
       'safaridriver is asked to diagnose, and what it wrote is in the driver\'s log');
   const here = R.safariHere;
-  row(here.code === 0 && here.record !== null && here.record.capabilities.browserName === 'safari', 'caps.safari.here',
+  row(here.code === 0 && capsOf(here).browserName === 'safari', 'caps.safari.here',
       '--safari-here overrides the refusal');
 }
 {
@@ -548,6 +568,19 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(R.noIndex.code === 2 && R.noIndex.record === null && /nosite has no index\.html/.test(R.noIndex.err)
       && R.noLive.code === 2 && R.noLive.record === null && /no-such-directory is not a directory/.test(R.noLive.err),
       'usage.inputs', 'a site without index.html and a live directory that is not one are refused');
+}
+// ---- every run ------------------------------------------------------------------------------------------------------
+{
+  const started = Object.keys(R).filter((k) => R[k].record !== null);
+  const leaks = started.filter((k) => !R[k].gone);
+  row(leaks.length === 0, 'cleanup.every_run', leaks.length === 0
+    ? `the driver and its browser gone after each of the ${started.length} runs that started one`
+    : leaks.map((k) => `${k} (${leftOf(R[k])})`).join(', '));
+  const refused = started.flatMap((k) => R[k].record.refused.map((why) => `${k}: ${why}`));
+  const posts = started.reduce((n, k) => n + count(R[k].record.commands.join('\n'), /^POST /mg), 0);
+  row(posts > 0 && refused.length === 0, 'protocol.requests', refused.length === 0
+    ? `${posts} POSTs, each with a JSON object and Content-Type application/json, every Execute Script with its args`
+    : `a real driver refuses ${refused.length}: ${refused.slice(0, 3).join('; ')}`);
 }
 
 rmSync(scratch, { recursive: true, force: true });

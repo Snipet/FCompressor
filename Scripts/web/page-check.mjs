@@ -16,7 +16,8 @@
 //                  as the gate compares them: every line but `live` and `hooks`, and the hooks line must say dpi 2, a
 //                  fixed clock, drawn and idle.
 //   --pages        every *.html of the live directory, by the live-page protocol (the self-test's title and log).
-//   the end        the session is deleted and the driver's process group killed, whatever happened.
+//   the end        the session is deleted (while the driver is there to ask), and the driver's process group, the
+//                  browser it started with it, is killed whatever happened: the driver's own exit too.
 // A part that fails does not stop the run: the parts after it are still judged.
 //
 // Lines: `page-check: ...` for what the runner says; the pages' own PASS|FAIL|NOTE lines; one line a part, `PASS|FAIL
@@ -307,15 +308,24 @@ async function finish(code, why = '', exchange = null) {
         await command('DELETE', `/session/${session}`, undefined, 10000);
       } catch { /* the driver is stopped below */ }
     }
-    if (driver && driver.exitCode === null && driver.signalCode === null) {
-      const gone = new Promise((r) => driver.once('exit', r));
+    // Its group, the driver and the browser it started, whatever the driver's state: one that went away by itself left
+    // its browser in the group, which outlives its leader. SIGTERM, a moment until the driver has exited and the group
+    // is empty (ESRCH), SIGKILL, another moment.
+    if (driver && driver.pid) {
       const signal = (s) => {
         try { process.kill(-driver.pid, s); } catch { try { driver.kill(s); } catch { /* gone */ } }
       };
-      signal('SIGTERM');                                // its group: the driver and the browser it started
-      await Promise.race([gone, sleep(2000)]);
+      const gone = () => {
+        if (driver.exitCode === null && driver.signalCode === null) return false;
+        try { process.kill(-driver.pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; }
+      };
+      const quit = async (ms) => {
+        for (const until = Date.now() + ms; !gone() && Date.now() < until;) await sleep(50);
+      };
+      signal('SIGTERM');
+      await quit(2000);
       signal('SIGKILL');
-      await Promise.race([gone, sleep(1000)]);
+      await quit(1000);
     }
     if (server) server.close();
     for (const line of notServed) out(`page-check: server: ${line}`);

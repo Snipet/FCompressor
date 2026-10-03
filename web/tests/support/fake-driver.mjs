@@ -9,16 +9,27 @@
 // for a list of paths, so the record also says what that server serves; a capture page's frame is made from the
 // expectation the server gives at /expect/.
 //
+// In the browser's place, a process (a node that sleeps, `fcmp-pagecheck-fake-browser` on its command line; its pid
+// is the record's `browser`), started as a driver starts its browser: in the driver's process group. Nothing here
+// stops it, neither Delete Session nor the fake's own end, so it is gone only if the runner signalled the group. It
+// ends by itself after 150 s, as the fake does.
+//
+// As strict as a real driver where the runner could get it wrong: a POST whose Content-Type is not application/json
+// (or that has none) is refused as geckodriver refuses it (500 unknown error); a POST whose body is not a JSON object,
+// and an Execute Script without a `script` string and an `args` list, as chromedriver refuses them (400 invalid
+// argument). Each refusal is in the record's `refused`.
+//
 // Scenarios. The driver: pass, noversion (--version fails), notready (/status says so for ever), silent (/status is
 // never answered), nostatus (/status is an unknown command), nosession, noid (New Session answers with no
-// sessionId), notimeouts (Set Timeouts is refused), slowquit (SIGTERM is ignored). The self-test: fail, running (no
-// verdict), hang (a script is never answered), garbage (a reply that is not JSON), scripterror (every script fails),
-// flaky (the first script on a page fails), crash (the connection is dropped and the driver exits a moment later),
-// lost (the session is gone), noshot (no screenshot). The capture pages: framediff (settings differs in its text
-// line, chars.colour lacks a line, modebrowser has one more), framebad (the hooks line says not idle for panel,
-// dpi 1 for modebrowser, a free clock for presetbrowser and not drawn for settings; chars.sidechain throws,
-// chars.colour returns nothing), frameless (no Module.fcmpFrame), framegone (the page refused). The live pages:
-// livefail and livehang (b.html fails, or never gives a verdict).
+// sessionId), notimeouts (Set Timeouts is refused), slowquit (SIGTERM is ignored, by the browser too). The self-test:
+// fail, running (no verdict), hang (a script is never answered), garbage (a reply that is not JSON), scripterror
+// (every script fails), flaky (the first script on a page fails), crash (the connection is dropped and the driver
+// exits a moment later, its browser left in the group), lost (the session is gone), noshot (no screenshot). The
+// capture pages: framediff (settings differs in its text line, chars.colour lacks a line, modebrowser has one more),
+// framebad (the hooks line says not idle for panel, dpi 1 for modebrowser, a free clock for presetbrowser and not
+// drawn for settings; chars.sidechain throws, chars.colour returns nothing), frameless (no Module.fcmpFrame),
+// framegone (the page refused). The live pages: livefail and livehang (b.html fails, or never gives a verdict).
+import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
@@ -36,8 +47,13 @@ for (let i = 2; i < process.argv.length; i += 1) {
   if (process.argv[i] === '--port') port = Number(process.argv[i + 1]);
   else if (process.argv[i].startsWith('--port=')) port = Number(process.argv[i].slice(7));
 }
-const record = { pid: process.pid, argv: process.argv.slice(2), scenario, capabilities: null, timeouts: null, urls: [],
-                 polls: 0, deleted: 0, screenshots: 0, lostContexts: 0, served: {}, commands: [] };
+// The browser: not detached, so in this process's group (the runner makes the fake lead one of its own).
+const quits = scenario === 'slowquit' ? "process.on('SIGTERM', () => {});" : '';
+const browser = spawn(process.execPath, ['-e', `${quits}setTimeout(() => {}, 150000);`, 'fcmp-pagecheck-fake-browser'],
+                      { stdio: 'ignore' });
+const record = { pid: process.pid, browser: browser.pid, argv: process.argv.slice(2), scenario, capabilities: null,
+                 timeouts: null, urls: [], polls: 0, deleted: 0, screenshots: 0, lostContexts: 0, served: {},
+                 commands: [], refused: [] };
 const save = () => { if (recordPath) writeFileSync(recordPath, JSON.stringify(record, null, 1)); };
 save();
 if (scenario === 'slowquit') process.on('SIGTERM', () => { record.sigterm = true; save(); });
@@ -144,16 +160,31 @@ const server = createServer((request, response) => {
     };
     const error = (status, code, message) => send(status, { error: code, message, stacktrace: '' });
     const path = request.url;
-    record.commands.push(`${request.method} ${path.replace(/\/session\/[^/]+/, '/session/<id>')}`);
+    const asked = `${request.method} ${path.replace(/\/session\/[^/]+/, '/session/<id>')}`;
+    record.commands.push(asked);
     save();
+    // What a real driver refuses, whatever the scenario: said, and kept in the record.
+    const refuse = (status, code, message) => {
+      record.refused.push(`${asked}: ${message}`);
+      save();
+      return error(status, code, message);
+    };
+    let json = null;                                    // a POST's body
+    if (request.method === 'POST') {
+      const type = request.headers['content-type'] || '';
+      if (type.split(';')[0].trim().toLowerCase() !== 'application/json')
+        return refuse(500, 'unknown error', `Invalid Content-Type: '${type}'`);
+      try { json = JSON.parse(body); } catch { /* refused below */ }
+      if (json === null || typeof json !== 'object' || Array.isArray(json))
+        return refuse(400, 'invalid argument', `invalid argument: not a JSON object: '${body.slice(0, 200)}'`);
+    }
     if (request.method === 'GET' && path === '/status') {
       if (scenario === 'silent') return undefined;                      // never answered
       if (scenario === 'nostatus') return error(404, 'unknown command', 'GET /status');
       return send(200, { ready: scenario !== 'notready', message: '' });
     }
     if (request.method === 'POST' && path === '/session') {
-      const asked = JSON.parse(body);
-      record.capabilities = asked.capabilities && asked.capabilities.alwaysMatch;
+      record.capabilities = json.capabilities && json.capabilities.alwaysMatch;
       save();
       if (scenario === 'nosession')
         return error(500, 'session not created', 'session not created: the browser binary was not found\nat line 2');
@@ -166,12 +197,12 @@ const server = createServer((request, response) => {
     const rest = path.slice(`/session/${SESSION}`.length);
     if (request.method === 'POST' && rest === '/timeouts') {
       if (scenario === 'notimeouts') return error(400, 'invalid argument', 'timeouts are not for this driver');
-      record.timeouts = JSON.parse(body);
+      record.timeouts = json;
       save();
       return send(200, null);
     }
     if (request.method === 'POST' && rest === '/url') {
-      const url = new URL(JSON.parse(body).url);
+      const url = new URL(json.url);
       record.urls.push(url.href);
       const view = url.searchParams.get('view');
       const name = url.pathname.split('/').pop();
@@ -199,7 +230,10 @@ const server = createServer((request, response) => {
       return send(200, null);
     }
     if (request.method === 'POST' && rest === '/execute/sync') {
-      const { script, args } = JSON.parse(body);
+      const { script, args } = json;
+      if (typeof script !== 'string')
+        return refuse(400, 'invalid argument', "invalid argument: 'script' must be a string");
+      if (!Array.isArray(args)) return refuse(400, 'invalid argument', "invalid argument: 'args' must be a list");
       const reading = !/getContext/.test(script);                       // the renderer is asked after the verdict
       if (reading) {
         record.polls += 1;
