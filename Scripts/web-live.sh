@@ -16,11 +16,11 @@
 #   Scripts/web-live.sh --serve <build-web>                        serves only and prints the URLs, for a human with
 #   Scripts/web-live.sh --serve --dir <site> --live <dir> --expect <dir>   another browser; Ctrl-C stops it
 #   Scripts/web-live.sh --help (or -h)                             this text
-#   Options: --out <dir>     where the results go: default <build-web>/web-live; with --dir, web-live beside the site
-#                             (<site>/../web-live); with --url, web-live beside the expectations (<expect>/../web-live).
-#                             Never the current directory. It must be new, empty, the gate's (it has .web-live), hold
-#                             an expect/ directory alone (an artifact as downloaded), or be an earlier run's from
-#                             before .web-live; any other is refused (exit 2) and nothing in it is touched
+#   Options: --out <dir>      where the results go: default <build-web>/web-live; with --dir, web-live beside the
+#                             site (<site>/../web-live); with --url, web-live beside the expectations
+#                             (<expect>/../web-live). Never the current directory. It must be new, empty, the gate's
+#                             (it has .web-live), hold an expect/ directory alone (an artifact as downloaded), or be an
+#                             earlier run's from before .web-live; any other is refused (exit 2), nothing in it touched
 #            --chrome <path>  the browser (default $CHROME, else the macOS application, else google-chrome on PATH)
 #            --timeout <s>    how long one page may take to give its verdict (default 120); the scenario is given four
 #                             times that as its own bound (--timeout 480 at the default) and stopped at five times that

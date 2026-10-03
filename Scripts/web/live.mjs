@@ -40,7 +40,7 @@
 // 15 s at most), within the page's timeout. The last line is "web-live: N/M passed (results in <out>)"; a run that a
 // signal or an error of the runner ends before it says "web-live: no verdict (...)" instead.
 //
-// --url: the published site, at <base> (http or https). No server: <base>built-from.txt is asked until it says
+// --url: the published site, at <base> (http or https). No server: <base>/built-from.txt is asked until it says
 // "site <commit> clean" (with --commit; a CDN may serve the previous build for a while), at most --wait seconds and a
 // NOTE per wait; that is the row `published`, and when it fails nothing more is run. Then 1 to 4 against <base>: the
 // capture pages, the asynchronous preview and the self-test twice. The live pages and the scenario are not on the
@@ -117,13 +117,12 @@ export function parseArgs(argv) {
     if (a in takes || a in numbers || a === '--gpu') {
       const value = argv[i += 1];
       if (value === undefined || value === '') return { error: `${a} needs a value` };
+      if (a === '--gpu' && value !== 'default' && value !== 'swiftshader') {
+        return { error: `--gpu is default or swiftshader, not '${value}'` };
+      }
       if (a in numbers) opt[numbers[a]] = Number(value);
-      else if (a === '--gpu') {
-        if (value !== 'default' && value !== 'swiftshader') {
-          return { error: `--gpu is default or swiftshader, not '${value}'` };
-        }
-        opt.gpu = value === 'default' ? undefined : value;
-      } else opt[takes[a]] = value;
+      else if (a === '--gpu') opt.gpu = value === 'default' ? undefined : value;
+      else opt[takes[a]] = value;
     } else if (a in flags) {
       opt[flags[a]] = true;
     } else {
@@ -355,7 +354,9 @@ export async function runScenario(opt, exe, tally) {
   };
   const removeLeftovers = () => {
     for (const name of leftovers()) {
-      try { rmSync(join(scratchDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
+      try {
+        rmSync(join(scratchDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch { /* a file a dying Chrome still held */ }
     }
   };
   const signal = (name) => {                            // only while the child lives: the group's number is its own

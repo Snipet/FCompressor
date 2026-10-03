@@ -438,7 +438,7 @@ try {
     // It never ends. The gate's part of it runs in a child process (live.runScenario, with the library's signal
     // handlers), so it can be ended by its bound or by a signal.
     const stub = join(scratch, 'stand-in scenario.mjs');
-    writeFileSync(stub, `import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+    writeFileSync(stub, `import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const args = process.argv.slice(2);
@@ -446,7 +446,10 @@ const at = (name) => args[args.indexOf(name) + 1];
 const cdp = await import(pathToFileURL(process.env.STUB_CDP).href);
 mkdirSync(at('--out'), { recursive: true });
 const scratch = mkdtempSync(join(at('--out'), 'scenario-'));
-process.on('exit', () => rmSync(scratch, { recursive: true, force: true }));
+process.on('exit', () => {
+  rmSync(scratch, { recursive: true, force: true });
+  writeFileSync(join(at('--out'), '..', 'its cleanup ran'), '');
+});
 mkdirSync(join(scratch, 'profile'));
 const browser = await cdp.chrome({ chrome: at('--chrome'), profile: join(scratch, 'profile') });
 console.log('READY ' + process.pid + ' ' + browser.pid + ' ' + scratch);
@@ -486,9 +489,12 @@ process.exit(0);
       for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
       const left = ready ? existsSync(ready[3].trim()) : true;
       const leftovers = existsSync(join(out, 'scenario')) ? readdirSync(join(out, 'scenario')) : [];
-      return { ok: ready !== null && gone && !left && leftovers.length === 0, code, said, ms: Date.now() - t0,
+      const cleaned = existsSync(join(out, 'its cleanup ran'));
+      return { ok: ready !== null && gone && !left && leftovers.length === 0 && cleaned, code, said,
+               ms: Date.now() - t0,
                text: `${signal}: ${ready ? 'ready' : `never ready (${said.trim().slice(-200)})`}, exit ${code}, `
-                     + `the scenario and its Chrome ${gone ? 'gone' : 'STILL RUNNING'}, its scratch `
+                     + `the scenario and its Chrome ${gone ? 'gone' : 'STILL RUNNING'}, its own cleanup `
+                     + `${cleaned ? 'ran' : 'DID NOT RUN'}, its scratch `
                      + `${left || leftovers.length ? `LEFT (${leftovers.join(', ')})` : 'gone'}` };
     };
     const bound = await scenarioRun('bound', 0.6);
@@ -1156,12 +1162,15 @@ exit 0
     const help = sh(['--help']);
     const options = [...new Set((readFileSync(script, 'utf8').match(/^ {4}(-[-|a-z]+)\)/gm) || [])
       .flatMap((m) => m.trim().slice(0, -1).split('|')))];
-    const undocumented = options.filter((o) => !new RegExp(`(^|[\\s(])${o}\\b`, 'm').test(help.out));
+    const valued = ((/^ {4}(--dir\|[-|a-z]+)\)/m.exec(readFileSync(script, 'utf8')) || [])[1] || '').split('|');
+    const undocumented = [...options.filter((o) => !new RegExp(`(^|[\\s(])${o}\\b`, 'm').test(help.out)),
+                          ...valued.filter((o) => !help.out.includes(`${o} <`)).map((o) => `${o} <value>`)];
     const forms = ['<build-web> [options]', '--dir <site> --live <dir> --expect <dir> [options]',
                    '--url <base> --expect <dir> [--commit <sha>] [--wait <s>] [options]', '--serve <build-web>',
                    '--serve --dir <site> --live <dir> --expect <dir>']
       .filter((f) => !help.out.includes(`web-live.sh ${f}`));
-    row(help.code === 0 && options.length >= 12 && undocumented.length === 0 && forms.length === 0
+    row(help.code === 0 && options.length >= 12 && valued.length >= 10 && undocumented.length === 0
+        && forms.length === 0
         && /^Exit: 0 every row passed; 1 .*\n2 usage, .*no Chrome, the results directory refused, no verdict, a signal/m
           .test(help.out) && help.err === '', 'usage.help',
         undocumented.length || forms.length ? `not in --help: ${[...undocumented, ...forms].join(', ')}`

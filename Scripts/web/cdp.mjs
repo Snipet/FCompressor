@@ -196,8 +196,8 @@ export function gpuFlags(gpu = undefined, platform = process.platform) {
 //                   environment has FCMP_WEB_LIVE_NO_SANDBOX=1: the gate's switch reaches every Chrome started here)
 //   flags, extra    more flags before and after the fixed ones (the last of two switches wins; none by default)
 //   png             where page.shot writes a relative name (PNG)
-// No other variable of the environment changes a flag: a Chrome is started as its caller says.
 //   answerMs        how long one DevTools command may take (60 s)
+// No other variable of the environment changes a flag: a Chrome is started as its caller says.
 // Answers { send, page, kill, close, version, renderer, audioRuns, profile, pid, path, flags, gone, said }.
 export async function chrome({ width = 1280, height = 800, extra = [], profile = '', chrome: path = '',
                                gpu = undefined, flags = [], autoplay = true,
