@@ -319,7 +319,10 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => {
     if (interrupted !== '') return;
     interrupted = sig;
-    if (current === null) process.exit(2);           // no scenario runs, and nothing of a mutant is on disk
+    if (current === null) {                           // no scenario runs, and nothing of a mutant is on disk
+      console.log(`mutants: interrupted by ${sig}`);
+      process.exit(2);
+    }
     stop(current, sig);                               // the loop below ends the run once the scenario has closed
   });
 }
