@@ -20,6 +20,11 @@
 //                  gives the self-test its FAIL), and nothing once main.js has booted
 //   editor.*       what the editor's status means to the page (no WebGL2 only when the sink says so, any other reason
 //                  as it is, a lost context nothing), and which uncaught errors are the editor's failure
+//   pixels.*       the self-test's pixel rule (web lead phase): the software bound is FunkGui's for its own sink's
+//                  page; a renderer's class is its name's, and an unknown name is a GPU; both sides of each number (a
+//                  GPU: none over 2 of 255; software: none over 16, at most 10 per mille over 2); no frame, no pass;
+//                  the Panel's rest (Module.fcmpA11y's fullRate 0, bounded; a quiet time where the module does not
+//                  say); and the frame is asked for at rest, in that task, before the demo starts, which the row says
 //   files.*        the limits of a dropped file, and the fades at its ends
 //   built_from.*   the footer's line: a link only for `clean`, nothing for `none` or an unreadable line
 //   verdict.*      the self-test's title: RUNNING, then PASS or FAIL: <the first failing row>; an uncaught error is a
@@ -309,6 +314,154 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
                             + 'the reason; afterwards a wasm trap and what its two files threw, and nothing of the '
                             + 'page\'s own'
                           : missed.join('; '));
+}
+
+// ---- the self-test's pixel rule ------------------------------------------------------------------------------------
+{
+  const main = read(source, 'web/main.js');
+  // The numbers are FunkGui's for its own sink's page, in the FunkGui this build used, and "over 2" is what the
+  // editor module counts.
+  const build = dirname(site);
+  const cache = existsSync(join(build, 'CMakeCache.txt')) ? read(build, 'CMakeCache.txt') : '';
+  const funkgui = found(cache, /^FunkGui_SOURCE_DIR:STATIC=(.+)$/m);
+  const sinkPage = funkgui && existsSync(join(funkgui, 'test/web/page.cpp')) ? read(funkgui, 'test/web/page.cpp') : '';
+  const theirs = { tolerance: Number(found(sinkPage, /\bkTolerance = (\d+);/)),
+                   worst: Number(found(sinkPage, /\bkWorst = (\d+);/)),
+                   perMille: Number(found(sinkPage, /\bkOverPerMille = ([\d.]+);/)) };
+  const counted = Number(found(read(source, 'Source/web/ui/WebMain.cpp'), /\bkPixelTolerance = (\d+);/));
+  row(page.SOFTWARE_PIXELS.worst === theirs.worst && page.SOFTWARE_PIXELS.perMille === theirs.perMille
+      && theirs.tolerance === 2 && counted === 2, 'pixels.bound',
+      `main.js: no sample over ${page.SOFTWARE_PIXELS.worst}, at most ${page.SOFTWARE_PIXELS.perMille} per mille over `
+      + `2; the build's FunkGui (test/web/page.cpp): kWorst ${theirs.worst}, kOverPerMille ${theirs.perMille}, `
+      + `kTolerance ${theirs.tolerance}; WebMain.cpp counts the samples over ${counted}`);
+
+  // The renderer's class is its name's. The first name of each list is what headless Chrome 154 said on an Apple M5
+  // (--use-angle=swiftshader, --use-angle=metal); the others are names of the kind, not measurements.
+  const software = ['ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)',
+                    'Google SwiftShader', 'llvmpipe (LLVM 15.0.7, 256 bits)', 'Mesa/X.org, llvmpipe, or similar',
+                    'Gallium 0.4 on softpipe', 'Apple Software Renderer', 'Software Rasterizer',
+                    'ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)', 'LLVMPIPE'];
+  const gpus = ['ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)', 'Apple GPU', 'WebKit WebGL',
+                'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)', 'Mali-G78',
+                'ANGLE (Intel, Mesa Intel(R) UHD Graphics 630 (CFL GT2), OpenGL 4.6)', 'A RENDERER NOBODY HAS HEARD OF',
+                '', undefined, null];
+  const misread = [...software.filter((name) => !page.softwareRenderer(name)),
+                   ...gpus.filter((name) => page.softwareRenderer(name))];
+  row(misread.length === 0, 'pixels.renderer',
+      misread.length === 0 ? `${software.length} names are software (SwiftShader, llvmpipe, softpipe, a software `
+                             + `rasteriser, in any letter case); ${gpus.length} are not, an unknown name and no name `
+                             + 'among them'
+                           : `wrong for: ${misread.map((name) => JSON.stringify(name)).join(', ')}`);
+
+  // Both sides of each number, in a frame of the editor's size at 100 % (960 x 640, four channels: what headless
+  // Chrome reads back).
+  const samples = 960 * 640 * 4;
+  const frame = (largest, over2, more = {}) => ({ frames: 1, largest, over2, samples, ...more });
+  const metal = gpus[0];
+  const swift = software[0];
+  const wrong = (cases, renderer) => cases.filter(([want, pixels]) => page.pixelRule(pixels, renderer).ok !== want)
+                                          .map(([want, pixels]) => `${JSON.stringify(pixels)} is ${want ? 'not ' : ''}`
+                                                                   + 'passed');
+  const gpuCases = [[true, frame(0, 0)], [true, frame(1, 0)], [true, frame(2, 0)], [false, frame(3, 1)],
+                    [false, frame(7, 1600)], [false, frame(255, samples)]];
+  const gpuWrong = wrong(gpuCases, metal);
+  row(gpuWrong.length === 0 && page.pixelRule(frame(1, 0), metal).rule === 'a GPU: none over 2', 'pixels.gpu',
+      gpuWrong.length === 0 ? 'a GPU: a frame within 2 of 255 everywhere passes; one sample over 2 fails, and so does '
+                              + 'what SwiftShader draws (7, 1600 over 2)'
+                            : gpuWrong.join('; '));
+
+  const most = samples / 100;                                    // 10 per mille of the samples, exactly
+  const softCases = [[true, frame(0, 0)], [true, frame(7, 1600)], [true, frame(16, 1600)], [false, frame(17, 1)],
+                     [false, frame(17, 0)], [true, frame(16, most)], [false, frame(16, most + 1)],
+                     [false, frame(3, most + 1)], [false, frame(255, samples)]];
+  const softWrong = wrong(softCases, swift);
+  const said = page.pixelRule(frame(7, 1600), swift);
+  row(softWrong.length === 0 && Number.isInteger(most) && said.software === true
+      && Math.abs(said.share - 1000 * 1600 / samples) < 1e-12
+      && said.rule === 'software: at most 16, and 10 per mille over 2', 'pixels.software',
+      softWrong.length === 0 ? `software: 16 of 255 passes and 17 fails; ${most} of ${samples} samples over 2 (10 per `
+                               + `mille) pass and ${most + 1} fail; SwiftShader's 7 with 1600 over 2 is `
+                               + `${said.share.toFixed(2)} per mille and passes`
+                             : softWrong.join('; '));
+
+  // A renderer nobody named is held to the GPU's rule, whatever it draws.
+  const unknown = ['A RENDERER NOBODY HAS HEARD OF', '', undefined];
+  const lenient = unknown.filter((name) => page.pixelRule(frame(7, 1600), name).ok
+                                           || page.pixelRule(frame(3, 1), name).ok
+                                           || !page.pixelRule(frame(2, 0), name).ok
+                                           || page.pixelRule(frame(2, 0), name).software);
+  row(lenient.length === 0 && page.pixelRule(frame(7, 1600), swift).ok, 'pixels.unknown_is_a_gpu',
+      lenient.length === 0 ? 'an unknown renderer and one with no name are judged as a GPU: the frame that passes as '
+                             + 'software (7, 1600 over 2) fails there'
+                           : `judged as software: ${lenient.map((name) => JSON.stringify(name)).join(', ')}`);
+
+  // No frame, no pass: the module says frames 0 where it drew or read nothing (a hidden document, a lost context),
+  // and its other numbers are then zeros, which would pass any bound.
+  const nothing = [frame(0, 0, { frames: 0 }), frame(0, 0, { frames: 0, samples: 0 }), frame(0, 0, { samples: 0 }),
+                   { frames: 1, largest: 0, over2: 0 }, { frames: 1, largest: 0, samples },
+                   { largest: 0, over2: 0, samples }, {}];
+  const passedEmpty = [metal, swift].flatMap((name) => nothing.filter((pixels) => page.pixelRule(pixels, name).ok));
+  row(passedEmpty.length === 0, 'pixels.no_frame',
+      passedEmpty.length === 0 ? `${nothing.length} answers with no frame, no samples or a number missing: none `
+                                 + 'passes, as a GPU or as software'
+                               : `passed: ${passedEmpty.map((pixels) => JSON.stringify(pixels)).join('; ')}`);
+
+  // The Panel at rest (untilRest()), on a clock of its own: Module.fcmpA11y's fullRate asked every REST.step ms until
+  // it is 0, for at most REST.bound ms; a module that does not say gets REST.quiet ms, and the answer says so.
+  const rested = async (module) => {
+    let t = 0;
+    const r = await page.untilRest(module, async (ms) => { t += ms; }, () => t);
+    return { ...r, t };
+  };
+  const answering = (rates) => {
+    const m = { asked: 0 };
+    m.fcmpA11y = () => JSON.stringify({ screen: 0, fullRate: rates[Math.min(m.asked++, rates.length - 1)] });
+    return m;
+  };
+  const { step, bound, quiet } = page.REST;
+  const settles = answering([1, 1, 1, 0]);
+  const atOnce = answering([0]);
+  const never = answering([1]);
+  const unsaid = { fcmpA11y: () => '{"screen":0}' };
+  const cases = [
+    ['rests after three answers', await rested(settles), { still: true, ms: 3 * step, how: 'fullRate' }, settles, 4],
+    ['at rest at once', await rested(atOnce), { still: true, ms: 0, how: 'fullRate' }, atOnce, 1],
+    ['never rests', await rested(never), { still: false, ms: bound, how: 'fullRate' }, never, bound / step + 1],
+    ['no fcmpA11y', await rested({}), { still: true, ms: quiet, how: 'quiet' }, null, 0],
+    ['no fullRate in it', await rested(unsaid), { still: true, ms: quiet, how: 'quiet' }, null, 0],
+  ];
+  const restWrong = cases.filter(([, got, want, m, asked]) => got.still !== want.still || got.ms !== want.ms
+                                                              || got.how !== want.how || got.t !== want.ms
+                                                              || (m !== null && m.asked !== asked))
+                         .map(([what, got]) => `${what}: ${JSON.stringify(got)}`);
+  row(restWrong.length === 0 && bound > 6000 && quiet > 6000 && step > 0, 'pixels.rest',
+      restWrong.length === 0 ? `untilRest(): fullRate asked every ${step} ms until it is 0 (at once when it is), for `
+                               + `at most ${bound} ms, and then not at rest; a module with no fcmpA11y or no fullRate `
+                               + `in it gets a quiet time of ${quiet} ms (both longer than the first-use hint's 6 s)`
+                             : restWrong.join('; '));
+
+  // The frame is a still one: the self-test waits for the Panel's rest and asks the editor in the same task, before it
+  // starts the demo, and says so. The page's row is pixelRule()'s verdict on a frame of a Panel at rest.
+  const selftest = main.slice(main.indexOf('async function runSelftest()'));
+  const asks = [...selftest.matchAll(/JSON\.parse\(Module\.fcmpSelftest\(\)\)/g)].map((m) => m.index);
+  const rests = [...selftest.matchAll(/const rest = await untilRest\(Module, sleep, /g)].map((m) => m.index);
+  const starts = [...selftest.matchAll(/await within\(\d+, 'the start', start\(\)\)/g)].map((m) => m.index);
+  const before = asks.length === 1 && starts.length === 1 && asks[0] < starts[0];
+  const waits = rests.length === 1 && asks.length === 1 && rests[0] < asks[0]
+             && !/\bawait\b/.test(selftest.slice(rests[0] + 'const rest = await'.length, asks[0]));
+  const theRow = 'row(judged.ok && rest.still, \'editor.pixels\',';
+  const rowText = selftest.slice(selftest.indexOf(theRow) + theRow.length);
+  const says = selftest.includes(theRow)
+            && selftest.includes('const atRest = rest.how === \'quiet\' ? `after a quiet time of ${rest.ms} ms` '
+                                 + ': \'the Panel at rest\';')
+            && /^[^;]*: `\$\{pixels\.frames\} still frame\(s\), before START, \$\{atRest\},/.test(rowText);
+  const judged = selftest.includes('const judged = pixelRule(pixels, renderer);') && says;
+  row(before && waits && judged, 'pixels.still_frame',
+      `runSelftest() asks Module.fcmpSelftest() ${asks.length} time(s) and starts the demo ${starts.length} time(s), `
+      + `the question ${before ? 'before' : 'NOT BEFORE'} the start; it waits for untilRest() ${rests.length} time(s), `
+      + `${waits ? 'before the question and in its task' : 'NOT JUST BEFORE THE QUESTION'}; editor.pixels is `
+      + 'pixelRule()\'s verdict on a Panel at rest and says "still frame(s), before START, the Panel at rest" (or '
+      + `"after a quiet time" where the module does not say): ${judged}`);
 }
 
 // ---- files ---------------------------------------------------------------------------------------------------------
