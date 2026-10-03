@@ -28,8 +28,8 @@
 #   fcmp_web_port_check   web only (Sprint D): fcmp-port-check.mjs, PortLink and the facade as a node module, from
 #                         Tools/web/port/*.cpp; web/tests/port.mjs drives it over a MessageChannel.
 #   fcmp_web_site         web only (Sprint D): build-web/site, assembled by cmake/FcmpWebSite.cmake from web/*.html,
-#                         *.js, *.css, *.svg, the two modules, the licences and built-from.txt. A build output:
-#                         nothing publishes it.
+#                         *.js, *.css, *.svg, the two modules, the licences and built-from.txt. A build output;
+#                         CI's publish job deploys the copy its gate tested to GitHub Pages on a push to main.
 #   fcmp_web_print        web only (lead phase): build-web/live-obj/fcmp-print.wasm, a TEST-ONLY standalone module from
 #                         Tools/web/live/*.cpp (dsp.print's program, its parameter sets as WebProtocol records, the
 #                         harness's hash). Never part of the site.
@@ -155,7 +155,7 @@ if(FCOMPRESSOR_WEB AND FCMP_WEB_PORT_SOURCES)
 endif()
 
 if(FCOMPRESSOR_WEB AND TARGET fcmp_web_engine AND TARGET fcmp_web_ui)
-  # build-web/site: what a static server serves (cmake/FcmpWebSite.cmake). Nothing publishes it.
+  # build-web/site: what a static server serves (cmake/FcmpWebSite.cmake). Nothing here publishes it (CI does).
   # Its inputs go through a file (<build>/site-args.cmake), so that web/tests/site.mjs can run the same script with
   # the same inputs into a scratch directory.
   if(FETCHCONTENT_SOURCE_DIR_FUNKGUI)

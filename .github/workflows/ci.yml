@@ -307,11 +307,18 @@ jobs:
             safari)  sudo /usr/bin/safaridriver --enable; /usr/bin/safaridriver --version ;;
           esac
       - name: Page check
+        shell: bash
         run: |
-          node Scripts/web/page-check.mjs dl/web-site --live dl/web-live/live --expect dl/web-live/web-live/expect \
-            --browser ${{ matrix.browser }} --frames --pages \
-            --log "$RUNNER_TEMP/out/page.txt" --driver-log "$RUNNER_TEMP/out/driver.txt" \
-            --screenshot "$RUNNER_TEMP/out/page.png"
+          args=(Scripts/web/page-check.mjs dl/web-site --live dl/web-live/live --expect dl/web-live/web-live/expect
+                --browser ${{ matrix.browser }} --frames --pages --log "$RUNNER_TEMP/out/page.txt"
+                --driver-log "$RUNNER_TEMP/out/driver.txt" --screenshot "$RUNNER_TEMP/out/page.png")
+          if [ "${{ matrix.browser }}" = firefox ]; then
+            # Headless Firefox on a runner with no GPU gives a page no WebGL2 (PR #68's first run): it runs headed on
+            # a virtual display instead, where Mesa's software renderer serves WebGL2.
+            xvfb-run -a -s "-screen 0 1600x1200x24" node "${args[@]}" --headed
+          else
+            node "${args[@]}"
+          fi
       - name: Upload what the browser said
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,8 +1,9 @@
 # FCompressor architecture
 
-Status: **canonical top-level architecture, synthesised 2026-09-22.** Design phase: no code exists yet. This document
-is the readable overview. The binding detail lives in three appendices, and every decision (with the options it beat)
-is logged in `docs/DECISIONS.md` as `ADR-nn`:
+Status: **canonical top-level architecture, synthesised 2026-09-22**, before any code existed, and kept true since
+(v1.0.0 and v1.1.0 shipped; the browser demo, ADR-93, from 2026-10-01). This document is the readable overview. The
+binding detail lives in three appendices, and every decision (with the options it beat) is logged in
+`docs/DECISIONS.md` as `ADR-nn`:
 
 | Appendix | File | Owns |
 |---|---|---|
@@ -483,7 +484,7 @@ bank is built from per-Mode `factory/<key>.inc` files with a content-hashed revi
    measurement. A new Mode is held to its declared behaviour before any golden exists.
 2. **Table-driven over the registry.** Every probe file self-registers (`// FCMP_PROBE layer=dsp name=static
    scope=mode timeout=60`), and every `scope=mode` probe becomes one test per Mode in `Modes.def`: 13 `dsp`, 5 `proc`, 6
-   `ui` per Mode; ≈ 207 tests for 8 Modes, ≈ 20–25 s at `-j4`.
+   `ui` per Mode (the counts in force are those of `ctest -N`; ADR-93 dates the web tree's).
 3. **Three probe layers.** `dsp.*` (JUCE-free: static curve, time constants, quantisation, link, switch clicks, zipper,
    latency, nulls, hostile input, sample-rate sweep, real-time, analysis bit-identity, fingerprints), `proc.*` (layout,
    host text, state round trips into non-fresh instances, fixtures, bypass, latency under setup changes), `ui.*`

@@ -110,7 +110,7 @@ FCompressor/
       Processor.{h,cpp} ProcessorFacade.h SetupWatcher.h ParamLayout.cpp HostText.cpp
       State.{h,cpp} StateMigration.cpp Presets.cpp factory/FactoryBank.cpp factory/<key>.inc
       CreateEditorGpu.cpp CreateEditorGeneric.cpp        (exactly one per target, chosen by CMake, no #if)
-    editor/                       GPU-free UI (namespace fcmp::ui); JUCE + FunkGui::core
+    editor/                       GPU-free UI (namespace fcmp::ui); FunkGui::core, no JUCE outside gpu/ (ADR-93)
       Panel.{h,cpp} SubView.h Layout.h Tags.h SlotModel.{h,cpp} HistoryStore.h PreviewWorker.{h,cpp}
       views/      Header DisplayRow SlotGrid Band HistoryPlot TransferPlot MeterColumn CharScreen ControlPathPlot
                   StepPlot SidechainPlot ColourPlot Readouts ModeBrowser PresetStrip PresetBrowser Footer (.h/.cpp each)

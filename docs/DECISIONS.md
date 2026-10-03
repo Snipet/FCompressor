@@ -1079,13 +1079,14 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     | exact fma (shipped), the lead's Mac (arm64), Sprint A | **112 of 112** (all 14 Modes × 8) | 20.4× | 168× / 102× / 55× |
     | the same at Sprint D's gate, 2026-10-02 | 112 of 112 | 20.5× | 163× / 104× / 52× |
     | exact fma, the CI runner (x86-64), Sprint A | 112 of 112 | 12.6× | 102× / 62× / 32× |
-    | exact fma, the CI runner (x86-64), the lead phase | (lead: the x86 runner's figures from PR #68) | | |
+    | exact fma, the CI runner (x86-64), the lead phase (PR #68) | 112 of 112 | 11.3× | 94× / 55× / 27× |
     | unfused (measurement only), the lead's Mac | 0 of 112 | 40.8× | 295× / 187× / 92× |
 
     Exact arithmetic costs about 2× in engine throughput and stays far above the 4× gate on both machines, so the demo
     runs the plugin's exact DSP. The raw parameter sets hash the same natively and under wasm: musl's `pow` and `log`
     move nothing. On the x86 runner no 2/3 s of a Mode's silent tail costs more than 0.92× its active signal with the
-    gate off (`web.engine.tail`): the flush leaves no denormal for V8 to trip over. Natively on x86-64, `web.simd`
+    gate off (`web.engine.tail`; 0.61× to 0.94× in the lead phase's run): the flush leaves no denormal for V8 to trip
+    over. Natively on x86-64, `web.simd`
     passes on the Linux CI runner, which is where the flush rule above was learned. In Chrome on the lead's Mac (the
     lead phase's `fcmp-tail` page): through the shipped worklet STD runs at 28.3× (mu-67) to 90.3× (brickwall) real
     time and HQ at 19.1× (mu-67) to 45.8× (brickwall); silence with the gate off costs 0.62× (mu-67) to 1.00×
