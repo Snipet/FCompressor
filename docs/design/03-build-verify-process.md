@@ -1724,6 +1724,11 @@ GitHub Actions runs the workflow on every push to `main`, on every pull request 
 - `published` (after `publish`): `Scripts/web-live.sh --url <the page's address> --expect … --commit <sha>` waits until
   the public `built-from.txt` names this commit, then runs the capture pages and the self-test against the public page.
 
+Outside CI, Cloudflare builds and serves a second copy of the site from `main`,
+https://fcompressor.seantfunk.workers.dev (`wrangler.jsonc`, `Scripts/cloudflare-build.sh`; ADR-93). Its Preview
+builds of other branches are off; were they on, the check it adds to a pull request, "Workers Builds: fcompressor",
+would be Cloudflare's own build of that commit: not one of the jobs above, and gating nothing.
+
 Nothing is signed or installed; the demo's site is the only thing published. A failing job uploads its results
 (`dsp-results`, `plugin-results`, `linux-dsp-results`, `linux-plugin-results`, `web-results`); `web-browsers` uploads
 `web-page-<browser>` and `published` uploads `web-published`, kept 14 days.

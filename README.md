@@ -96,6 +96,8 @@ The DSP and the editor also build for a browser: two WebAssembly modules and a s
 runs in an AudioWorklet with the plugin's arithmetic (the test suite holds it to the plugin's own results); the editor
 is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin format. CI publishes it from `main` to
 [snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/), once the jobs that gate it have passed.
+Cloudflare serves a second copy at
+[fcompressor.seantfunk.workers.dev](https://fcompressor.seantfunk.workers.dev), which it builds from `main` itself.
 
 Press START. The page plays a loop it synthesises, or an audio file you open or drop on it; the file never leaves
 your browser. It needs a desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address.

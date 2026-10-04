@@ -4,12 +4,12 @@
 #
 #   bash Scripts/cloudflare-build.sh
 #
-# and the deploy command stays `npx wrangler deploy`. It must be run by bash, by name as above: Cloudflare runs a build
-# command in plain sh, where emsdk's emsdk_env.sh cannot find its own directory, says so and returns without failing
-# (the first import's build failed that way: cmake then found no em-config).
+# and the deploy command stays `npx wrangler deploy`. Name bash, as above: Cloudflare's builder was seen to run a build
+# command in plain sh (its documentation names no shell), where emsdk's emsdk_env.sh cannot find its own directory,
+# says so and returns without failing (the first import's build failed that way: cmake then found no em-config).
 #
 # What it does, each step only if the machine lacks it:
-#   CMake 3.30 or later and Ninja   from pip (the build image has neither)
+#   CMake 3.30 or later and Ninja   from pip (the build image's documented tools include neither)
 #   Emscripten                      the version cmake/FcmpDeps.cmake pins (its configure refuses any other), through
 #                                   emsdk, cloned into $FCMP_EMSDK_DIR (default $HOME/emsdk): OUTSIDE the checkout on
 #                                   purpose. An untracked directory in the tree makes built-from.txt say `dirty`, and
@@ -44,8 +44,14 @@ command -v ninja > /dev/null 2>&1 || { say "no ninja after pip install"; exit 1;
 # Emscripten at the pin.
 if ! command -v em-config > /dev/null 2>&1; then
     EMSDK_HOME=${FCMP_EMSDK_DIR:-$HOME/emsdk}
+    case "$EMSDK_HOME" in
+        /*) ;;
+        *) EMSDK_HOME=$PWD/$EMSDK_HOME ;;                # a relative path is relative to the checkout: refused below
+    esac
     case "$EMSDK_HOME/" in
-        "$PWD"/*) say "FCMP_EMSDK_DIR ($EMSDK_HOME) is inside the checkout: the site would say it was built dirty"; exit 1 ;;
+        "$PWD"/*)
+            say "FCMP_EMSDK_DIR ($EMSDK_HOME) is inside the checkout: the site would say it was built dirty"
+            exit 1 ;;
     esac
     if [ ! -x "$EMSDK_HOME/emsdk" ]; then
         say "cloning emsdk into $EMSDK_HOME"
