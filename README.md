@@ -96,16 +96,16 @@ The DSP and the editor also build for a browser: two WebAssembly modules and a s
 runs in an AudioWorklet with the plugin's arithmetic (the test suite holds it to the plugin's own results); the editor
 is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin format. It is served at
 [fcompressor.seanfunk.xyz](https://fcompressor.seanfunk.xyz) and at
-[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/). CI publishes the second from `main`, once the
-jobs that gate it have passed. Cloudflare builds the first from `main` itself, and also serves it at
-[fcompressor.seantfunk.workers.dev](https://fcompressor.seantfunk.workers.dev).
+[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/). CI publishes the GitHub Pages copy from `main`,
+once the jobs that gate it have passed. Cloudflare builds the copy at the domain from `main` itself, and also serves it
+at [fcompressor.seantfunk.workers.dev](https://fcompressor.seantfunk.workers.dev).
 
-Press START. The page plays a loop that Sean Funk made for the demo (the sample loop). You can change to a loop the
-page synthesises (the synth loop), or to an audio file you open or drop on it; the file never leaves your browser.
-It needs a desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address.
-Its tests run in headless Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI
-also runs its self-test and checks in Firefox and Safari (both pass) and reports them without failing on them. It has
-not been tried by hand in Firefox or Safari yet.
+Press START. The page plays a loop that Sean Funk made for the demo (the sample loop). You can change to a loop the page
+synthesises (the synth loop), or to an audio file you open or drop on it; the file never leaves your browser. It needs a
+desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address. Its tests run in headless
+Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI also runs its self-test and
+checks in Firefox and Safari (both pass) and reports them without failing on them. It has not been tried by hand in
+Firefox or Safari yet.
 
 What differs from the plugin (the page lists the same):
 - No preset import or export; your own presets last until the page is closed.

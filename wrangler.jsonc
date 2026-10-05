@@ -24,7 +24,8 @@
   // when the configuration lists some (read in the source of wrangler 4.100.0, `triggersDeploy`; Cloudflare's
   // builder ran 4.147.0 on its earlier deploys, whose source was not read). So a deploy leaves the domain as it is.
   // `preview_urls` false gives an uploaded version no address of its own (a Version URL) and a Preview of another
-  // branch none either. Both keys are stated so that a deploy does not have to warn about a default.
+  // branch none either. `workers_dev` and `preview_urls` are both stated so that a deploy does not have to warn about
+  // a default.
   "workers_dev": true,
   "preview_urls": false,
   "assets": {

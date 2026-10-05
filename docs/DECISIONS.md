@@ -1032,18 +1032,18 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     - *Not changed:* compiling bgfx with Vulkan alone on Linux (it would also drop the unused GL link), offered by the
       review as defence in depth; it needs a Linux build to check.
 - **ADR-93 A browser demo: FCompressor as WebAssembly (on `main` after v1.1.0; published on GitHub Pages from `main`,
-  first when PR #68 merged, and by Cloudflare from 2026-10-03; it plays a loop made for it on 2026-10-05).** The user
-  asked for web builds through WASM, to demo the plugin in a browser. The demo
-  runs the real DSP and shows the real editor; it is not a port and not a second code base. Design pass: five scouts,
-  three independent designs and a judge (`docs/sprints/web/plan.md` and the reports beside it). Built from 2026-10-01
-  to 2026-10-02 in four sprints and a lead phase (manifests `docs/sprints/web-{a,b,c,d}.md` and `web-lead.md`): A, the
-  engine in wasm with exact arithmetic (PR #64); B, FunkGui's core without JUCE, its host services and the WebGL2 sink
-  (FunkGui v0.12.0, PR #65); C, the editor's views without JUCE, the web facade proven bit-equal to the processor, and
-  FunkGui's WebHost (v0.13.0, PR #66); D, the editor as wasm under node, and the page (v0.14.0, PR #67); the lead
-  phase, on Sprint D's merge 58f13e9: the browser gate, CI, publishing and the documents (PR #68). The sample loop
-  came after them, on 2026-10-05 (manifest `docs/sprints/web-loop.md`, four cards: W-A, the module that reads the file
-  and fits it to the context's rate; W-P, the page; W-G, the gate; W-D, the documents). Where this entry and
-  the plan differ, this entry is right.
+  first when PR #68 merged, and by Cloudflare from 2026-10-03; it plays a sample loop that was made for it on
+  2026-10-05).** The user asked for web builds through WASM, to demo the plugin in a browser. The demo runs the real DSP
+  and shows the real editor; it is not a port and not a second code base. Design pass: five scouts, three independent
+  designs and a judge (`docs/sprints/web/plan.md` and the reports beside it). Built from 2026-10-01 to 2026-10-02 in
+  four sprints and a lead phase (manifests `docs/sprints/web-{a,b,c,d}.md` and `web-lead.md`): A, the engine in wasm
+  with exact arithmetic (PR #64); B, FunkGui's core without JUCE, its host services and the WebGL2 sink (FunkGui
+  v0.12.0, PR #65); C, the editor's views without JUCE, the web facade proven bit-equal to the processor, and FunkGui's
+  WebHost (v0.13.0, PR #66); D, the editor as wasm under node, and the page (v0.14.0, PR #67); the lead phase, on Sprint
+  D's merge 58f13e9: the browser gate, CI, publishing and the documents (PR #68). The sample loop, an audio file made
+  for the demo, came after them, on 2026-10-05 (manifest `docs/sprints/web-loop.md`, four cards: W-A, the module that
+  reads that file and resamples it to the audio context's rate; W-P, the page; W-G, the gate; W-D, the documents). Where
+  this entry and the plan differ, this entry is right.
   - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset;
     03 §2.12, ARCHITECTURE §3.1), with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules
     joined by a MessagePort: `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and `fcmp-ui.js` +
@@ -1195,27 +1195,28 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     the one absolute URL is the footer's link to the source repository and the built commit. START creates the
     AudioContext in the click, loads `fcmp-worklet.js` (the engine instantiated with an empty import object; `process()`
     copies in, calls `fcmp_web_process` and copies out with no allocation, no message and no throw, for any frame count
-    and any input shape) and connects the module's port. It has three sources, each looped through a gain node into
-    the engine: the SAMPLE LOOP, a file made for the demo, which START plays (the next item); the SYNTH LOOP, which
-    the page synthesises (`loop.js`: drums, bass and a pad, 16 beats at 100 BPM; peaks at -3 dBFS, about -14.7 dBFS
-    RMS) and which plays when its button is pressed and when the file does not load; and a file the user drops or
-    opens, which the browser decodes (5 ms fades at both ends) and which never leaves it. `#fcmp-source` says what
-    plays (`SOURCE: SAMPLE LOOP`, `SOURCE: SYNTH LOOP` or the file's name) and has a button for each loop and one to
-    open a file; of the two loop buttons the one whose loop plays is disabled. A new source takes the old one's
-    place: the old one fades out in 30 ms, then the new one fades in.
-    The page says what it cannot do before START (no WebAssembly, an insecure
-    context, no AudioWorklet, no WebGL2, `file:`), shows RESUME when the browser pauses audio, and lists what differs
-    from the plugin (below).
+    and any input shape) and connects the module's port. The page has three sources, each looped through a gain node
+    into the engine: the SAMPLE LOOP, a file made for the demo, which START plays (the next item); the SYNTH LOOP, which
+    the page synthesises (`loop.js`: drums, bass and a pad, 16 beats at 100 BPM; peaks at -3 dBFS, about -14.7 dBFS RMS)
+    and which plays when its button is pressed and when the file does not load; and a file the user drops or opens,
+    which the browser decodes (5 ms fades at both ends) and which never leaves it. `#fcmp-source` shows, in this order:
+    a line that names what plays (`SOURCE: SAMPLE LOOP`, `SOURCE: SYNTH LOOP` or `SOURCE:` and the file's name); three
+    buttons, labelled SAMPLE LOOP, SYNTH LOOP and OPEN AN AUDIO FILE; a sentence about dropping a file; and the notice
+    (`#fcmp-notice`), a line that is empty unless the page has something to say of the source: that the sample loop is
+    loading or did not load, or why a file does not play. Of the two loop buttons the one whose loop plays is disabled.
+    A new source takes the old one's place: the old one fades out in 30 ms, then the new one fades in. The page says
+    what it cannot do before START (no WebAssembly, an insecure context, no AudioWorklet, no WebGL2, `file:`), shows
+    RESUME when the browser pauses audio, and lists what differs from the plugin (below).
   - **The sample loop** (2026-10-05; the contract in `docs/sprints/web-loop.md` has the file's and the page's facts).
     - *The file*, `web/audio/loop.wav`, in the site `audio/loop.wav`: the user's file of 2026-10-05, byte for byte, and
-      the one audio file in the repository. Sean Funk made it for this demo, and by the user's decision it is under the
+      the one audio file in the repository. The user, Sean Funk, made it for this demo and decided that it is under the
       repository's licence, GPL-3.0; the page's footer and `web/audio/README.md` say so. 2,048,600 bytes, SHA-256
       `0327dec3cbc7de82cf3ed6d9f0533d7035681c20297b0c9cb7aae2bc9a8b7e52`. RIFF/WAVE: PCM, 2 channels, 44.1 kHz, 24 bits;
       341,420 frames, 7.742 s, 16 beats at 124 BPM. Peak -0.05 / -0.04 dBFS (left / right) with no sample at full scale,
       RMS -16.34 / -16.13 dBFS. Frame 0 is (0.005717, 0.009922) and a kick follows at once; the last 1 ms has an RMS of
-      -71.9 dBFS. So the ends meet: the loop needs no fade, and a fade would take the first kick's attack. Nobody edits,
-      converts or re-encodes the file: `web.sample`, `web.page`, `web.size` and the page's self-test each hold its
-      SHA-256.
+      -71.9 dBFS for the mean of the two sides, (L+R)/2, and of -75.4 / -69.3 dBFS by side. So the ends meet: the loop
+      needs no fade, and a fade would take the first kick's attack. Nobody edits, converts or re-encodes the file:
+      `web.sample`, `web.page`, `web.size` and the page's self-test each hold its SHA-256.
     - *Why a WAV, as it was given.* As FLAC (ffmpeg, compression level 12; the lead's scratch, never committed) the loop
       measured 1,589,157 bytes, 78 % of the WAV: 459,443 bytes less. That is not worth a decoder the node tests cannot
       run: a FLAC needs the browser's `decodeAudioData`, which node does not have and which resamples a file as a
@@ -1225,36 +1226,44 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       and no clock in it). START asks for a 48 kHz context, so the 44.1 kHz file is resampled for nearly every visitor.
       `decodeAudioData` resamples a file as a one-shot, with silence before and after, which is a seam every 7.7 s when
       it loops, and each browser has its own filter; a buffer source at another rate than the context's is interpolated
-      linearly in one engine. (These two are the contract's reasons from how browsers work; neither was measured here.)
-      The page's own resampling is periodic, it is the same in every browser, and node tests it. `readWav` reads the
-      bytes (integer PCM of 16, 24 and 32 bits and 32-bit float, one channel or two, chunks in any order) and refuses
-      anything else with an Error in plain words; a download cut short is refused, never played short. `fitLoop` gives
-      the loop as ONE PERIOD at the context's rate: the input is taken as periodic, output frame k lies at exactly k ×
-      (frames in) / (frames out) input frames (from integers, so nothing drifts), and the result has
-      `Math.round(341420 × rate / 44100)` frames: 371,614 at 48 kHz, 743,227 at 96 kHz, and at 44.1 kHz the file's own,
-      where `fitLoop` returns its input. So the fitted loop is itself one exact period: it loops with no seam, needs no
-      fade and plays at unity, and the page never changes the file's level. The ratio is that of the frame counts, not
-      of the rates; at 48 kHz the two differ by 1.1 parts in a million.
-    - *The filter and its errors* (W-A's numbers and its two checkers', node 24 on an Apple M5): a Kaiser-windowed sinc,
-      beta 12.5, linear phase with no delay. 96 taps when the rate goes up (48 input frames to each side of an output
-      frame), wider by rate in / rate out when it goes down (178 taps to 24 kHz). The cut-off is 0.495 of the lower rate
-      (21,830 Hz for the file at 48 kHz). The kernel is read with linear interpolation from a table of 1024 points per
-      period of the lower rate (100,354 doubles, 0.8 MB, built in about 1 ms at each call). Every output frame has its
-      own weights, used for both channels, summed in double precision and scaled to sum to 1. The kernel is flat up to
-      0.4535 of the lower rate (20 kHz of 44.1) and leaves nothing from 0.5465 of it on (24.1 kHz, where the image of 20
-      kHz lies), both to -120 dB. Between the two it falls, so what the file holds above 20 kHz (-62.1 / -63.8 dBFS)
-      comes out in part, with a part of its image (-86.3 / -88.3 dBFS from 22.05 to 24.1 kHz at 48 kHz). Measured
-      against exact sines (`web.sample`, 95 rows): fitted to 48 and to 96 kHz, a sum of sines from 30 Hz to 20 kHz with
-      whole cycles in the loop comes out with an error of -123.8 dB RMS at worst (the bound is -100 dB), and of -123.4
-      dB in the first and last 64 frames, the seam; at 48 kHz a lone sine at 20 kHz comes out with -115.9 dB, and levels
-      from 20 Hz to 20 kHz are kept within 1.2e-5 dB; a constant comes out as that constant to the bit. Going down to 24
-      and to 16 kHz, a sine above the new half rate leaves at most -132.0 dB (the bound is -90 dB). One exact period, by
-      the checkers: 68 loops turned by a part of their length gave the same bits turned, and every frame of 341,420
-      frames of noise fitted to 16, 24, 48, 96 and 192 kHz had the bits of a frame placed by exact integer arithmetic.
-      On 2026-10-05 `sample.js` had run in V8 only (node 24 and Chrome 154).
-    - *What it costs and what it leaves.* `fitLoop` to 48 kHz takes 58 to 63 ms under node on the M5 and 60 to 80 ms in
-      Chrome 154 (W-P's number; the self-test prints the browser's own time as a NOTE), and `readWav` about 3 ms. Both
-      run once, on the main thread, in one task after the last byte has come: no click waits for them, and the audio
+      linearly in one browser engine. (These two are the contract's reasons from how browsers work; neither was measured
+      here.) The page's own resampling is periodic, it is the same code in every browser, and node tests it. That is not
+      the same bits in every browser: the kernel's table is made with `Math.sin`, and `sample.js` says of itself that
+      `Math.sin` differs in the last bit between JavaScript engines, so that two browsers' loops are equal to the ear,
+      not to the bit. No second engine was run here to measure the difference. `readWav` reads the bytes (integer PCM of
+      16, 24 and 32 bits and 32-bit float, one channel or two, chunks in any order) and refuses anything else with an
+      Error in plain words; a download cut short is refused, never played short. `fitLoop` gives the loop as ONE PERIOD
+      at the context's rate: the input is taken as periodic, output frame k lies at exactly k × (frames in) / (frames
+      out) input frames (from integers, so nothing drifts), and the result has `Math.round(341420 × rate / 44100)`
+      frames: 371,614 at 48 kHz, 743,227 at 96 kHz, and at 44.1 kHz the file's own, where `fitLoop` returns its input.
+      So the fitted loop is itself one exact period: it loops with no seam, needs no fade and plays at unity, and the
+      page never changes the file's level. The ratio is that of the frame counts, not of the rates; at 48 kHz the two
+      differ by 1.1 parts in a million.
+    - *The filter and its errors* (W-A's numbers and its two checkers', from node 24 on the lead's Mac, an arm64 M5): a
+      Kaiser-windowed sinc, beta 12.5, linear phase with no delay. 96 taps when the rate goes up (48 input frames to
+      each side of an output frame), wider by rate in / rate out when it goes down (178 taps to 24 kHz). The cut-off is
+      0.495 of the lower rate (21,830 Hz for the file at 48 kHz). The kernel is read with linear interpolation from a
+      table of 1024 points per period of the lower rate (100,354 doubles, 0.8 MB, built in about 1 ms at each call).
+      Every output frame has its own weights, used for both channels, summed in double precision and scaled to sum to 1.
+      The kernel is flat up to 0.4535 of the lower rate (20 kHz of 44.1) and leaves nothing from 0.5465 of it on (24.1
+      kHz, where the image of 20 kHz lies), both to -120 dB. Between the two it falls, so what the file holds above 20
+      kHz (-62.1 / -63.8 dBFS) comes out in part, with a part of its image (-86.3 / -88.3 dBFS from 22.05 to 24.1 kHz at
+      48 kHz). Measured against exact sines (`web.sample`, 95 rows): fitted to 48 and to 96 kHz, a sum of sines from 30
+      Hz to 20 kHz with whole cycles in the loop comes out with an error of -123.8 dB RMS at worst (the bound is -100
+      dB), and of -123.4 dB in the first and last 64 frames, the seam; at 48 kHz a lone sine at 20 kHz comes out with
+      -115.9 dB, and levels from 20 Hz to 20 kHz are kept within 1.2e-5 dB; a constant comes out as that constant to the
+      bit. Going down to 24 and to 16 kHz, a sine above the new half rate leaves at most -132.0 dB (the bound is -90
+      dB). That the result is one exact period, one of the checkers showed in two ways. 68 loops were fitted twice, once
+      as they are and once rotated (the same frames, started at another frame): the second result was the first, rotated
+      by the same part of the loop, bit for bit. The file itself, rotated by 170,710 frames (half of it), gave its fit
+      rotated by 185,807 frames. And 341,420 frames of noise fitted to 16, 24, 48, 96 and 192 kHz equalled, frame for
+      frame and to the bit, the checker's own resampler, which places every frame by exact integer arithmetic. On
+      2026-10-05 `sample.js` had run in V8 only (node 24 and Chrome 154).
+    - *What it costs and what it leaves.* `fitLoop` to 48 kHz takes 58 to 63 ms under node on the lead's Mac and 60 to
+      80 ms in Chrome 154 (W-P's number; the self-test prints the browser's own time as a NOTE), and `readWav` about 3
+      ms. Both run once, on the main thread, in one task after the last byte has come. Until that task ends the editor
+      draws no frame and the page answers no press. It runs after an await, so it never stands between a click and what
+      the click must do at once (START makes and resumes its audio context before it asks for the loop), and the audio
       thread plays on. One call makes 6.5 MB of arrays: the table and a copy of the input (3.5 MB, let go at its end)
       and the fitted loop (3.0 MB). START to PLAYING on the lead's Mac from a local server, the median of 15 runs each:
       54 ms before the sample loop and 76 ms with it. The file is asked for only at the click (the page makes no request
@@ -1269,43 +1278,43 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       beside the worklet and the engine, reads it, fits it and plays it. When the response is not ok, the fetch fails,
       `readWav` refuses the bytes, or the loop is not ready 15 s after its fetch began (`SAMPLE_MS`; the fetch is then
       given up), START plays the synth loop and the notice says
-      `THE SAMPLE LOOP DID NOT LOAD. THE SYNTH LOOP PLAYS INSTEAD.` A sample loop that fails never fails START. SAMPLE
-      LOOP stays enabled then, and a press tries again, asking the server and not the browser's cache, which may hold
-      the answer that failed; when that fails too the page says `THE SAMPLE LOOP DID NOT LOAD. THE SOURCE IS UNCHANGED.`
-      A later choice (the other button, a file) wins over a load that still runs. The synth loop is made when it is
-      first needed, not at every START. From W-P's review: a file chosen or dropped while START loads is kept and plays
-      once the demo runs; a failure of the engine or the editor while START loads ends the load at once, not after the
-      15 s; a demo that ends clears the notice and gives up a load that runs; a context closed from outside stops the
-      demo; two presses under 30 ms apart never let the source between them reach the engine un-faded. In Chrome 154,
-      with the file missing (404), answered with 500 or with HTML, cut to half, empty, dropped or stalled mid-body, or
-      never answered, START always reached PLAYING: within 0.3 s of the click where the answer was refused, and 15.2 s
-      after it where the bytes never all came, the fetch given up 15.00 s after it began. START holds the file to no
-      hash; the self-test and the node tests do. `globalThis.fcmpPage.source()` tells a driver what plays: `null`, or
-      `{ kind, name, frames, sampleRate }` of the buffer, the kind `sample`, `synth` or `file`.
+      `THE SAMPLE LOOP DID NOT LOAD. THE SYNTH LOOP PLAYS INSTEAD.` A sample loop that fails never fails START. The
+      SAMPLE LOOP button stays enabled then, and a press tries again, asking the server and not the browser's cache,
+      which may hold the answer that failed; when that fails too the page says
+      `THE SAMPLE LOOP DID NOT LOAD. THE SOURCE IS UNCHANGED.` A later choice (the other button, a file) wins over a
+      load that still runs. The synth loop is made when it is first needed, not at every START. From W-P's review: a
+      file chosen or dropped while START loads is kept and plays once the demo runs; a failure of the engine or the
+      editor while START loads ends the load at once, not after the 15 s; a demo that ends clears the notice and gives
+      up a load that runs; a context closed from outside stops the demo; two presses under 30 ms apart never let the
+      source between them reach the engine un-faded. In Chrome 154, with the file missing (404), answered with 500 or
+      with HTML, cut to half, empty, dropped or stalled mid-body, or never answered, START always reached PLAYING:
+      within 0.3 s of the click where the answer was refused, and 15.2 s after it where the bytes never all came, the
+      fetch given up 15.00 s after it began. START holds the file to no hash; the self-test and the node tests do.
+      `globalThis.fcmpPage.source()` tells a driver what plays: `null`, or `{ kind, name, frames, sampleRate }` of the
+      buffer, the kind `sample`, `synth` or `file`.
     - *The self-test* has 15 rows with a context that runs and 14 with one that is suspended (12 and 11 before). The
       three new ones: `sample.read` (the page's own fetch of `audio/loop.wav`: the SHA-256 of the bytes, by
       `crypto.subtle`, is the constant `SAMPLE_SHA256` of `main.js`, and `readWav` gives 44.1 kHz and 341,420 frames),
       `sample.fit` (`fitLoop` to 48 kHz: 371,614 frames, each side's RMS within 0.01 dB of the file's, the last 1 ms
       under -60 dBFS; a NOTE has the milliseconds it took) and, after `page.start`, `page.source` (`fcmpPage.source()`
       is the sample loop at the context's rate with `Math.round(341420 × rate / 44100)` frames, the page says
-      `SOURCE: SAMPLE LOOP`, the notice is empty, SAMPLE LOOP is disabled and SYNTH LOOP enabled). `worklet.render` and
-      `engine.silence` keep the synth loop: at 48 kHz it is a whole number of quanta, and the sample loop is not. With
-      the file missing or cut short the verdict is `FAIL: sample.read`; `page.source` fails too, and `page.start` still
-      passes.
+      `SOURCE: SAMPLE LOOP`, the notice is empty, the SAMPLE LOOP button is disabled and the SYNTH LOOP button enabled).
+      `worklet.render` and `engine.silence` keep the synth loop: at 48 kHz it is a whole number of quanta, and the
+      sample loop is not. With the file missing or cut short the verdict is `FAIL: sample.read`; `page.source` fails
+      too, and `page.start` still passes.
   - **The site** (`cmake --build --preset web` makes `build-web/site`; `cmake/FcmpWebSite.cmake`): 15 files, 4,187,225
     bytes, 2,619,081 gzip (web.size's method, node's zlib at level 9 file by file; measured on 2026-10-05. Before the
-    sample loop: 13 files, 2,109,424 bytes, 653,886 gzip; at Sprint D 2,096,442 and 648,135):
-    the page (with `sample.js`, 12,751 bytes and 4,597 gzip; for the sample loop `main.js` grew from 45,260 to 61,312
-    bytes, 14,897 to 19,854 gzip), the sample loop (`audio/loop.wav`, 2,048,600 bytes and 1,955,479 gzip: 49 % of the
-    site's bytes and 75 % of its gzip bytes; the site script copies `web/audio/*.wav` and nothing else of
-    `web/audio`, and fails without `web/audio/loop.wav`),
-    the two modules (`fcmp-engine.wasm` 545,704 bytes, 136,515 gzip; `fcmp-ui.wasm` 1,330,842 and 451,250,
-    7,086 bytes more than at Sprint D for the gate's exports and pins; `fcmp-ui.js` 55,742 and 16,153), the licences
-    (GPL-3.0, the typeface's OFL, and the toolchain's own texts for musl, libc++, libc++abi, compiler-rt and Emscripten
-    in `THIRD-PARTY.txt`) and `built-from.txt`, which says `clean` only when FCompressor's tree is clean AND the FunkGui
-    in the modules is the pinned commit itself, so the footer never links a commit that is not the source. The gate's
-    stamp in the web tree covers the modules and the site; `web.size` holds the site to its 15 files: the sample loop
-    to its exact size and SHA-256 (the row `audio.loop`), every other file within 20 % of its measured size.
+    sample loop: 13 files, 2,109,424 bytes, 653,886 gzip; at Sprint D 2,096,442 and 648,135): the page (with
+    `sample.js`, 12,751 bytes and 4,597 gzip; for the sample loop `main.js` grew from 45,260 to 61,312 bytes, 14,897 to
+    19,854 gzip), the sample loop (`audio/loop.wav`, 2,048,600 bytes and 1,955,479 gzip: 49 % of the site's bytes and 75
+    % of its gzip bytes; the site script copies `web/audio/*.wav` and nothing else of `web/audio`, and fails without
+    `web/audio/loop.wav`), the two modules (`fcmp-engine.wasm` 545,704 bytes, 136,515 gzip; `fcmp-ui.wasm` 1,330,842 and
+    451,250, 7,086 bytes more than at Sprint D for the gate's exports and pins; `fcmp-ui.js` 55,742 and 16,153), the
+    licences (GPL-3.0, the typeface's OFL, and the toolchain's own texts for musl, libc++, libc++abi, compiler-rt and
+    Emscripten in `THIRD-PARTY.txt`) and `built-from.txt`, which says `clean` only when FCompressor's tree is clean AND
+    the FunkGui in the modules is the pinned commit itself, so the footer never links a commit that is not the source.
+    The gate's stamp in the web tree covers the modules and the site; `web.size` holds the site to its 15 files: the
+    sample loop to its exact size and SHA-256 (the row `audio.loop`), every other file within 20 % of its measured size.
   - **CI and publishing** (`.github/workflows/ci.yml`, 03 §4.10). The `web` job builds the `web` preset on
     ubuntu-24.04 with emsdk at the pinned version, runs `Scripts/verify.sh --strict build-web`, reports the x86 runner's
     numbers (`simdbench`, `speed`, `tail`) and runs the browser gate under SwiftShader; it keeps the site (`web-site`)
@@ -1316,33 +1325,34 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     Pages, https://snipet.github.io/FCompressor/, and `published` runs `Scripts/web-live.sh --url` against the public
     page once its `built-from.txt` names the commit. **A second host** (the user's decision, 2026-10-03): Cloudflare
     serves the site at https://fcompressor.seantfunk.workers.dev, and at the user's own domain,
-    https://fcompressor.seanfunk.xyz (below), as a Worker that is static assets only
-    (`wrangler.jsonc`: `build-web/site`). Cloudflare's own builder compiles it from `main` when a commit is pushed
-    there; the build command for its dashboard is `bash Scripts/cloudflare-build.sh` (CMake and Ninja from pip, emsdk
-    at the pinned version outside the checkout, the target `fcmp_web_site` alone), and the deploy command is the
-    default, `npx wrangler deploy`. Bash must be named: the builder was seen to run a build command in plain sh
-    (Cloudflare's documentation names no shell), where emsdk's `emsdk_env.sh` cannot find its own directory and
-    returns without failing, which is how the first import's build stopped (no `em-config` on the PATH); the first
-    deploy ran the same steps, typed into the dashboard as one line under `bash -c`, before the script was on `main`.
-    So that copy is the commit's own site, built `clean`, but not the artifact CI's gate tested, and no job of CI
-    checks it. No previews (the user's decision): `preview_urls` is false, so an uploaded version has no address of
-    its own, and the dashboard's Preview builds are off, so only `main` is built (while they were on, Cloudflare built
-    PR #70's branch too and added its own check, `Workers Builds: fcompressor`, to the pull request). On its first
-    deploy (`main` f49add3; 13 files; the two modules at the sizes of CI's build as GitHub Pages serves it, 1,330,842
-    and 545,704 bytes, served as `application/wasm`) the lead ran `Scripts/web-live.sh --url` against it from the
-    Mac: 28 of 28 (`published`; the six views in both themes equal to the node values, and their pixel rows; the
-    asynchronous preview; the self-test suspended and running). Cloudflare's default `html_handling` redirects
-    `/index.html` to `/` and `/fcmp-ui.html` to `/fcmp-ui` (307) and keeps the query, so on that host the self-test
-    starts from `?selftest=1` only, not from the path `fcmp-ui.html`. **The user's own domain**: the user
-    attached `fcompressor.seanfunk.xyz` to the Worker in the Cloudflare dashboard and said so on 2026-10-05; the same
-    copy is served there and at the workers.dev address. `wrangler.jsonc` lists no `routes` and needs none: wrangler
-    publishes custom domains only when the configuration lists some (read in the source of wrangler 4.100.0, the
-    lead's installed copy: `triggersDeploy` does it only inside `if (customDomainsOnly.length > 0)`, and routes only
-    inside `if (routesOnly.length > 0)`), so a deploy leaves a domain attached in the dashboard as it is.
-    Cloudflare's builder ran wrangler 4.147.0 on its earlier deploys (its build log); that version's source was not
-    read. On 2026-10-05 the three addresses (the domain, the workers.dev address, GitHub Pages) each served
-    `built-from.txt` as `site cc34611… clean`, and the lead ran `Scripts/web-live.sh --url` against the domain from
-    the Mac: 28 of 28 in 21.4 s (ANGLE Metal; pixel rows largest 1 to 2 of 255). Nothing else is published.
+    https://fcompressor.seanfunk.xyz (below), as a Worker that is static assets only (`wrangler.jsonc`:
+    `build-web/site`). Cloudflare's own builder compiles it from `main` when a commit is pushed there; the build command
+    for its dashboard is `bash Scripts/cloudflare-build.sh` (CMake and Ninja from pip, emsdk at the pinned version
+    outside the checkout, the target `fcmp_web_site` alone), and the deploy command is the default,
+    `npx wrangler deploy`. Bash must be named: the builder was seen to run a build command in plain sh (Cloudflare's
+    documentation names no shell), where emsdk's `emsdk_env.sh` cannot find its own directory and returns without
+    failing, which is how the first import's build stopped (no `em-config` on the PATH); the first deploy ran the same
+    steps, typed into the dashboard as one line under `bash -c`, before the script was on `main`. So that copy is the
+    commit's own site, built `clean`, but not the artifact CI's gate tested, and no job of CI checks it. No previews
+    (the user's decision): `preview_urls` is false, so an uploaded version has no address of its own, and the
+    dashboard's Preview builds are off, so only `main` is built (while they were on, Cloudflare built PR #70's branch
+    too and added its own check, `Workers Builds: fcompressor`, to the pull request). On its first deploy (`main`
+    f49add3; 13 files; the two modules at the sizes of CI's build as GitHub Pages serves it, 1,330,842 and 545,704
+    bytes, served as `application/wasm`) the lead ran `Scripts/web-live.sh --url` against it from the Mac: 28 of 28
+    (`published`; the six views in both themes equal to the node values, and their pixel rows; the asynchronous preview;
+    the self-test suspended and running). Cloudflare's default `html_handling` redirects `/index.html` to `/` and
+    `/fcmp-ui.html` to `/fcmp-ui` (307) and keeps the query, so on that host the self-test starts from `?selftest=1`
+    only, not from the path `fcmp-ui.html`. **The user's own domain**: the user attached `fcompressor.seanfunk.xyz` to
+    the Worker in the Cloudflare dashboard and said so on 2026-10-05; the same copy is served there and at the
+    workers.dev address. `wrangler.jsonc` lists no `routes` and needs none: wrangler publishes custom domains only when
+    the configuration lists some (read in the source of wrangler 4.100.0, the lead's installed copy: `triggersDeploy`
+    does it only inside `if (customDomainsOnly.length > 0)`, and routes only inside `if (routesOnly.length > 0)`), so a
+    deploy leaves a domain attached in the dashboard as it is. Cloudflare's builder ran wrangler 4.147.0 on its earlier
+    deploys (its build log); that version's source was not read. On 2026-10-05 the three addresses (the domain, the
+    workers.dev address, GitHub Pages) each served `built-from.txt` as `site cc34611… clean`, and the lead ran
+    `Scripts/web-live.sh --url` against the domain from the Mac: 28 of 28 in 21.4 s (ANGLE Metal; pixel rows largest 1
+    to 2 of 255). That site was cc34611's, without the sample loop, and the run was before the gate had the row `audio`
+    (the browser gate, below). Nothing else is published.
   - **Tests under node** (`cmake/FcmpWeb.cmake`, 03 §2.12). `fcmp_web_check` is built from `Tools/web/*.cpp` in every
     configuration, and its subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels
     `verify;web;global`, judged by exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms
@@ -1381,13 +1391,12 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       `live` and `hooks`, and each frame read back through the sink is SoftRaster's by the pixel rule (below), twelve
       rows of each; one more row for the shipped asynchronous preview (`chars.sidechain` with no `dt` pin reaches the
       same frame).
-    - *The page's self-test*, `?selftest=1`, with the context suspended (14 rows) and running (15 rows; 11 and 12
-      before the sample loop): the engine's
-      self-check hash in a real AudioWorklet and on the main thread, 10 s rendered through the worklet with 0 of
-      480,000 frames differing from the engine driven directly (about 100× real time), silence costing no more than
-      signal, the sample loop as the page fetches it and as `fitLoop` fits it, the atlas hash, the pixel row, START
-      and the source it plays, frames drawn and replies arriving; an uncaught error is a FAIL that no PASS
-      replaces.
+    - *The page's self-test*, `?selftest=1`, with the context suspended (14 rows) and running (15 rows; 11 and 12 before
+      the sample loop): the engine's self-check hash in a real AudioWorklet and on the main thread, 10 s rendered
+      through the worklet with 0 of 480,000 frames differing from the engine driven directly (about 100× real time),
+      silence costing no more than signal, the sample loop as the page fetches it and as `fitLoop` fits it, the atlas
+      hash, the pixel row, START and the source it plays, frames drawn and replies arriving; an uncaught error is a FAIL
+      that no PASS replaces.
     - *The live pages* (`web/live` with the test-only `fcmp-print.wasm` from `Tools/web/live`, served at `/live/` beside
       the site and never part of it): `fcmp-print` runs the 112 blessed `dsp.print` rows through the shipped worklet in
       an `OfflineAudioContext`, each row a fresh engine reconfigured by records (112 of 112 equal, and 28 more rows at a
@@ -1401,27 +1410,27 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       `Module.fcmpA11y()`, each row judged by what reached the engine or by the Panel's own state: START, every screen,
       a drag, a double click, the wheel, typed values, undo and redo by the platform's chord, presets and their menus,
       A|B, a stepped and a continuous Mode, QUALITY and LOOKAHEAD, a dropped file and a bad one, the two loops and a
-      sample loop that does not load (the next item), a lost WebGL context,
-      a hidden tab, the zoom and its preference, and no uncaught error or error-level console line. With `--png` it
-      also saves each view in one stepped and one continuous Mode. `Scripts/web/scenario/mutants.mjs` reruns it on
-      mutated sites, each turning its named rows red. At the lead phase it had 79 rows, 81 with `--png`, and
-      `mutants.mjs` 25 mutated sites.
+      sample loop that does not load (the next item), a lost WebGL context, a hidden tab, the zoom and its preference,
+      and no uncaught error or error-level console line. With `--png` it also saves each view in one stepped and one
+      continuous Mode. `Scripts/web/scenario/mutants.mjs` reruns it on mutated sites, each turning its named rows red.
+      At the lead phase it had 79 rows, 81 with `--png`, and `mutants.mjs` 25 mutated sites.
     - *The sample loop's rows* (card W-G, 2026-10-05). The scripted user's: `source.sample` (after START the page says
       SAMPLE LOOP, `fcmpPage.source()` is the sample loop with `Math.round(341420 × rate / 44100)` frames, and the
       engine's input is that loop: within one loop its input level passes what the synth loop, which peaks at -3 dBFS,
       can reach); `source.synth` (SYNTH LOOP pressed: the page, `source()` and the engine's input level over a whole
       loop say the synth loop); `source.back` (SAMPLE LOOP pressed: the sample loop again, the notice empty);
       `source.lost` (`audio/loop.wav` unreachable: START still reaches PLAYING, the synth loop plays, the notice says
-      that the sample loop did not load, and SAMPLE LOOP stays enabled); `source.again` (a press while the file is still
-      unreachable says that the source is unchanged, and it is; once the file is reachable a press plays the sample loop
-      and clears the notice); `source.turn` (a later choice wins over a load of the sample loop that still runs, and the
-      load says nothing when it ends); `source.slow` (the file never answers: START says LOADING until `SAMPLE_MS`, then
-      plays the synth loop with the same notice). The form for the published site (`--url`) gets the row `audio`, after
-      `published`: the published `audio/loop.wav` has the contract's size and SHA-256.
+      that the sample loop did not load, and the SAMPLE LOOP button stays enabled); `source.again` (a press while the
+      file is still unreachable says that the source is unchanged, and it is; once the file is reachable a press plays
+      the sample loop and clears the notice); `source.turn` (a later choice wins over a load of the sample loop that
+      still runs, and the load says nothing when it ends); `source.slow` (the file never answers: START says LOADING
+      until `SAMPLE_MS`, then plays the synth loop with the same notice). The form for the published site (`--url`) gets
+      the row `audio`, after `published`: the published `audio/loop.wav` has the contract's size and SHA-256.
 
-    Measured by the lead on 2026-10-02 (arm64 macOS): `Scripts/web-live.sh build-web` passed 31 of 31 in about 100 s on
-    ANGLE Metal (pixel rows largest 1 to 2 of 255, none over 2); the same gate on a copied site with `--gpu
-    swiftshader` 31 of 31 in about 106 s (pixel rows largest 5 to 6 of 255, within FunkGui's software bound).
+    Measured by the lead on 2026-10-02 (arm64 macOS), before the sample loop's rows: `Scripts/web-live.sh build-web`
+    passed 31 of 31 in about 100 s on ANGLE Metal (pixel rows largest 1 to 2 of 255, none over 2); the same gate on a
+    copied site with `--gpu swiftshader` 31 of 31 in about 106 s (pixel rows largest 5 to 6 of 255, within FunkGui's
+    software bound).
   - **The module's hooks for the gate** (lead phase, card L-M). `Module.fcmpFrame()` settles the host (frames until the
     Panel no longer asks for the full rate, at most 600; while the engine publishes, one frame, so a frame of live audio
     is never reported as settled) and returns the frame's fingerprint as text, written once in
