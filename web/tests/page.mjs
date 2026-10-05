@@ -8,9 +8,11 @@
 // document). The rows:
 //   constants.*    what the page and the worklet know by value equals the repository's: the engine's self-check hash
 //                  (Tools/web/enginecheck.cpp; the same in every web test), the atlas hash (the ui.font golden), the
-//                  protocol's numbers (WebProtocol.h, WebEngine.h), and one block size in the page and the worklet
-//   site.*         the site's page files are the repository's (fcmp-ui.html is index.html); every file index.html and
-//                  main.js name is in the site; the footer links the licences
+//                  protocol's numbers (WebProtocol.h, WebEngine.h), one block size in the page and the worklet, and
+//                  the sample loop's SHA-256, rate and frames (web/audio/loop.wav, read by web/sample.js)
+//   site.*         the site's page files are the repository's (fcmp-ui.html is index.html), sample.js and the sample
+//                  loop among them; every file index.html, main.js and sample.js name is in the site; the footer
+//                  links the licences and says whose the sample loop is
 //   licences.*     the licence files are byte-equal to their sources, and THIRD-PARTY.txt holds each of the
 //                  toolchain's texts whole
 //   wording.*      what the page says is upper case, in the HTML and in main.js's table; the differences are listed
@@ -26,10 +28,17 @@
 //                  the Panel's rest (Module.fcmpA11y's fullRate 0, bounded; a quiet time where the module does not
 //                  say); and the frame is asked for at rest, in that task, before the demo starts, which the row says
 //   files.*        the limits of a dropped file, and the fades at its ends
+//   source.*       the sample loop and the synth loop (docs/sprints/web-loop.md, "The page"): what the page says of
+//                  them, and nothing of the old name; index.html's controls, in their order; which buttons are
+//                  enabled, in every state; the time the sample loop has, under the self-test's time for START; the
+//                  self-test's rule for the fitted loop, on the file and on five wrong fits; the self-test's rows in
+//                  their order; START makes and resumes its context, and asks for the loop, before it first waits;
+//                  and a load after a failed one asks the server, not the browser's cache
 //   built_from.*   the footer's line: a link only for `clean`, nothing for `none` or an unreadable line
 //   verdict.*      the self-test's title: RUNNING, then PASS or FAIL: <the first failing row>; an uncaught error is a
 //                  FAIL at once; no PASS ever replaces a FAIL
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -56,7 +65,11 @@ if (!source || !site) {
 const read = (...parts) => readFileSync(join(...parts), 'utf8');
 const found = (text, pattern) => (pattern.exec(text) || [])[1];
 const page = await import(pathToFileURL(join(source, 'web', 'main.js')).href);
+const sample = await import(pathToFileURL(join(source, 'web', 'sample.js')).href);
 const index = read(source, 'web/index.html');
+// The sample loop's file, as the repository holds it and as sample.js reads it.
+const wav = readFileSync(join(source, 'web', sample.SAMPLE_URL));
+const loop = sample.readWav(wav);
 
 // ---- constants -----------------------------------------------------------------------------------------------------
 {
@@ -96,12 +109,19 @@ const index = read(source, 'web/index.html');
       wrong.length === 0 ? `${pairs.length} values equal WebProtocol.h's and WebEngine.h's` : wrong.join('; '));
   row(page.QUANTUM === own('QUANTUM') && page.QUANTUM === 128, 'constants.quantum',
       `main.js ${page.QUANTUM}, fcmp-worklet.js ${own('QUANTUM')}`);
+
+  const sha = createHash('sha256').update(wav).digest('hex');
+  row(page.SAMPLE_SHA256 === sha && page.SAMPLE_RATE === loop.sampleRate && page.SAMPLE_FRAMES === loop.frames,
+      'constants.sample',
+      `main.js ${page.SAMPLE_SHA256}, ${page.SAMPLE_RATE} Hz, ${page.SAMPLE_FRAMES} frames; web/${sample.SAMPLE_URL} `
+      + `${sha}, ${loop.sampleRate} Hz, ${loop.frames} frames`);
 }
 
 // ---- the site ------------------------------------------------------------------------------------------------------
 const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(readFileSync(b));
 {
-  const pageFiles = ['index.html', 'demo.css', 'main.js', 'loop.js', 'fcmp-worklet.js'];
+  const pageFiles = ['index.html', 'demo.css', 'main.js', 'loop.js', 'sample.js', 'fcmp-worklet.js',
+                     sample.SAMPLE_URL];
   const stale = pageFiles.filter((f) => !same(join(source, 'web', f), join(site, f)));
   if (!same(join(source, 'web/index.html'), join(site, 'fcmp-ui.html'))) stale.push('fcmp-ui.html (index.html again)');
   row(stale.length === 0, 'site.is_the_source',
@@ -109,20 +129,28 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
   row(!existsSync(join(site, 'package.json')) && !existsSync(join(site, 'tests')), 'site.no_tests',
       'no package.json, no tests');
 
-  // Every file the page names: index.html's attributes, and main.js's imports and strings that name a file.
-  const named = new Set();
+  // Every file the page names: index.html's attributes, main.js's imports and strings that name a file, and the
+  // sample loop, which sample.js names.
+  const named = new Set([sample.SAMPLE_URL]);
   for (const m of index.matchAll(/\b(?:src|href)\s*=\s*"([^"]*)"/g)) if (!/^[a-z]+:/i.test(m[1])) named.add(m[1]);
   const main = read(source, 'web/main.js');
   for (const m of main.matchAll(/'(?:\.\/)?([\w\-/]+\.(?:js|wasm|txt|css|html))'/g)) named.add(m[1]);
   const lost = [...named].filter((f) => !existsSync(join(site, f)));
-  row(named.size >= 9 && lost.length === 0, 'site.names',
-      lost.length === 0 ? `${named.size} files named by index.html and main.js: ${[...named].sort().join(', ')}`
+  row(named.size >= 11 && named.has('sample.js') && named.has('audio/loop.wav') && lost.length === 0, 'site.names',
+      lost.length === 0 ? `${named.size} files named by index.html, main.js and sample.js: `
+                          + [...named].sort().join(', ')
                         : `not in the site: ${lost.join(', ')}`);
 
   const links = ['licences/GPL-3.0.txt', 'licences/JetBrainsMono-OFL.txt', 'licences/THIRD-PARTY.txt'];
   const footer = found(index, /<footer>([\s\S]*?)<\/footer>/) || '';
   row(links.every((l) => footer.includes(`href="${l}"`)) && footer.includes('id="fcmp-built"'), 'site.footer',
       'the footer links the three licences and holds the built commit');
+  // The footer's first sentence, as a reader sees it, and its link.
+  const first = 'FCOMPRESSOR IS FREE SOFTWARE UNDER THE GNU GPL VERSION 3, AND SO IS THE SAMPLE LOOP, WHICH SEAN FUNK '
+              + 'MADE FOR THIS DEMO.';
+  const seen = footer.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  row(seen.startsWith(`${first} `) && footer.includes('<a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>'),
+      'site.footer.loop', `the footer begins "${seen.slice(0, first.length)}", with the link on GNU GPL VERSION 3`);
 }
 
 // ---- the licences: FCompressor's, the typeface's (from the FunkGui the build used), and the toolchain's texts ------
@@ -488,6 +516,153 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
       + 'fades stays in range');
 }
 
+// ---- the sample loop and the synth loop ----------------------------------------------------------------------------
+{
+  const main = read(source, 'web/main.js');
+  // What the page says of the two loops, word for word (docs/sprints/web-loop.md, "The page"), and nothing of the
+  // name the synth loop had.
+  const texts = [['sample', 'SAMPLE LOOP'], ['synth', 'SYNTH LOOP'], ['sampleLoading', 'LOADING THE SAMPLE LOOP.'],
+                 ['sampleLost', 'THE SAMPLE LOOP DID NOT LOAD. THE SYNTH LOOP PLAYS INSTEAD.'],
+                 ['sampleUnchanged', 'THE SAMPLE LOOP DID NOT LOAD. THE SOURCE IS UNCHANGED.']];
+  const off = texts.filter(([key, text]) => page.SAY[key] !== text).map(([key]) => key);
+  const old = [['index.html', index], ['main.js', main], ['demo.css', read(source, 'web/demo.css')]]
+                .filter(([, text]) => /built-?in/i.test(text)).map(([name]) => name);
+  row(off.length === 0 && page.SAY.source(page.SAY.sample) === 'SOURCE: SAMPLE LOOP' && !('loop' in page.SAY)
+      && old.length === 0, 'source.texts',
+      off.length + old.length === 0 ? `${texts.length} texts as the manifest gives them; no file of the page says `
+                                      + 'BUILT-IN'
+                                    : `not as the manifest gives them: [${off.join(', ')}]; BUILT-IN is still said `
+                                      + `in: [${old.join(', ')}]`);
+
+  // index.html's source line: the name, the three buttons, the file input, the sentence about dropping a file and
+  // the notice, in this order. The buttons are disabled until main.js enables them.
+  const block = found(index, /<div id="fcmp-source">([\s\S]*?)<\/div>/) || '';
+  const parts = [...block.matchAll(/<(span|button|input|p)\b([^>]*)>([^<]*)/g)].map((m) => {
+    const id = found(m[2], /\bid="([^"]*)"/) || '';
+    return `${m[1]}#${id}${/\bdisabled\b/.test(m[2]) ? ' disabled' : ''}${/\bhidden\b/.test(m[2]) ? ' hidden' : ''}`
+           + `: ${m[3].trim()}`;
+  });
+  const want = [`span#fcmp-source-name: ${page.SAY.source(page.SAY.sample)}`,
+                `button#fcmp-loop disabled: ${page.SAY.sample}`, `button#fcmp-synth disabled: ${page.SAY.synth}`,
+                'button#fcmp-open disabled: OPEN AN AUDIO FILE', 'input#fcmp-file hidden: ',
+                'span#: OR DROP ONE ON THE PAGE. IT STAYS IN THIS BROWSER.', 'p#fcmp-notice: '];
+  row(parts.length === want.length && parts.every((part, i) => part === want[i]), 'source.controls',
+      `#fcmp-source holds: ${parts.join(' | ')}`);
+
+  // Which buttons are enabled, in every state: [the demo runs, what plays, the sample loop is loaded] and the
+  // buttons that can be pressed. Nothing plays ('') only before START; the sample loop cannot play unloaded, and the
+  // rule answers for it all the same.
+  const states = [
+    [false, '', false, ''], [false, '', true, ''], [false, 'sample', false, ''], [false, 'sample', true, ''],
+    [false, 'synth', false, ''], [false, 'synth', true, ''], [false, 'file', false, ''], [false, 'file', true, ''],
+    [true, 'sample', true, 'synth open'], [true, 'synth', true, 'loop open'], [true, 'synth', false, 'loop open'],
+    [true, 'file', true, 'loop synth open'], [true, 'file', false, 'loop synth open'],
+    [true, 'sample', false, 'loop synth open'], [true, '', false, 'loop synth open'],
+    [true, '', true, 'loop synth open'],
+  ];
+  const pressable = (on) => ['loop', 'synth', 'open'].filter((key) => on[key] === true).join(' ');
+  const strict = (on) => Object.keys(on).sort().join(' ') === 'loop open synth'
+                         && Object.values(on).every((value) => typeof value === 'boolean');
+  const wrong = states.filter(([running, kind, loaded, enabled]) => {
+    const on = page.sourceButtons(running, kind, loaded);
+    return !strict(on) || pressable(on) !== enabled;
+  }).map(([running, kind, loaded]) => `${running ? 'running' : 'not running'}, ${kind || 'nothing'} plays, the `
+                                      + `sample loop ${loaded ? 'loaded' : 'not loaded'}: `
+                                      + `"${pressable(page.sourceButtons(running, kind, loaded))}"`);
+  row(wrong.length === 0, 'source.buttons',
+      wrong.length === 0 ? `${states.length} states: none before START or once the demo has ended; while it runs a `
+                           + 'file can be opened, the loop that plays has its button disabled and the other enabled, '
+                           + 'and SAMPLE LOOP is enabled whenever the sample loop is not loaded'
+                         : `wrong for: ${wrong.join('; ')}`);
+
+  // The sample loop's time is under the time the self-test gives START, so a loop that never comes still lets START
+  // end in time, with the synth loop. The fetch is given up by that timer.
+  const selftest = main.slice(main.indexOf('async function runSelftest()'));
+  const startMs = Number(found(selftest, /await within\((\d+), 'the start', start\(\)\)/));
+  const gives = main.includes('const timer = setTimeout(() => abort.abort(), SAMPLE_MS);')
+             && /await fetch\(SAMPLE_URL, \{ signal: abort\.signal,[^}]*\}\);/.test(main);
+  row(page.SAMPLE_MS === 15000 && startMs >= page.SAMPLE_MS + 5000 && gives, 'source.wait',
+      `the sample loop has ${page.SAMPLE_MS} ms and its fetch is ${gives ? 'given up then' : 'NOT GIVEN UP THEN'}; `
+      + `the self-test gives START ${startMs} ms`);
+
+  // The self-test's rule for the fitted loop: the file fitted to 48 kHz passes, and a loop that is short of a frame,
+  // louder by 0.02 dB on one side, not silent at its end, or empty does not.
+  const fitted = sample.fitLoop(loop, 48000);
+  const copy = (from, change) => {
+    const made = { sampleRate: from.sampleRate, frames: from.frames, left: from.left.slice(),
+                   right: from.right.slice() };
+    change(made);
+    return made;
+  };
+  const gain = (db) => (made) => { made.left = made.left.map((v) => v * 10 ** (db / 20)); };
+  const cases = [
+    ['the file fitted to 48000 Hz', true, fitted],
+    ['the file at its own rate', true, sample.fitLoop(loop, loop.sampleRate)],
+    ['one side louder by 0.005 dB', true, copy(fitted, gain(0.005))],
+    ['one side louder by 0.02 dB', false, copy(fitted, gain(0.02))],
+    ['one side quieter by 0.02 dB', false, copy(fitted, gain(-0.02))],
+    ['one frame short', false, copy(fitted, (made) => {
+      made.frames -= 1;
+      made.left = made.left.slice(0, -1);
+      made.right = made.right.slice(0, -1);
+    })],
+    ['-40 dBFS in its last millisecond', false, copy(fitted, (made) => made.right.fill(0.01, made.frames - 48))],
+    ['no frame', false, { sampleRate: 48000, frames: 0, left: new Float32Array(0), right: new Float32Array(0) }],
+  ];
+  const misjudged = cases.filter(([, want2, made]) => page.fitRule(loop, made).ok !== want2).map(([what]) => what);
+  const judged = page.fitRule(loop, fitted);
+  const two = (values, digits) => values.map((d) => d.toFixed(digits)).join(' and ');
+  row(misjudged.length === 0 && judged.frames === 371614 && fitted.frames === 371614 && page.FIT.level === 0.01
+      && page.FIT.end === -60, 'source.fit_rule',
+      misjudged.length === 0 ? `fitRule(): ${fitted.frames} frames at 48000 Hz, the RMS ${two(judged.level, 5)} dB `
+                               + `from the file's (at most ${page.FIT.level}), the last 1 ms at ${two(judged.end, 1)} `
+                               + `dBFS (under ${page.FIT.end}); ${cases.filter(([, ok]) => !ok).length} wrong fits do `
+                               + 'not pass'
+                             : `misjudged: ${misjudged.join('; ')}`);
+
+  // The self-test's rows, in the manifest's order: the sample loop's two after engine.silence and before the
+  // editor's, page.source after page.start. worklet.render and engine.silence keep the synth loop.
+  const order = ['\'worklet.render\'', '\'engine.silence\'', '\'sample.read\'', '\'sample.fit\'', '\'editor.atlas\'',
+                 '\'editor.pixels\'', '\'page.start\'', '\'page.source\'', '\'page.status\''];
+  const places = order.map((name) => selftest.indexOf(name));
+  const inOrder = places.every((at, i) => at >= 0 && (i === 0 || at > places[i - 1]));
+  const synth = selftest.indexOf('const loop = synthLoop(48000);');
+  const reads = selftest.includes('fetch(SAMPLE_URL)') && selftest.includes('crypto.subtle.digest(\'SHA-256\', bytes)')
+             && selftest.includes('sha === SAMPLE_SHA256') && selftest.includes('fitRule(file, fitted)')
+             && selftest.includes('globalThis.fcmpPage.source()');
+  row(inOrder && synth >= 0 && synth < places[0] && reads, 'source.selftest',
+      `runSelftest() names its rows in the order ${order.join(', ').replace(/'/g, '')}: ${inOrder}; the first two use `
+      + `synthLoop(48000): ${synth >= 0 && synth < places[0]}; sample.read holds the fetched bytes' SHA-256 and `
+      + `page.source asks fcmpPage.source(): ${reads}`);
+
+  // START: the context is made and resumed inside the click, and the sample loop asked for, before the first await.
+  // What the load does after its own awaits (readWav, fitLoop) can then delay neither.
+  const between = (from, to) => main.slice(main.indexOf(from), main.indexOf(to));
+  const start = between('  const start = async () => {', '  function contextChanged() {');
+  const at = ['new AudioContext(', 'context.resume()', 'const sample = loadSample();', 'await ']
+               .map((text) => start.indexOf(text));
+  const load = between('  const loadSample = () => {', '  const synth = () => {');
+  const fits = load.indexOf('fitLoop(');
+  const awaits = load.indexOf('await fetch(');
+  const calls = main.slice(0, main.indexOf('async function runSelftest()')).split('fitLoop(').length - 1;
+  const inOrderToo = at.every((place, i) => place >= 0 && (i === 0 || place > at[i - 1]));
+  const caught = /\}\)\(\)\.catch\(\(\) => \{\s*sampleFailed = true;\s*return null;\s*\}\)\.finally\(/.test(load);
+  row(inOrderToo && awaits >= 0 && fits > awaits && calls === 1 && start.includes('const loaded = await sample;')
+      && caught, 'source.start',
+      `start() makes the context, resumes it and asks for the sample loop before its first await: ${inOrderToo}; `
+      + `the page calls fitLoop in ${calls} place(s), loadSample(), after its fetch: ${fits > awaits && awaits >= 0}; `
+      + `that load never rejects: ${caught}`);
+
+  // A load after a failed one asks the server, not the browser's cache: the cache may hold the answer that failed.
+  // The first load is an ordinary fetch. The failure is noted in one place, where the load gives null.
+  const modes = found(load, /await fetch\(SAMPLE_URL, \{ signal: abort\.signal, cache: ([^}]*) \}\);/) || '';
+  const noted = main.split('sampleFailed = true;').length - 1;
+  const fresh = main.includes('  let sampleFailed = false;');
+  row(modes === 'sampleFailed ? \'reload\' : \'default\'' && noted === 1 && caught && fresh, 'source.retry',
+      `loadSample() fetches with the cache mode "${modes}"; sampleFailed starts false: ${fresh}, and is set in `
+      + `${noted} place(s), where a load gives null: ${caught}`);
+}
+
 // ---- built-from ----------------------------------------------------------------------------------------------------
 {
   const sha = '7319ac752200f7ce166457e6a1de8e68fb35d157';
@@ -567,4 +742,8 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
 
 note('the page in a browser: node <build>/_deps/funkgui-src/tools/web/check-page.mjs <build>/site --page fcmp-ui');
 console.log(`${failed === 0 ? 'PASS' : 'FAIL'}     ${TEST}: ${passed} row(s) passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+// The exit code is set and node ends by itself: no process.exit() here. Since the rows of the fitted loop, this test
+// ends just after heavy work on large arrays, and node 24.15 can then hang in process.exit(): it joins V8's compiler
+// thread, which waits for a collection that the main thread no longer runs. Seen in 11 of 3000 runs (8 at once: the
+// last line printed, then no exit until the test's time limit); 0 of 3000 when node shuts V8 down in order, as here.
+process.exitCode = failed === 0 ? 0 : 1;
