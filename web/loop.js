@@ -1,4 +1,5 @@
-// web/loop.js: the demo's built-in loop, made by the page (ADR-93, web Sprint D). No audio file is in the repository.
+// web/loop.js: the demo's synth loop, made by the page (ADR-93, web Sprint D). The other loop, the sample loop, is a
+// file (web/audio/loop.wav, read by web/sample.js): this one plays when that file does not load, and when it is chosen.
 //
 //   import { synthLoop } from './loop.js';
 //   const { sampleRate, frames, left, right } = synthLoop(context.sampleRate);

@@ -5,8 +5,8 @@
 with no fade. The other loop, the SYNTH LOOP, is made by the page (`web/loop.js`) and plays when this file does not
 load.
 
-Sean Funk made the loop for this demo on 2026-10-05. By his decision it is under the repository's licence, the GNU
-GPL version 3 (`LICENSE`), like the rest of FCompressor.
+Sean Funk made the loop for this demo on 2026-10-05. By its author's decision it is under the repository's licence,
+the GNU GPL version 3 (`LICENSE`), like the rest of FCompressor.
 
 ## The file
 

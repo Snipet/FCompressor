@@ -69,10 +69,17 @@ Ownership in a shared branch: note `git rev-parse HEAD` when you start; when you
   UNCHANGED.` A later choice (the other button, a file) wins over a load that is still running: the `opening` turn.
 - **`#fcmp-synth`**, while the demo runs: the synth loop plays and the notice is cleared.
 - **A file**: as today (decoded by the browser, 5 ms fades at both ends).
+- **What the review of W-P added** (commit baa06c2; frozen with the rest): a retry of the sample loop asks the server
+  and not the cache (`cache: 'reload'`; START's own fetch is the plain one); a file chosen or dropped while START is
+  still loading is kept and plays once the demo runs (it wins over the sample loop); a failure of the engine or the
+  editor while START loads ends the load at once (not after `SAMPLE_MS`); when the demo ends (failed or stopped) the
+  notice is cleared and a load that runs is given up; a context that is closed from outside stops the demo; two
+  presses under 30 ms apart never let the source between them reach the engine un-faded.
 - **`globalThis.fcmpPage.source()`**: `null` until a source plays, then `{ kind, name, frames, sampleRate }` of the
   buffer that plays: `kind` is `'sample'`, `'synth'` or `'file'`, `name` what the page says after `SOURCE: `.
-- **The self-test** gains three rows (thirteen with the ten it has), in this order after `engine.silence`'s block and
-  before `editor.*` for the first two:
+- **The self-test** gains three rows: 15 with a context that runs and 14 with one that is suspended (it had 12 and
+  11; the lead first wrote thirteen here, which was wrong). The first two come after `engine.silence` and before
+  `editor.*`:
   `sample.read` (the page's own `fetch(SAMPLE_URL)`: the SHA-256 of the bytes, by `crypto.subtle`, is `SAMPLE_SHA256`,
   a constant main.js exports with the contract's value; `readWav` gives 44100 Hz and 341,420 frames),
   `sample.fit` (`fitLoop` to 48000: 371,614 frames, each side's RMS within 0.01 dB of the file's, the last 1 ms under
@@ -216,7 +223,7 @@ DELIVERABLES
                  d. a site copy whose audio/loop.wav is cut to half its bytes: as c (readWav refuses it);
                  e. a file dropped while the sample loop is still loading wins;
                  f. index.html?selftest=1 with autoplay allowed (--autoplay-policy=no-user-gesture-required): the
-                    title is PASS and the log has the thirteen rows; and once without autoplay.
+                    title is PASS and the log has the 15 rows; and once without autoplay (14).
                  Chrome plays through the user's speakers unless muted: never start it without --mute-audio.
         [GATE]   Do NOT fix the gate. Run cd "$WT" && Scripts/web-live.sh "$WT/build-web" once at the end and list
                  the rows that fail now (they name the old words or the old default): that list is W-G's input. A
@@ -272,7 +279,7 @@ DELIVERABLES
         4. live.mjs: the published form gets the row `audio` after `published` (the published audio/loop.wav: the
            contract's size and SHA-256; when it fails the pages still run). Row counts in comments, in usage texts
            and in web/tests/weblive.mjs (the runner against its fakes) follow. page-check.mjs and its test: whatever
-           counts or names the self-test's rows or the page's controls follows (thirteen rows).
+           counts or names the self-test's rows or the page's controls follows (15 rows, 14 suspended).
         ACCEPTANCE (part of DONE)
         [GATE]    cd "$WT" && Scripts/web-live.sh "$WT/build-web": exit 0, every row passed; give the row count
                   and the scripted user's row count (79 before this card, 81 with --png).
@@ -308,9 +315,9 @@ DELIVERABLES
            why it is a WAV as given (as FLAC it measured 1,589,157 bytes, 78 % of the WAV: not worth a decoder the
            node tests cannot run; gzip takes 4 %); why the page reads and resamples it by itself, with W-A's
            numbers (filter, errors, time, the largest sample after fitting); the default and the fallback; the
-           self-test's thirteen rows; the site's 15 files and bytes (W-P's numbers); the gate's new rows (the names
-           in "The page"). "No audio file is in the repository" and every count of 13 files that speaks of the
-           present are brought up to date; a sentence that reports a past measurement (a deploy, a CI run) stays as
+           self-test's 15 rows (14 suspended); the site's 15 files and bytes (W-P's numbers); the gate's new rows
+           (the names in "The page"). "No audio file is in the repository" and every count of 13 files that speaks of
+           the present are brought up to date; a sentence that reports a past measurement (a deploy, a CI run) stays as
            history. The list of what is left: "recorded loops" is done with one loop; more would need a selector.
         2. ADR-93, "A second host", and the README: the Cloudflare copy is served at the user's own domain,
            https://fcompressor.seanfunk.xyz, as well as at its workers.dev address. THE LEAD'S FACTS: the user

@@ -1,4 +1,4 @@
-// web/tests/loop.mjs: the demo's built-in loop, as the page makes it (ADR-93, web Sprint D).
+// web/tests/loop.mjs: the demo's synth loop, as the page makes it (ADR-93, web Sprint D).
 //
 // FCMP_WEB_TEST name=web.loop timeout=60 args={source}/web/loop.js
 //

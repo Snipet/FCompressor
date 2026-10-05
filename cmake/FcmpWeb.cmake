@@ -28,7 +28,8 @@
 #   fcmp_web_port_check   web only (Sprint D): fcmp-port-check.mjs, PortLink and the facade as a node module, from
 #                         Tools/web/port/*.cpp; web/tests/port.mjs drives it over a MessageChannel.
 #   fcmp_web_site         web only (Sprint D): build-web/site, assembled by cmake/FcmpWebSite.cmake from web/*.html,
-#                         *.js, *.css, *.svg, the two modules, the licences and built-from.txt. A build output;
+#                         *.js, *.css, *.svg, web/audio/*.wav (the sample loop), the two modules, the licences and
+#                         built-from.txt. A build output;
 #                         CI's publish job deploys the copy its gate tested to GitHub Pages on a push to main.
 #   fcmp_web_print        web only (lead phase): build-web/live-obj/fcmp-print.wasm, a TEST-ONLY standalone module from
 #                         Tools/web/live/*.cpp (dsp.print's program, its parameter sets as WebProtocol records, the

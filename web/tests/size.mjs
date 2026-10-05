@@ -30,7 +30,7 @@ const MEASURED = {
   'licences/GPL-3.0.txt': [35149, 12091],
   'licences/JetBrainsMono-OFL.txt': [4399, 1969],
   'licences/THIRD-PARTY.txt': [62770, 9135],
-  'loop.js': [7409, 2658],
+  'loop.js': [7529, 2713],
   'main.js': [61312, 19854],
   'sample.js': [12751, 4597],
 };
