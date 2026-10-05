@@ -12,7 +12,9 @@
 #   web/*.html, *.js, *.css, *.svg   the page (an explicit list of kinds, never a plain glob of web/: .DS_Store,
 #                                    editor backups, package.json and web/tests stay out)
 #   audio/loop.wav                   the sample loop, web/audio/loop.wav byte for byte (web/audio/*.wav, and nothing
-#                                    else of web/audio: its README.md stays in the repository)
+#                                    else of web/audio: its README.md stays in the repository). Files only, and
+#                                    the ending as written here: a directory named x.wav stays out with what is in
+#                                    it, and so does TAKE.WAV, on macOS as on Linux
 #   fcmp-ui.html                     index.html again: FunkGui's page runner opens <stem>.html beside <stem>.js, and
 #                                    the page treats that path as its self-test
 #   fcmp-engine.wasm, fcmp-ui.js, fcmp-ui.wasm
@@ -48,7 +50,9 @@ endforeach()
 
 file(GLOB _static ${FCMP_SOURCE_DIR}/web/*.html ${FCMP_SOURCE_DIR}/web/*.js ${FCMP_SOURCE_DIR}/web/*.css
                   ${FCMP_SOURCE_DIR}/web/*.svg)
-file(GLOB _audio ${FCMP_SOURCE_DIR}/web/audio/*.wav)
+# A glob lists directories too unless told not to, and on macOS it matches without regard to case.
+file(GLOB _audio LIST_DIRECTORIES false ${FCMP_SOURCE_DIR}/web/audio/*.wav)
+list(FILTER _audio INCLUDE REGEX "\\.wav$")
 set(_tmp "${FCMP_SITE_DIR}.tmp")
 file(REMOVE_RECURSE "${_tmp}")
 file(MAKE_DIRECTORY "${_tmp}/licences" "${_tmp}/audio")

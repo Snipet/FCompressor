@@ -16,7 +16,7 @@
 // accessibility exports; the self-test's pixel rule by renderer class, on a still frame).
 // The whole table was measured again on 2026-10-05, for the sample loop (docs/sprints/web-loop.md, card W-P): the site
 // has 15 files with sample.js and audio/loop.wav; main.js and index.html (fcmp-ui.html is the same file) grew, and
-// the other files came out as they were.
+// the other files came out as they were. main.js was measured once more that day, after the card's review fixes.
 const MEASURED = {
   'audio/loop.wav': [2048600, 1955479],
   'built-from.txt': [73, 89],
@@ -31,7 +31,7 @@ const MEASURED = {
   'licences/JetBrainsMono-OFL.txt': [4399, 1969],
   'licences/THIRD-PARTY.txt': [62770, 9135],
   'loop.js': [7409, 2658],
-  'main.js': [57268, 18685],
+  'main.js': [61312, 19854],
   'sample.js': [12751, 4597],
 };
 const HEADROOM = 1.2;

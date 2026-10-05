@@ -15,11 +15,15 @@
 //                  SAMPLE LOOP tries again, from the server.
 //   a file         chosen or dropped: decoded by the browser at the context's rate, faded at both ends and looped in
 //                  place of the source. A file that is too large, too short, too long or not audio leaves the source
-//                  as it was and says so.
+//                  as it was and says so. A file dropped while START is loading is kept, and plays once the demo runs.
+//   a new source   takes the place of the old one: the old one fades out in 30 ms, then the new one fades in. A
+//                  second choice inside those 30 ms replaces the first, which never plays.
 //   RESUME         whenever the context is not running (no gesture yet, or the browser paused it).
 //   a failure      of the engine or of the editor, whenever it comes, ends the demo and says why: THE DEMO COULD NOT
 //                  START before it runs, THE DEMO STOPPED afterwards. The editor fails in three ways and only abort()
-//                  tells Module.onAbort: an exception or a trap in its main() or in a frame is an uncaught error.
+//                  tells Module.onAbort: an exception or a trap in its main() or in a frame is an uncaught error. A
+//                  demo that has ended gives up a load of the sample loop that still runs, and its notice is empty:
+//                  nothing it said of the source is true any more.
 //   the status     what the overlay says (#fcmp-status) is a live region, so it is never display: none and never
 //                  holds an old word: while the demo plays the overlay is away and the line says PLAYING.
 //   the footer     the commit the site was built from (built-from.txt), linked only when the build was that commit.
@@ -62,7 +66,7 @@ export const SAMPLE_MS = 15000;
 export const PROTOCOL = { magic: 0x50574346, version: 1, attach: 2, attachBytes: 20,
                           replyGated: 1 << 3, replyConfigured: 1 << 4, replyAttached: 1 << 5 };
 const FADE_SECONDS = 0.005;                           // both ends of a file: its seam when it loops
-const SWAP_SECONDS = 0.03;                            // the old source out, then the new one in
+export const SWAP_SECONDS = 0.03;                     // the old source out, then the new one in
 const EDITOR_MS = 60000;                              // START waits this long for the editor: 1.4 MB on a slow line
 const REPOSITORY = 'https://github.com/Snipet/FCompressor';   // a link to follow, never a load
 
@@ -143,6 +147,15 @@ export function lengthRefusal(seconds) {
   return seconds > MAX_FILE_SECONDS ? 'tooLong' : '';
 }
 
+// What a chosen or dropped file does, by the page's state: 'play' while the demo runs; 'keep' while START is loading
+// (the file is kept, and plays once the demo runs); 'startFirst' before START (the page says SAY.startFirst); and ''
+// in any other state (the demo cannot run here, or has ended: the overlay says so).
+export function fileChoice(state) {
+  if (state === 'running') return 'play';
+  if (state === 'loading') return 'keep';
+  return state === 'idle' ? 'startFirst' : '';
+}
+
 // 5 ms linear fades at both ends of one channel, in place: a file loops, and its ends rarely meet.
 export function fadeEnds(samples, sampleRate) {
   const n = Math.min(Math.round(FADE_SECONDS * sampleRate), samples.length >> 1);
@@ -150,6 +163,20 @@ export function fadeEnds(samples, sampleRate) {
     samples[i] *= i / n;
     samples[samples.length - 1 - i] *= i / n;
   }
+}
+
+// How a new source takes the place of the one before it: { at, old }. `now` is the context's time, and `started` the
+// time the source before it starts at (null when there is none). `at` is when the new source starts, and `old` what
+// becomes of the other one:
+//   'none'   there is none: the new source starts at once, with no fade.
+//   'fade'   it plays: it fades out over SWAP_SECONDS, and the new source starts then and fades in.
+//   'drop'   it has not begun (a second choice within SWAP_SECONDS of the first): it is stopped at once and never
+//            plays, and the new source takes its start time, when the source before both has faded out. Faded out
+//            like one that plays, it would begin part of the way down that fade, at up to full level.
+export function swapPlan(now, started) {
+  if (started === null) return { at: now, old: 'none' };
+  if (started > now) return { at: started, old: 'drop' };
+  return { at: now + SWAP_SECONDS, old: 'fade' };
 }
 
 // Which of the three source buttons can be pressed: { loop, synth, open }, true where enabled. `running` is whether
@@ -316,9 +343,12 @@ function boot() {
   let node = null;
   let source = null;
   let gain = null;
+  let startsAt = 0;                                   // the context's time at which `source` starts
   let playing = null;                                 // what plays: fcmpPage.source() answers it
+  let waiting = null;                                 // a file dropped while START was loading: it plays once it runs
   let sampleBuffer = null;                            // the sample loop at the context's rate, once it is loaded
   let sampleLoad = null;                              // the load of it that is running, if one is
+  let sampleAbort = null;                             // what gives that load up: its fetch's AbortController
   let sampleFailed = false;                           // a load of it has failed: the next one asks the server anew
   let synthBuffer = null;                             // the synth loop, made when it is first needed
   let engine = null;                                  // the bytes of fcmp-engine.wasm, fetched once
@@ -383,13 +413,15 @@ function boot() {
   let editorLost = null;
   const editor = new Promise((ready, lost) => {
     // The editor is no more. Said once (abort() calls onAbort and then throws, which is an uncaught error as well).
-    // While START is loading, start() ends on it after its next await.
+    // While START is loading, start() ends on it after its next await: the longest one, for the sample loop, is
+    // given up.
     editorLost = (error) => {
       if (editorGone !== null) return;
       editorGone = error;
       lost(error);
       if (state === 'running') stop(error);
       else if (state === 'idle') fail(error);
+      else if (state === 'loading') giveUpSample();
     };
     globalThis.Module = {
       fcmpReady: () => {
@@ -477,12 +509,14 @@ function boot() {
   };
   // The sample loop: fetched, read and fitted to the context's rate (sample.js). The promise never rejects: it gives
   // the buffer, or null when the response is not ok, the fetch fails, readWav refuses the bytes, or the bytes are not
-  // all here SAMPLE_MS after the fetch began (the fetch is then given up). One load runs at a time, and a second
-  // asker waits for the first; a load that failed is forgotten, so the next asker tries again. A load after a failed
-  // one asks the server and not the browser's cache ('reload'): the cache may hold the answer that failed (a file
-  // that was cut short and came with status 200, or a 404 the server lets it keep), and gives that answer again for
-  // as long as it keeps it. Seen with python3 -m http.server and a cut file one hour old: Chrome 154 asked the
-  // server once and answered the two loads after that from its cache, the second when the whole file was back.
+  // all here SAMPLE_MS after the fetch began (the fetch is then given up). giveUpSample() gives the fetch up before
+  // that, and the load gives null at once: the demo has ended, or START is ending on a failure, and nothing is read
+  // or fitted for a demo that is over. One load runs at a time, and a second asker waits for the first; a load that
+  // failed is forgotten, so the next asker tries again. A load after a failed one asks the server and not the
+  // browser's cache ('reload'): the cache may hold the answer that failed (a file that was cut short and came with
+  // status 200, or a 404 the server lets it keep), and gives that answer again for as long as it keeps it. Seen with
+  // python3 -m http.server and a cut file one hour old: Chrome 154 asked the server once and answered the two loads
+  // after that from its cache, the second when the whole file was back.
   // What it costs: readWav and fitLoop run on this thread, in one task, when the last byte has come. At 48 kHz on an
   // Apple M5 the fit takes 60 to 80 ms, in Chrome 154 and under node alike, and readWav 3 ms (the self-test's NOTE
   // has this browser's time for the fit). Until it ends the editor draws no frame and the page answers no press. It
@@ -496,7 +530,9 @@ function boot() {
     const load = (async () => {
       const response = await fetch(SAMPLE_URL, { signal: abort.signal, cache: sampleFailed ? 'reload' : 'default' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const file = readWav(await response.arrayBuffer());
+      const bytes = await response.arrayBuffer();
+      if (abort.signal.aborted) throw new Error('given up');
+      const file = readWav(bytes);
       sampleBuffer = bufferOf(fitLoop(file, context.sampleRate));
       return sampleBuffer;
     })().catch(() => {
@@ -505,9 +541,14 @@ function boot() {
     }).finally(() => {
       clearTimeout(timer);
       sampleLoad = null;
+      sampleAbort = null;
     });
     sampleLoad = load;
+    sampleAbort = abort;
     return load;
+  };
+  const giveUpSample = () => {
+    if (sampleAbort !== null) sampleAbort.abort();
   };
   // The synth loop is made at its first use, not at every START: making it holds this thread for about 50 ms (at
   // 48 kHz in Chrome 154 on an Apple M5; 70 ms under node), and most visitors never hear it.
@@ -515,29 +556,32 @@ function boot() {
     if (synthBuffer === null) synthBuffer = bufferOf(synthLoop(context.sampleRate));
     return synthBuffer;
   };
-  // `kind` is 'sample', 'synth' or 'file'; `name` is what the page says after SOURCE.
+  // `kind` is 'sample', 'synth' or 'file'; `name` is what the page says after SOURCE. The swap is swapPlan()'s.
   const play = (buffer, kind, name) => {
     const now = context.currentTime;
-    let at = now;
-    if (source !== null) {
+    const plan = swapPlan(now, source === null ? null : startsAt);
+    if (plan.old === 'fade') {
       const old = gain;
       old.gain.cancelScheduledValues(now);
       old.gain.setValueAtTime(old.gain.value, now);
-      old.gain.linearRampToValueAtTime(0, now + SWAP_SECONDS);
+      old.gain.linearRampToValueAtTime(0, plan.at);
       source.onended = () => old.disconnect();
-      source.stop(now + SWAP_SECONDS);
-      at = now + SWAP_SECONDS;
+      source.stop(plan.at);
+    } else if (plan.old === 'drop') {
+      source.stop();                                   // before its start time: it renders nothing
+      gain.disconnect();
     }
     gain = context.createGain();
-    if (at > now) {
-      gain.gain.setValueAtTime(0, at);
-      gain.gain.linearRampToValueAtTime(1, at + SWAP_SECONDS);
+    if (plan.at > now) {
+      gain.gain.setValueAtTime(0, plan.at);
+      gain.gain.linearRampToValueAtTime(1, plan.at + SWAP_SECONDS);
     }
     source = context.createBufferSource();
     source.buffer = buffer;
     source.loop = true;
     source.connect(gain).connect(node);
-    source.start(at);
+    source.start(plan.at);
+    startsAt = plan.at;
     playing = { kind, name, frames: buffer.length, sampleRate: buffer.sampleRate };
     $('fcmp-source-name').textContent = SAY.source(name);
     showButtons();
@@ -556,9 +600,12 @@ function boot() {
     notice('');
     play(buffer, 'sample', SAY.sample);
   };
+  // A file was chosen or dropped: what it does is fileChoice()'s, by the page's state.
   const openFile = async (file) => {
-    notice(state === 'idle' ? SAY.startFirst : '');
-    if (state !== 'running') return;
+    const choice = fileChoice(state);
+    notice(choice === 'startFirst' ? SAY.startFirst : '');
+    if (choice === 'keep') waiting = file;             // START is loading: start() opens it once the demo runs
+    if (choice !== 'play') return;
     const turn = (opening += 1);
     const name = file.name.toUpperCase();
     let refusal = fileRefusal(file.size);
@@ -620,7 +667,8 @@ function boot() {
         if (event.data && event.data.fcmp === 'error') stop(new Error(`the engine stopped (${event.data.error})`));
       });
       node.connect(context.destination);
-      // The buffer, or null: at most SAMPLE_MS after the click, however slow the file is.
+      // The buffer, or null: at most SAMPLE_MS after the click, however slow the file is. And null at once when the
+      // engine or the editor fails meanwhile (stop() and editorLost give the load up): wanted() then ends this start.
       const loaded = await sample;
       if (!wanted()) return;
       // Drawing since the page loaded, as a rule: the port is all it lacks. Bounded, for an editor that never says
@@ -640,6 +688,7 @@ function boot() {
       state = 'running';
       showButtons();
       contextChanged();
+      if (waiting !== null) openFile(waiting);         // a file dropped while this was loading: it wins
       return made.ready;
     } finally {
       // Not running after all: an editor that lives must not go on posting to an engine nobody hears.
@@ -648,7 +697,9 @@ function boot() {
   };
   function contextChanged() {
     if (state !== 'running') return;
-    if (context.state === 'running') {
+    if (context.state === 'closed') {                  // not by this page: nothing can resume it
+      stop(new Error('the audio context closed'));
+    } else if (context.state === 'running') {
       overlayAway(SAY.playing);
     } else {                                           // suspended (no gesture yet, or by the browser) or interrupted
       overlay(SAY.paused, SAY.resume);
@@ -657,6 +708,8 @@ function boot() {
   }
   const silence = () => {
     showButtons();                                     // the demo no longer runs: all three are disabled
+    notice('');                                        // what it said of the source is no longer true
+    giveUpSample();                                    // a load of the sample loop that still runs has no use
     if (context !== null) context.close().catch(() => {});
   };
   function fail(error) {
@@ -666,7 +719,10 @@ function boot() {
     silence();
   }
   function stop(error) {
-    if (state === 'loading' && fault === null) fault = error;      // START is loading: start() ends on it
+    if (state === 'loading' && fault === null) {       // START is loading: start() ends on it, after its next await
+      fault = error;
+      giveUpSample();                                  // the longest of them, which is then over at once
+    }
     if (state !== 'running') return;
     state = 'stopped';
     overlay(SAY.stopped(`${upper(error)}.`));
