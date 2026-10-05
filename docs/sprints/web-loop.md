@@ -147,7 +147,7 @@ DELIVERABLES
            fit.dc         a constant loop comes out as the same constant to 1e-6 at every tested rate.
            fit.sample     the sample loop at 48000: its RMS within 0.01 dB of the file's on each side; the last
                           1 ms under -60 dBFS; |frame 0| under 0.05; fitted twice, the same bits. A NOTE with its
-                          largest sample in dBFS at 48000 and at 96000 (resampling raises peaks: the lead wants the
+                          largest sample in dBFS at 48000 and at 96000 (resampling can raise peaks: the lead wants the
                           number), and a NOTE with the milliseconds fitLoop took at 48000 (a row only that it is
                           under 5 s: a time is no gate on a loaded machine).
         ACCEPTANCE (part of DONE)
@@ -249,9 +249,10 @@ INPUTS  W-A's and W-P's commits on this branch; W-P's list of the gate rows that
 DELIVERABLES
         1. Every row of the scripted user that named the old words or relied on the old default is restated so that
            it proves what it proved: a row that told a dropped file from "the built-in loop" by level (the synth
-           loop never passes -3 dBFS; the sample loop's largest sample is -0.04 dBFS in the file and higher once
-           fitted) must tell them apart some other way that cannot pass by accident (fcmpPage.source() and what the
-           engine's input meter shows together, for example).
+           loop never passes -3 dBFS; the sample loop's largest sample is -0.04 dBFS in the file and -0.05 dBFS
+           fitted to 48 kHz: W-A measured that no sample reaches full scale at any rate) must tell them apart some
+           other way that cannot pass by accident (fcmpPage.source() and what the engine's input meter shows
+           together, for example).
         2. The new rows of "The page": source.sample (after START: the page says SAMPLE LOOP, fcmpPage.source() is
            kind sample with Math.round(341420 * rate / 44100) frames, and the engine's input IS that loop: its
            input level reaches above -1.5 dBFS within one loop, which the synth loop never does), source.synth
