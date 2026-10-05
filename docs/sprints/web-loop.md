@@ -94,9 +94,11 @@ Ownership in a shared branch: note `git rev-parse HEAD` when you start; when you
 - **The site** has 15 files: the 13 of today, `sample.js` and `audio/loop.wav`. The site script copies
   `web/audio/*.wav` into `audio/` and nothing else of `web/audio/`. `web/audio/README.md` (what the file is, its
   facts from the contract, who made it and when, the licence) stays in the repository.
-- **The gate's new rows** (W-G): the scripted user's `source.sample`, `source.synth`, `source.back`, `source.lost`
-  and `source.again`; the published-site form's `audio` (the published `audio/loop.wav` has the contract's size and
-  SHA-256), after `published`.
+- **The gate's new rows** (W-G): the scripted user's `source.sample`, `source.synth`, `source.back`, `source.lost`,
+  `source.again`, `source.turn` (a later choice wins over a load of the sample loop that is still running, and the
+  load says nothing when it ends) and `source.slow` (the file never answers: START says LOADING until `SAMPLE_MS`,
+  then plays the synth loop with `SAY.sampleLost`); the published-site form's `audio` (the published
+  `audio/loop.wav` has the contract's size and SHA-256), after `published`.
 
 ## W-A
 
@@ -267,7 +269,8 @@ DELIVERABLES
            loop), source.back (SAMPLE LOOP pressed: back, the notice empty), source.lost (audio/loop.wav
            unreachable: START still reaches PLAYING, the synth loop plays, the notice is SAY.sampleLost and
            #fcmp-loop stays enabled) and source.again (reachable again: a press plays the sample loop and clears
-           the notice; while still unreachable a press says SAY.sampleUnchanged and the source stays). Where a row
+           the notice; while still unreachable a press says SAY.sampleUnchanged and the source stays), source.turn
+           and source.slow as "The page" gives them (W-P's review: only a browser shows these two). Where a row
            needs the file unreachable, block that one URL in the browser (the DevTools protocol can) or serve a
            site without it: the shipped site is never changed in place.
         3. mutants.mjs: the old mutant of BUILT-IN LOOP becomes one per loop button, and each new behaviour has a
