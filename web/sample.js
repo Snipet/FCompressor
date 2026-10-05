@@ -10,9 +10,9 @@
 // readWav(bytes) reads a RIFF/WAVE file from an ArrayBuffer or a typed array: PCM of 16, 24 and 32 bits and 32-bit
 // float (format tags 1, 3 and 0xFFFE), one channel (both sides get it) or two. The chunks may come in any order, an
 // odd chunk has its pad byte, and a chunk it does not know is passed over, as are bytes after the RIFF chunk. An
-// integer sample s of b bits is s / 2^(b-1). Anything else it refuses with an Error that says what is wrong. A chunk
-// that runs past the end of the bytes is refused too, the RIFF chunk first: a download cut short is never played
-// short.
+// integer sample s of b bits is s / 2^(b-1). Anything else it refuses with an Error that says what is wrong. A RIFF
+// chunk that runs past the end of the bytes is refused too, and a chunk that runs past the end of the RIFF chunk: a
+// download cut short is never played short. So is a RIFF chunk of under 4 bytes: it holds the word WAVE at least.
 //
 // fitLoop(loop, sampleRate) gives the loop as ONE PERIOD at another rate, in the same shape, with
 // frames = Math.round(loop.frames * sampleRate / loop.sampleRate). The input is taken as periodic (its index is
@@ -37,11 +37,12 @@
 //             with a part of its image. Going down to 24 kHz, a part of what lies between 12 and 12.9 kHz folds
 //             back under 12 kHz.
 //   table     the kernel at 1024 points in each period of the lower rate (100,354 doubles), read with linear
-//             interpolation. The table adds an error near -118 dB at 20 kHz, and less below.
+//             interpolation. The table adds an error near -123 dB at 20 kHz, and less below.
 // Every output frame has its own set of weights (44.1 to 48 kHz over this loop is 185,807 different phases). The set
 // is used for both channels, summed in double precision, and scaled to sum to 1: a constant stays that constant.
 // Measured from 44.1 to 48 kHz: a sum of sines from 30 Hz to 20 kHz comes out with an error of -124 dB, a lone sine
-// at 20 kHz with -116 dB (the worst case: the edge of the flat band, and its image the nearest).
+// at 20 kHz with -116 dB (the worst case: the edge of the flat band, and its image the nearest; the kernel's -120 dB
+// and the table's -123 dB together).
 //
 // What it costs: once, at START, about 60 ms for the sample loop at 48 kHz under node on an Apple M5 (36 million
 // weights, each used twice). While it runs it holds the table (0.8 MB) and one more copy of the input.
@@ -67,19 +68,24 @@ export function readWav(bytes) {
   if (size < 12) throw new Error(`not a RIFF/WAVE file: it has only ${size} bytes`);
   if (name(0) !== 'RIFF') throw new Error('not a RIFF file');
   if (name(8) !== 'WAVE') throw new Error('a RIFF file, but not WAVE');
-  // The RIFF chunk holds every other chunk. What follows it is not the file's.
-  const end = 8 + view.getUint32(4, true);
+  // The RIFF chunk holds the word WAVE and every other chunk. What follows it is not the file's.
+  const riff = view.getUint32(4, true);
+  if (riff < 4) throw new Error(`the RIFF chunk says ${riff} bytes: 4 is the least, for the word WAVE`);
+  const end = 8 + riff;
   if (end > size) throw new Error(`the file is cut short: it has ${size} bytes of ${end}`);
+  const early = end < size;                           // the RIFF chunk ends before the bytes do
 
   let format = null;
   let data = null;
   for (let at = 12; at < end;) {
-    if (at + 8 > end) throw new Error(`the file is cut short in a chunk header, at byte ${at}`);
+    if (at + 8 > end) {
+      throw new Error(`${early ? 'the RIFF chunk ends' : 'the file is cut short'} in a chunk header, at byte ${at}`);
+    }
     const id = name(at);
     const length = view.getUint32(at + 4, true);
     if (at + 8 + length > end) {
-      throw new Error(`the ${id.trim()} chunk at byte ${at} runs past the end of the file: it says ${length} bytes, `
-                      + `${end - at - 8} are there`);
+      throw new Error(`the ${id.trim()} chunk at byte ${at} runs past the end of the ${early ? 'RIFF chunk' : 'file'}`
+                      + `: it says ${length} bytes, ${end - at - 8} are there`);
     }
     if (id === 'fmt ' && !format) format = { at: at + 8, length };
     if (id === 'data' && !data) data = { at: at + 8, length };

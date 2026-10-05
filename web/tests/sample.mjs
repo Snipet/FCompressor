@@ -15,7 +15,9 @@
 //                       too short to be either, no fmt, no data, tag 2, 8 bits, 64-bit float, three channels, a rate
 //                       of 0, a frame size that is not the channels' and the bits', an extensible tag with no
 //                       sub-format, no whole frame, a data chunk longer than the bytes, a file cut in the middle of a
-//                       chunk header (both cuts twice: as a download cut short, and with a RIFF size that agrees)
+//                       chunk header (both cuts three times: as a download cut short, with a RIFF size that agrees,
+//                       and as a RIFF size that ends there in a file that is whole), a RIFF size under 4 (0 and 3;
+//                       with 4 the fault is that there is no fmt)
 //   file.<fact>         web/audio/loop.wav: its size and its sha256; 44100 Hz and 341,420 frames; each side's peak
 //                       below 0 dBFS with no sample at +-1; each RMS between -17.5 and -15 dBFS; each |mean| under
 //                       0.002; the last 1 ms under -60 dBFS RMS; |frame 0| under 0.02
@@ -35,19 +37,27 @@
 //                       loop's), 2,999, and two shorter than the kernel's 96 taps, 64 and 16 (the kernel goes round
 //                       the loop more than once)
 //   fit.seam.<frames>.<rate>
-//                       the same two bounds over the first and the last 64 frames alone
+//                       the same two bounds over the first and the last 64 frames alone, where the fit has more than
+//                       128 frames (a shorter fit is all seam: fit.period holds it)
+//   fit.exact.<rate>    the place of every frame is exact. 2,322 times the same 147 frames (341,334 at 44100, near the
+//                       sample loop's length) are 2,322 times the same 160 frames at 48000 and the same 80 at 24000,
+//                       TO THE BIT: every period meets the same weights and the same samples. No bound in dB holds
+//                       this: a place summed in double precision drifts by 2e-6 of a frame, and that costs fit.period
+//                       7 of its 24 dB of room
 //   fit.passband.<hz>   44100 to 48000: a single sine at 20, 100, 1000, 5000, 10000, 15000, 18000 and 20000 Hz keeps
 //                       its level within 0.01 dB (0.1 dB at 20000) and its phase within 0.001 radian
 //   fit.images.<hz>     44100 to 48000 with a sine at 15000 and one at 20000 Hz: all that is not the sine (the error
 //                       against the exact sine) is at most -100 dB under it
 //   fit.down.<rate>.<hz>
-//                       44100 to 24000: a sine at 5000 Hz comes out within 0.01 dB, sines at 14000 and at 20000 Hz
-//                       (above the new half rate) leave at most -90 dB of anything. 44100 to 16000: the same with
-//                       3000 Hz (kept) and 10000 Hz (removed)
+//                       44100 to 24000: a sine at 5000 Hz comes out within 0.01 dB and 0.001 radian, and both sides
+//                       with the bounds of fit.period; sines at 14000 and at 20000 Hz (above the new half rate) leave
+//                       at most -90 dB of anything. 44100 to 16000: the same with 3000 Hz (kept) and 10000 Hz
+//                       (removed)
 //   fit.down.<rate>.short
-//                       a loop of 64 frames going down (the kernel is 178 or 266 taps: several times round the loop):
+//                       a loop of 64 frames going down (the kernel is 176 or 268 taps: several times round the loop):
 //                       its low sines come out with the bounds of fit.period
-//   fit.dc.<rate>       a constant loop comes out as the same constant to 1e-6, at 16000, 24000, 48000 and 96000
+//   fit.dc.<rate>       a constant loop comes out as the same constant TO THE BIT, at 16000, 24000, 48000 and 96000
+//                       (the card's bound is 1e-6: one gain for all frames, or sums in single precision, pass that)
 // The sines are compared at the fitted loop's own length: a sine of c cycles in the loop has c cycles in the fit.
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { createHash } from 'node:crypto';
@@ -276,11 +286,24 @@ function refuses(name, bytes, fault) {
     };
     const inData = whole.subarray(0, whole.length - 7);
     refuses('wav.refuse.cut.data', inData, /cut short.*\b\d+ bytes of \d+/);
-    refuses('wav.refuse.long.data', agreeing(inData), /data chunk.*runs past the end/);
+    refuses('wav.refuse.long.data', agreeing(inData), /data chunk.*runs past the end of the file/);
     const dataHeader = 12 + 8 + 16 + 8 + 6;                // the data chunk's header starts here
     const inHeader = whole.subarray(0, dataHeader + 5);
     refuses('wav.refuse.cut.header', inHeader, /cut short.*\b\d+ bytes of \d+/);
-    refuses('wav.refuse.long.header', agreeing(inHeader), /cut short in a chunk header/);
+    refuses('wav.refuse.long.header', agreeing(inHeader), /file is cut short in a chunk header/);
+    // The RIFF size alone is wrong and every byte is there. The RIFF chunk ends at the same two places: the message
+    // must name it, not the file. Under 4 it cannot hold the word WAVE: that is not a file with no fmt chunk. With 4
+    // it holds the word and nothing more, and that is one.
+    const sized = (size) => {
+      const out = whole.slice();
+      new DataView(out.buffer).setUint32(4, size, true);
+      return out;
+    };
+    refuses('wav.refuse.size.data', sized(inData.length - 8), /data chunk.*runs past the end of the RIFF chunk/);
+    refuses('wav.refuse.size.header', sized(inHeader.length - 8), /RIFF chunk ends in a chunk header/);
+    refuses('wav.refuse.size.0', sized(0), /RIFF chunk says 0 bytes/);
+    refuses('wav.refuse.size.3', sized(3), /RIFF chunk says 3 bytes/);
+    refuses('wav.refuse.size.4', sized(4), /no fmt chunk/);
   }
 }
 
@@ -438,9 +461,12 @@ if (file) {
   row(first < 5000, 'fit.sample.time', `${first.toFixed(0)} ms (the bound is 5000: a time is no gate)`);
   note(`fitLoop took ${first.toFixed(0)} ms for the sample loop at 48000 (the first call of this run, as the page `
        + `makes it) and ${second.toFixed(0)} ms the second time`);
-  const peak = (f) => db(Math.max(facts(f.left).peak, facts(f.right).peak)).toFixed(3);
-  note(`the largest sample is ${peak(file)} dBFS in the file, ${peak(at48)} dBFS at 48000 and ${peak(at96)} dBFS at `
-       + '96000 (a fit moves the peaks, and nothing here clips them)');
+  const peaks = (f) => [facts(f.left).peak, facts(f.right).peak];
+  const inDb = (f) => peaks(f).map((p) => db(p).toFixed(3)).join(' / ');
+  const full = [at48, at96].some((f) => peaks(f).some((p) => p >= 1));
+  note(`the largest sample (left / right) is ${inDb(file)} dBFS in the file, ${inDb(at48)} dBFS at 48000 and `
+       + `${inDb(at96)} dBFS at 96000: a fit moves the peaks up or down, and ${full ? 'a' : 'no'} sample of the two `
+       + 'fits is at or over 1 (nothing here clips them)');
 }
 
 // ---- the frames of any fit ------------------------------------------------------------------------------------------
@@ -484,9 +510,45 @@ if (file) {
       row(e.rms <= RMS_BOUND && e.worst <= WORST_BOUND, `fit.period.${frames}.${rate}`,
           `${partsL.length} and ${partsR.length} sines up to ${top.toFixed(0)} Hz, ${fitted.frames} frames: the error `
           + `is ${asDb(e.rms)} RMS (the bound is -100), its worst sample ${asDb(e.worst)} (-90)`);
-      row(e.seamRms <= RMS_BOUND && e.seamWorst <= WORST_BOUND, `fit.seam.${frames}.${rate}`,
-          `the first and the last 64 frames: ${asDb(e.seamRms)} RMS (-100), the worst sample ${asDb(e.seamWorst)} `
-          + '(-90)');
+      // A fit of 128 frames or fewer is all seam: the row above has held every frame of it.
+      if (fitted.frames > 128) {
+        row(e.seamRms <= RMS_BOUND && e.seamWorst <= WORST_BOUND, `fit.seam.${frames}.${rate}`,
+            `the first and the last 64 frames: ${asDb(e.seamRms)} RMS (-100), the worst sample ${asDb(e.seamWorst)} `
+            + '(-90)');
+      }
+    }
+  }
+
+  // The place of every frame is exact. 147 frames at 44100 are 160 at 48000 and 80 at 24000, so a loop of 2322 times
+  // the same 147 frames comes out as 2322 times the same 160 (or 80): each period meets the same weights and the
+  // same samples, in the same order, whatever Math.sin's last bit is. A place that is not whole frames and a
+  // remainder kept as integers moves the weights from one period to the next.
+  {
+    const times = 2322;
+    const period = sineLoop(147, partsFor(hzL, 147, 0.3), partsFor(hzR, 147, 2.0));
+    const frames = 147 * times;
+    const loop = { sampleRate: FILE_RATE, frames, left: new Float32Array(frames), right: new Float32Array(frames) };
+    for (let i = 0; i < frames; i += 1) {
+      loop.left[i] = period.left[i % 147];
+      loop.right[i] = period.right[i % 147];
+    }
+    for (const [rate, every] of [[48000, 160], [24000, 80]]) {
+      const fitted = fitLoop(loop, rate);
+      let differ = 0;
+      let first = -1;
+      let worst = 0;
+      for (let k = every; k < fitted.frames; k += 1) {
+        const same = Object.is(fitted.left[k], fitted.left[k % every])
+            && Object.is(fitted.right[k], fitted.right[k % every]);
+        if (same) continue;
+        differ += 1;
+        if (first < 0) first = k;
+        worst = Math.max(worst, Math.abs(fitted.left[k] - fitted.left[k % every]),
+                         Math.abs(fitted.right[k] - fitted.right[k % every]));
+      }
+      row(fitted.frames === every * times && differ === 0, `fit.exact.${rate}`,
+          `${times} times the same 147 frames are ${fitted.frames} frames: ${differ} differ from the first ${every}`
+          + (differ ? ` (the first is frame ${first}, the most is ${worst.toExponential(1)})` : ', to the bit'));
     }
   }
 }
@@ -529,10 +591,12 @@ if (file) {
     for (const hz of kept) {
       const fitted = fitLoop(single(hz, hz), rate);
       const s = sineOf(fitted.left, hz);
-      const e = sideError(fitted.right, [[hz, phaseR]]);
-      row(Math.abs(db(s.level)) <= 0.01 && turn(s.phase - phaseL) <= 0.001, `fit.down.${rate}.${hz}`,
+      const e = loopError(fitted, [[hz, phaseL]], [[hz, phaseR]]);
+      row(Math.abs(db(s.level)) <= 0.01 && turn(s.phase - phaseL) <= 0.001 && e.rms <= RMS_BOUND
+          && e.worst <= WORST_BOUND, `fit.down.${rate}.${hz}`,
           `kept: the level moved by ${db(s.level).toExponential(1)} dB (the bound is 0.01), the phase by `
-          + `${turn(s.phase - phaseL).toExponential(1)} radian; the error is ${asDb(Math.sqrt(e.squares / e.signal))}`);
+          + `${turn(s.phase - phaseL).toExponential(1)} radian (0.001); the error of both sides is ${asDb(e.rms)} RMS `
+          + `(-100), its worst sample ${asDb(e.worst)} (-90)`);
     }
     for (const hz of removed) {
       const fitted = fitLoop(single(hz, hz), rate);
@@ -553,19 +617,29 @@ if (file) {
 }
 
 // ---- a constant stays that constant ---------------------------------------------------------------------------------
+// To the bit. A frame is the constant times the sum of its weights, over that sum: in double precision that is off by
+// a few parts in 1e15, far under half a step of a Float32Array (1.5e-8 at 0.25), whatever Math.sin's last bit is. One
+// gain for all frames, or sums in single precision, move a third of these frames or more by a step, inside the card's
+// 1e-6.
 for (const rate of [16000, 24000, 48000, 96000]) {
+  const right = Math.fround(-0.6);
   let worst = 0;
+  let off = 0;
+  let count = 0;
   for (const frames of [64, 2999]) {
     const loop = { sampleRate: FILE_RATE, frames, left: new Float32Array(frames).fill(0.25),
-                   right: new Float32Array(frames).fill(-0.6) };
+                   right: new Float32Array(frames).fill(right) };
     const fitted = fitLoop(loop, rate);
     if (fitted.frames === 0) worst = Infinity;
     for (let i = 0; i < fitted.frames; i += 1) {
-      worst = Math.max(worst, Math.abs(fitted.left[i] - 0.25), Math.abs(fitted.right[i] - Math.fround(-0.6)));
+      if (!Object.is(fitted.left[i], 0.25) || !Object.is(fitted.right[i], right)) off += 1;
+      worst = Math.max(worst, Math.abs(fitted.left[i] - 0.25), Math.abs(fitted.right[i] - right));
     }
+    count += fitted.frames;
   }
-  row(worst <= 1e-6, `fit.dc.${rate}`,
-      `0.25 and -0.6 over 64 and over 2999 frames: off by at most ${worst.toExponential(1)} (the bound is 1e-6)`);
+  row(off === 0 && worst === 0, `fit.dc.${rate}`,
+      `0.25 and -0.6 over 64 and over 2999 frames: ${off} of ${count} frames are not the constant to the bit, off by `
+      + `at most ${worst.toExponential(1)}`);
 }
 note('the samples are this JavaScript engine\'s: a browser\'s differ in the last bits, so the only hash is the '
      + 'file\'s');
