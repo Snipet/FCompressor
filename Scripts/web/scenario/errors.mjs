@@ -2,7 +2,9 @@
 // collects for them on the way.
 //
 //   errors.console   no uncaught error and no error-level console line on the demo page, on any page of the run (the
-//                    tab's console is kept across its documents). A renderer's warning is not an error.
+//                    tab's console is kept across its documents). A renderer's warning is not an error; nor is the
+//                    line the browser logs for a request of the sample loop's file that the scenario itself answered
+//                    with no file (the group source does), one line a request and no more.
 //   errors.records   on every page of the run that was started: the demo still plays as its last group ends (or as the
 //                    group after it begins), every record the editor posted reached the worklet (posted === records,
 //                    read at one instant), the engine refused none, and the editor refused no reply
@@ -45,8 +47,11 @@ export async function run(t, ledgers) {
   const { u, row } = t;
   await u.p.ev('1').catch(() => {});                  // one round trip: what the page said before now has arrived
   const errors = u.errors();
+  const own = u.refusals();
   row(errors.length === 0, 'console',
       errors.length === 0 ? `no uncaught error and no error-level line among the console's ${u.consoleLines()} lines`
+                            + (own > 0 ? ` (but the browser's own, for the ${own} request(s) of the sample loop's file `
+                                         + 'that the scenario answered with no file)' : '')
                           : `${errors.length} on the demo page, the first: ${errors.slice(0, 3).join(' || ')}`);
   const ran = ledgers.filter((l) => l.ran);
   const bad = ran.filter((l) => l.broken || !l.ok || l.posted !== l.records || l.refused !== 0 || l.editorRefused !== 0

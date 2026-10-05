@@ -157,7 +157,7 @@ function driverCommand(o, port) {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
                 '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
                 '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.fp': 'text/plain; charset=utf-8',
-                '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
+                '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png', '.wav': 'audio/wav' };
 const notServed = [];                                   // every request that was not a 200: said at the end
 function serve(roots) {
   const server = createServer((request, response) => {

@@ -5,7 +5,8 @@
 //
 // The rules every group relies on:
 // - Input is real: mouse, key, wheel and drag events through the browser's own input pipeline (Input.dispatch*). No
-//   event is made in the page, and no function of the editor is called to act for the user.
+//   event is made in the page, and no function of the editor is called to act for the user. (What no user can do, a
+//   group makes in the page and says so: source.mjs has the three cases.)
 // - A control is found by its title in the Panel's own accessibility list (Module.fcmpA11y()), and pressed where that
 //   list says it is. A group never knows a coordinate of the layout.
 // - Nothing waits a fixed time for an outcome. until() polls the page (one look: the list, Module.fcmpStatus(), the
@@ -15,9 +16,11 @@
 //   button held for 40 ms, 16 ms between the moves of a drag), never a wait for the page.
 // - What is not timing of the page is not left to timing of the driver: the two presses of a double click carry their
 //   own timestamps (90 ms apart), so the editor counts them as one however long the browser took to answer the first.
+//   Where a row does depend on how far apart the page took two presses (pressTwo), that is measured in the page, by
+//   the clock the page itself goes by, and the row judges nothing it did not measure.
 //
 // The library (Scripts/web/cdp.mjs), and all the scenario uses of it:
-//   serve(dir) -> { base, kill() }          the site on 127.0.0.1
+//   serve(dir) -> { base, asked, kill() }   the site on 127.0.0.1, and every request it was asked
 //   chrome({ width, height, profile, extra, chrome }) -> { page(null), send(method, params), audioRuns(), close(),
 //                                           gone() }
 //                                           one headless Chrome, muted, an AudioContext allowed to run without a
@@ -29,9 +32,11 @@
 //                                           orderly end (asked to close, killed after 2 s); gone(): '' while it runs
 //   NULL_SINK                               the switch for Chrome's own null audio sink
 //   a page: s(method, params), ev(expression), consoleLines, targetId, metrics(w, h, 1), go(url, 0), at(x, y),
-//           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), and the port tap:
+//           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), the port tap:
 //           tap(), tapRead() -> { n, last: { v, snap }, reply: { flags, publish, latency, frameLatency, rate,
-//           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies }
+//           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies, heard: { n, min, max, lost } },
+//           tapHear(skip, keep), tapLevels(); and gate(pattern) -> { answer, requests, release(how), end() }, one
+//           address answered in the server's place
 //   sleep, cleanUp, PID
 // The library stops the Chrome and the server it started on every way out of the process (its end, SIGINT, SIGTERM,
 // SIGHUP, an uncaught error); the run's scratch directory goes after it (launch() below). Nothing is done as this
@@ -71,11 +76,15 @@ const BOUND_MS = 6000;
 export const OUTCOME_MS = 10000;
 
 // One look at the page, as a JSON text: evaluated in the page, so it must stand alone.
+// `plays` is the page's own answer to what plays (fcmpPage.source(): null, or { kind, name, frames, sampleRate } of
+// the buffer), `can` which of the three source buttons can be pressed, `node` whether the page has its worklet node,
+// and `loaded` how many times the sample loop's file has come whole (the browser's own count of its loads).
 const LOOK = `JSON.stringify((() => {
   const M = globalThis.Module;
   const page = globalThis.fcmpPage;
   const has = (name) => !!M && typeof M[name] === 'function';
   const text = (id) => { const e = document.getElementById(id); return e ? e.textContent : ''; };
+  const on = (id) => { const e = document.getElementById(id); return !!e && !e.disabled; };
   const context = page ? page.context() : null;
   const start = document.getElementById('fcmp-start');
   return { a11y: has('fcmpA11y') ? JSON.parse(M.fcmpA11y()) : null,
@@ -83,6 +92,11 @@ const LOOK = `JSON.stringify((() => {
            state: page ? page.state() : '', context: context ? context.state : '',
            rate: context ? context.sampleRate : 0,
            says: text('fcmp-status'), notice: text('fcmp-notice'), source: text('fcmp-source-name'),
+           plays: page && typeof page.source === 'function' ? page.source() : null,
+           can: { loop: on('fcmp-loop'), synth: on('fcmp-synth'), open: on('fcmp-open') },
+           node: !!(page && page.node()),
+           loaded: performance.getEntriesByType('resource')
+             .filter((e) => /\\/audio\\/loop\\.wav$/.test(e.name) && e.responseStatus === 200).length,
            button: start && !start.hidden ? start.textContent : '',
            away: document.getElementById('fcmp-overlay').classList.contains('away'),
            hidden: document.visibilityState === 'hidden', scrollY: window.scrollY, zoomPref: (() => {
@@ -173,15 +187,24 @@ export async function launch({ dir, out, chromePath = '', flags = [], width = 12
     await close();
     throw error;
   }
-  // alive(): whether that Chrome still runs.
-  return { base: server.base, browser, scratch, audio, alive: () => browser.gone() === '', close };
+  // alive(): whether that Chrome still runs. asked: every request the server was asked, in order.
+  return { base: server.base, asked: server.asked, browser, scratch, audio, alive: () => browser.gone() === '',
+           close };
 }
 
-// The scripted user on one tab: the library's page, and what the groups ask of it.
-export async function user(browser, base) {
+// The address the page asks the sample loop of, as the server hears it, and what the browser itself logs when the
+// driver has answered it with no file (u.loopFile below): one error-level line a request, which is the driver's
+// doing and not the page's.
+const LOOP_PATH = '/audio/loop.wav';
+const OWN_REFUSAL = /^log\.error: Failed to load resource: .* \S+\/audio\/loop\.wav$/;
+
+// The scripted user on one tab: the library's page, and what the groups ask of it. `asked` is the server's list of
+// the requests it was asked (launch() gives it).
+export async function user(browser, base, asked = []) {
   const p = await browser.page(null);
   const u = { p, base, browser, width: 0, height: 0 };
   let tapped = false;                                 // the port tap is in this document
+  const gates = [];                                   // every gate u.loopFile() made: what the driver refused
 
   // ---- looking ------------------------------------------------------------------------------------------------------
   u.look = async () => {
@@ -194,8 +217,8 @@ export async function user(browser, base) {
   // start, the hiding in hide), untilOn() (a group's own look, as quality's), untilLedger(), menuOpen(), menuGone();
   // whether a row judges its result or the next step needs it. Not counted: a wait whose bound is over OUTCOME_MS (a
   // page booting, a START loading, the Panel coming to rest), a wait that ran out (that is a FAIL row, or hide's other
-  // way), pace() (the page let run on for a while: no outcome) and engine.mjs's holds() (it takes its whole time by
-  // design).
+  // way), pace() (the page let run on for a while, or listened to for a set time, as plays.mjs does: no outcome) and
+  // engine.mjs's holds() (it takes its whole time by design).
   u.slowest = { ms: 0, bound: BOUND_MS, at: '' };
   // Asks `next()` every 40 ms until `test(answer)` holds or `ms` have passed: { ok, v (the last answer), ms }. With
   // `forgiving`, an answer that cannot be had or a test that throws does not hold; otherwise that error ends the wait.
@@ -359,11 +382,49 @@ export async function user(browser, base) {
   u.wheelAt = (x, y, deltaY) => p.wheel(x, y, deltaY);
   u.key = (key, modifiers = 0) => p.key(key, { modifiers, settle: 30 });
   u.type = (text) => p.type(text);
-  // A press on an element of the page itself (START, BUILT-IN LOOP), or on a client point (a row of a DOM menu).
+  // A press on an element of the page itself (START, SAMPLE LOOP), or on a client point (a row of a DOM menu).
   u.clickClient = (cx, cy) => click(cx, cy);
   u.pressElement = async (id) => {
     const b = JSON.parse(await p.ev(boxOf(id)));
     await click(b.x + b.w / 2, b.y + b.h / 2);
+  };
+  // Two presses in quick succession on two elements of the page, as a hand that changes its mind: each button is let
+  // go at once, and `gapMs` pass between the two. Answers how far apart the page took them, in ms of its audio
+  // context's clock, which is the clock the page plans a change of source by (NaN when it did not take both, or has
+  // no context). That clock is read by a listener of the driver's own, in the capture phase: it writes the time of
+  // each click down and does nothing else, so the presses are the browser's and the measure is the page's.
+  // The move, the press and the release of one tap are sent together and awaited together: a move alone is handed
+  // to the page with its next frame, and waiting for it would put a frame's time between the two taps.
+  u.pressTwo = async (first, second, gapMs) => {
+    await p.ev(`(() => {
+      if (!globalThis.__clicks) {
+        const clicks = globalThis.__clicks = [];
+        document.addEventListener('click', (e) => {
+          const context = globalThis.fcmpPage ? fcmpPage.context() : null;
+          clicks.push({ id: e.target ? e.target.id : '', at: context ? context.currentTime : NaN });
+        }, true);
+      }
+      globalThis.__clicks.length = 0;
+      return true;
+    })()`);
+    const a = JSON.parse(await p.ev(boxOf(first)));
+    const b = JSON.parse(await p.ev(boxOf(second)));
+    const tap = (box) => {
+      const [cx, cy] = [box.x + box.w / 2, box.y + box.h / 2];
+      last = { at: Math.max(Date.now() / 1000, last.at + 0.006), x: cx, y: cy };
+      return Promise.all([mouse('mouseMoved', cx, cy),
+                          mouse('mousePressed', cx, cy, { button: 'left', buttons: 1, clickCount: 1,
+                                                          timestamp: last.at }),
+                          mouse('mouseReleased', cx, cy, { button: 'left', clickCount: 1,
+                                                           timestamp: last.at + 0.005 })]);
+    };
+    await tap(a);
+    await sleep(gapMs);
+    await tap(b);
+    const clicks = JSON.parse(await p.ev('JSON.stringify(globalThis.__clicks)'));
+    const took = clicks.length === 2 && clicks[0].id === first && clicks[1].id === second
+                 && clicks.every((c) => typeof c.at === 'number');
+    return took ? (clicks[1].at - clicks[0].at) * 1000 : NaN;
   };
   // Whether this browser's command key is Meta (Apple's) or Control: the page's own rule (funkgui::web, WebInput.h).
   u.commandKey = async () => (await p.ev('/mac|iphone|ipad/i.test(navigator.userAgentData '
@@ -400,16 +461,20 @@ export async function user(browser, base) {
     return u.until((s) => s.state === 'idle' && s.button === 'START' && s.status !== null && s.status.frames >= 2,
                    30000);
   };
-  // A press on START: { ok, s, ms, why }. A press that does nothing is known at once (the page leaves `idle` inside
-  // the click); a start that began has 20 s.
-  u.start = async () => {
-    const t0 = Date.now();
+  // A press on START: { ok, s, ms, ran, why }. A press that does nothing is known at once (the page leaves `idle`
+  // inside the click); a start that began has 20 s. In two steps, for a group that acts while START is loading:
+  // begin() is the press, and started(t0) waits for the demo to play. `ran` is how long after t0 the page ran, and
+  // `ms` how long after it a published frame had come back.
+  u.begin = async () => {
     await u.pressElement('fcmp-start');
     const left = await u.until((s) => s.state !== 'idle', 2000);
-    if (!left.ok) return { ...left, why: 'the press on START did nothing: the page is still idle' };
+    return left.ok ? left : { ...left, why: 'the press on START did nothing: the page is still idle' };
+  };
+  u.started = async (t0) => {
     const r = await u.until((s) => s.state !== 'loading', 20000);
+    const ran = Date.now() - t0;
     if (!r.ok || r.s.state !== 'running') {
-      return { ...r, ok: false,
+      return { ...r, ok: false, ran,
                why: `the page is ${r.s ? `${r.s.state || 'not booted'} and says "${r.s.says}"` : 'not answering'}` };
     }
     await p.tap();
@@ -417,10 +482,15 @@ export async function user(browser, base) {
     // The first replies may carry a frame the engine has not published yet (its values are all 0): a group reads the
     // engine's values from its first look on, so START is over only when a published frame has come back.
     const fed = await u.until((s) => s.context === 'running' && s.away && published(s.tap.reply), 10000);
-    return { ...fed, ms: Date.now() - t0,
+    return { ...fed, ms: Date.now() - t0, ran,
              why: fed.ok ? '' : `the page runs, but the context is ${fed.s ? fed.s.context : '?'} and `
                                 + `${fed.s && fed.s.tap && fed.s.tap.replies > 0 ? 'no reply carries a published frame'
                                                                                  : 'no reply came'}` };
+  };
+  u.start = async () => {
+    const t0 = Date.now();
+    const began = await u.begin();
+    return began.ok ? u.started(t0) : began;
   };
   u.tapped = () => tapped;
   // What load() returned, or an error that says the page did not come up: for a group that goes no further then.
@@ -432,6 +502,26 @@ export async function user(browser, base) {
     }
     return loaded;
   };
+
+  // ---- what plays ---------------------------------------------------------------------------------------------------
+  // The engine's input from now on: a look's tap.heard counts the 1 ms columns of the replies that come after the
+  // next `skip` (the library's tap has the layout), with the quietest and the loudest of them. plays.mjs judges a
+  // source by them. The first `keep` of them are also kept one by one, and u.levels() reads those (dBFS, in order).
+  u.hear = (skip = 0, keep = 0) => p.tapHear(skip, keep);
+  u.levels = () => p.tapLevels();
+  // The sample loop's file out of the page's reach: the library's gate on the one address the page asks it of, for
+  // this tab and until its end() (the site and the server are never touched). gate.answer is 'pass' (the server
+  // answers), 'missing' (404), 'fail' (no connection) or 'hold' (no answer until gate.release(how)); gate.waiting()
+  // is how many requests wait; gate.requests has every request stopped, and `gone` on one says the page had given it
+  // up before it was answered.
+  u.loopFile = async () => {
+    const gate = await p.gate(`*${LOOP_PATH}`);
+    gate.waiting = () => gate.requests.filter((r) => r.done === null).length;
+    gates.push(gate);
+    return gate;
+  };
+  // The requests for the sample loop's file that reached the server: { method, url, cache }.
+  u.askedForLoop = () => asked.filter((r) => r.url.split('?')[0] === LOOP_PATH);
 
   // ---- hidden and shown ---------------------------------------------------------------------------------------------
   // Another tab in front hides this one, as a user hides it (Page.setWebLifecycleState would leave it hidden for
@@ -490,8 +580,21 @@ export async function user(browser, base) {
 
   // ---- what the console said ----------------------------------------------------------------------------------------
   // Uncaught errors and error-level lines of this page. A renderer's own warnings (SwiftShader logs one on the plain
-  // page) are not errors.
-  u.errors = () => p.consoleLines.filter((line) => /^(EXCEPTION|console\.(error|assert)|log\.error):/.test(line));
+  // page) are not errors. Nor is the line the browser logs by itself for a request of the sample loop's file that the
+  // driver answered with no file: as many of those lines as the driver refused requests are its own doing
+  // (u.refusals()), and every one beyond that count is an error like any other.
+  u.refusals = () => gates.flatMap((gate) => gate.requests)
+    .filter((r) => (r.how === 'missing' || r.how === 'fail') && !r.gone).length;
+  u.errors = () => {
+    let own = u.refusals();
+    const errors = [];
+    for (const line of p.consoleLines) {
+      if (!/^(EXCEPTION|console\.(error|assert)|log\.error):/.test(line)) continue;
+      if (own > 0 && OWN_REFUSAL.test(line)) own -= 1;
+      else errors.push(line);
+    }
+    return errors;
+  };
   u.consoleLines = () => p.consoleLines.length;
   return u;
 }

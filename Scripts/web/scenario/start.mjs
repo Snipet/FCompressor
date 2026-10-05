@@ -2,7 +2,8 @@
 //
 //   start.idle        a new page: idle, no AudioContext yet, the editor draws behind the overlay, START is shown
 //   start.list        Module.fcmpA11y() gives the Panel's list (the rest of the scenario finds its controls in it)
-//   start.early-drop  a file dropped before START changes nothing, and the page says to press START first
+//   start.early-drop  a file dropped before START changes nothing (the page still names the sample loop, nothing
+//                     plays and no source button can be pressed), and the page says to press START first
 //   start.running     one press on START: the page runs, the context runs, the overlay is away and says PLAYING
 //   start.telemetry   replies arrive from a configured, attached engine at the context's rate; the gate is open and the
 //                     input meter shows the loop; nothing was refused, by the worklet or by the editor
@@ -11,6 +12,7 @@
 import { join } from 'node:path';
 
 import { REPLY, writeTone } from './driver.mjs';
+import { SAMPLE, buttons } from './plays.mjs';
 import { num } from './report.mjs';
 
 export const page = 'own';
@@ -41,10 +43,12 @@ export async function run({ u, row, scratch }) {
 
   await u.drop(writeTone(join(scratch, 'files', 'scenario-early.wav'), { seconds: 1 }));
   const told = await u.until((s) => s.notice === 'PRESS START FIRST, THEN CHOOSE A FILE.');
-  row(told.ok && told.s.state === 'idle' && told.s.source === 'SOURCE: BUILT-IN LOOP' && told.s.context === '',
+  const can = told.s.can;
+  row(told.ok && told.s.state === 'idle' && told.s.source === SAMPLE.line && told.s.plays === null
+      && told.s.context === '' && !can.loop && !can.synth && !can.open,
       'early-drop', `a file dropped before START: the notice "${told.s.notice}", the page is `
-      + `${told.s.state || 'not booted'} and says `
-      + `"${told.s.source}"`);
+      + `${told.s.state || 'not booted'} and says "${told.s.source}"; source() is `
+      + `${told.s.plays === null ? 'null' : told.s.plays.kind}; ${buttons(told.s)}`);
 
   const started = await u.start();
   const s1 = started.s || {};

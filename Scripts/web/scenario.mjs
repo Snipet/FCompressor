@@ -39,7 +39,10 @@
 //              and EXPORT
 //   modes      a Mode change to one stepped and one continuous Mode, by the arrows, the wheel and the browser
 //   quality    QUALITY and LOOKAHEAD: the latency in the status, the worklet and the reply; audio continues
-//   file       a dropped file plays, a bad one leaves the source with its notice, BUILT-IN LOOP returns
+//   file       a dropped file plays, a bad one leaves the source with its notice, SAMPLE LOOP returns
+//   source     START plays the sample loop, and each loop's button plays its loop; of two choices under 30 ms apart
+//              only the second plays; a sample loop that is missing, comes late or never comes leaves the synth loop
+//              playing and says so; what was chosen meanwhile wins
 //   context    a lost WebGL context recovers, and the still frame after it is SoftRaster's
 //   hidden     the tab hidden and shown again: the pulls stop and resume, the audio goes on; RESUME
 //   zoom       the zoom steps a window allows, and the preference after a reload
@@ -87,8 +90,8 @@ const opt = { dir: '', out: '', png: false, chrome: '', only: '', list: false, t
   }
 }
 
-const NAMES = ['start', 'screens', 'values', 'edits', 'presets', 'modes', 'quality', 'file', 'context', 'hidden',
-               'zoom', 'pictures'];
+const NAMES = ['start', 'screens', 'values', 'edits', 'presets', 'modes', 'quality', 'file', 'source', 'context',
+               'hidden', 'zoom', 'pictures'];
 if (opt.list) {
   for (const name of [...NAMES, 'errors']) console.log(name);
   process.exit(0);
@@ -153,7 +156,7 @@ const trace = (error) => {
 const t0 = Date.now();
 let code = 2;
 try {
-  const u = await user(session.browser, session.base);
+  const u = await user(session.browser, session.base, session.asked);
   const ledgers = [];                                 // one per page that ran, taken as its last group ended
   const t = { u, out, png: opt.png, scratch: session.scratch, row: report.row.bind(report),
               note: report.note.bind(report),

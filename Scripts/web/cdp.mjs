@@ -5,14 +5,15 @@
 //   serve(site, { live, expect })   the gate's static server on 127.0.0.1, a free port: / is the site (exactly the
 //                                   shipped files), /live/ the live directory, /expect/ the expectation directory, so
 //                                   a live page reaches the shipped files as ../<name>. GET and HEAD, application/wasm,
-//                                   no caching, nothing above a root in any spelling.
+//                                   no caching, nothing above a root in any spelling. It keeps what it was asked.
 //   findChrome(path)                the browser: the path given, else $CHROME, the macOS application, a name on PATH.
 //   chrome({ ... })                 one headless Chrome: a throwaway profile, ALWAYS --mute-audio (it plays through
 //                                   the machine's speakers otherwise), the GPU flag by platform (ANGLE on Metal on
 //                                   macOS, SwiftShader elsewhere), nothing fetched in the background. DevTools goes
 //                                   over a pipe, not a port: a Chrome whose driver is gone ends by itself.
 //   browser.page(url)               a tab: evaluate, real input events (mouse, keys, wheel), a screenshot, the demo
-//                                   page's own state and the taps on the worklet's port.
+//                                   page's own state, the taps on the worklet's port, and a gate that answers one
+//                                   address in the server's place (a file that is missing, or never comes).
 //   browser.renderer()              the WebGL renderer's name; browser.audioRuns(): whether an AudioContext renders
 //                                   (NULL_SINK is the flag for a machine where none does).
 //   Report, PID, sleep, pasteboardCount, HERE, PNG: what a scenario needs besides.
@@ -73,7 +74,8 @@ process.on('uncaughtException', (e) => {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
                 '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
                 '.wasm': 'application/wasm', '.json': 'application/json', '.txt': 'text/plain; charset=utf-8',
-                '.fp': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+                '.fp': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
+                '.wav': 'audio/wav' };
 
 // The file a request path names, as { file } or { status }. The path is decoded once and taken literally: a `..`
 // segment in any spelling (plain, %2e%2e, ..%2f, behind a prefix) is refused, never resolved, and what a link inside
@@ -109,12 +111,16 @@ function requested(site, roots, url) {
 }
 
 // Serves `dir` at /, and with `live` and `expect` those directories at /live/ and /expect/. Answers { base (no slash
-// at its end), port, misses (every request not answered 200, as "<status> <method> <url>"), kill() }.
+// at its end), port, misses (every request not answered 200, as "<status> <method> <url>"), asked (every request, in
+// order: { method, url, cache: its Cache-Control header, '' when it has none }: a fetch that goes round the browser's
+// cache says no-cache there), kill() }.
 export async function serve(dir, { live = '', expect = '', port = 0 } = {}) {
   const site = resolve(dir);
   const roots = [['/live/', live], ['/expect/', expect]].filter(([, d]) => d !== '').map(([p, d]) => [p, resolve(d)]);
   const misses = [];
+  const asked = [];
   const server = createServer((request, response) => {
+    asked.push({ method: request.method, url: request.url, cache: String(request.headers['cache-control'] || '') });
     const refuse = (status) => {
       misses.push(`${status} ${request.method} ${request.url}`);
       response.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -141,7 +147,7 @@ export async function serve(dir, { live = '', expect = '', port = 0 } = {}) {
   const kill = () => {
     try { server.close(); server.closeAllConnections(); } catch { /* closed */ }
   };
-  return { base: `http://127.0.0.1:${server.address().port}`, port: server.address().port, misses, kill };
+  return { base: `http://127.0.0.1:${server.address().port}`, port: server.address().port, misses, asked, kill };
 }
 
 // ---- the browser ----------------------------------------------------------------------------------------------------
@@ -320,9 +326,12 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     const consoleLines = [];                            // every console line, log entry and uncaught error
     const exceptions = [];                              // the uncaught errors alone
+    let stopped = null;                                 // P.gate()'s: told of every request the tab's gate stops
     const listener = (msg) => {
       if (msg.sessionId !== sessionId) return;
-      if (msg.method === 'Runtime.consoleAPICalled') {
+      if (msg.method === 'Fetch.requestPaused') {
+        if (stopped !== null) stopped(msg.params);
+      } else if (msg.method === 'Runtime.consoleAPICalled') {
         consoleLines.push(`console.${msg.params.type}: `
                           + msg.params.args.map((a) => a.value ?? a.description).join(' '));
       } else if (msg.method === 'Runtime.exceptionThrown') {
@@ -567,6 +576,62 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
       return file;
     };
 
+    // ---- one address of the tab, answered here in place of the server ----
+    // P.gate(pattern) stops every request of this tab whose address matches `pattern` (the Fetch domain's own
+    // patterns: * is any text) before it reaches the network, and answers it as gate.answer says at that moment:
+    //   'pass'      it goes on to the server, unchanged (the answer a gate begins with)
+    //   'missing'   404, as a server answers that does not have the file
+    //   'fail'      no answer: the connection is refused
+    //   'hold'      it waits, as with a server that never answers, until gate.release(how) answers every request
+    //               that waits as `how` says: 'pass', 'missing' or 'fail'
+    // gate.requests has every request stopped, in order: { url, headers (the request's own), how (how it was
+    // answered; 'hold' while it waits), gone (the page had given the request up before it was answered: the browser
+    // then refuses the answer), done (a promise: the browser has taken the answer, or refused it) }. gate.end() lets
+    // what still waits pass and stops no more. A tab has one gate at a time. Nothing of the tab's other requests is
+    // touched, and neither the server nor the site: for a row that needs one file out of reach.
+    P.gate = async (pattern) => {
+      const gate = { answer: 'pass', requests: [] };
+      const answer = async (r, how) => {
+        r.how = how;
+        try {
+          if (how === 'missing') {
+            await s('Fetch.fulfillRequest', { requestId: r.id, responseCode: 404,
+              responseHeaders: [{ name: 'Content-Type', value: 'text/plain; charset=utf-8' },
+                                { name: 'Cache-Control', value: 'no-store' }],
+              body: Buffer.from('404\n').toString('base64') });
+          } else if (how === 'fail') {
+            await s('Fetch.failRequest', { requestId: r.id, errorReason: 'ConnectionRefused' });
+          } else {
+            await s('Fetch.continueRequest', { requestId: r.id });
+          }
+        } catch {
+          r.gone = true;
+        }
+      };
+      stopped = (params) => {
+        const r = { id: params.requestId, url: params.request.url, headers: params.request.headers, how: 'hold',
+                    gone: false, done: null };
+        gate.requests.push(r);
+        if (!['pass', 'missing', 'fail', 'hold'].includes(gate.answer)) {
+          throw new Error(`P.gate: the answer is 'pass', 'missing', 'fail' or 'hold', not '${gate.answer}'`);
+        }
+        if (gate.answer !== 'hold') r.done = answer(r, gate.answer);
+      };
+      gate.release = async (how = 'pass') => {
+        const waiting = gate.requests.filter((r) => r.done === null);
+        for (const r of waiting) r.done = answer(r, how);
+        await Promise.all(waiting.map((r) => r.done));
+        return waiting;
+      };
+      gate.end = async () => {
+        await gate.release('pass');
+        stopped = null;
+        await s('Fetch.disable').catch(() => {});
+      };
+      await s('Fetch.enable', { patterns: [{ urlPattern: pattern, requestStage: 'Request' }] });
+      return gate;
+    };
+
     // ---- START, and the taps on the port ----
     P.start = async () => {
       const at = JSON.parse(await ev(`JSON.stringify((() => {
@@ -579,9 +644,19 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
       return Date.now() - t0;
     };
     // Every Params record the editor posts (30 plain values + snap), and the newest reply's head, kept in the page.
+    // And the engine's input by the replies' columns (HistoryColumn, 32 bytes each after the head's 320: one a
+    // millisecond of audio, its first float the largest input sample of that millisecond, both channels, in dBFS).
+    // A reply's frame holds a meter that has fallen by the time it is read (40 ms release); a column holds its
+    // millisecond exactly. T.heard is what the columns said since tapHear() was last called: `n` of them, the
+    // quietest (`min`) and the loudest (`max`), and `lost`, how many the engine did not deliver in between (its ring
+    // lapped the reader, or its count began again). The first `keep` of them are also kept one by one, in the order
+    // they came (tapHear(skip, keep); tapLevels() reads them): for a row that needs how the input rose, not only how
+    // far.
     P.tap = () => ev(`(() => {
       const port = fcmpPage.node().port;
-      const T = globalThis.__tap = { params: [], kinds: {}, reply: null, replies: 0 };
+      const T = globalThis.__tap = { params: [], kinds: {}, reply: null, replies: 0,
+                                     heard: { next: null, skip: 0, n: 0, min: null, max: null, lost: 0, keep: 0,
+                                              levels: [] } };
       const orig = port.postMessage.bind(port);
       port.postMessage = (m, t) => {
         if (m instanceof ArrayBuffer) {
@@ -603,16 +678,42 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
                     uiFlags: u[10], rate: f[11], frameLatency: u[12], fade: f[13], bypass: f[14],
                     inPeak: [f[16], f[17]], outPeak: [f[20], f[21]], gr: [f[32], f[33]],
                     blockMaxGr: [f[34], f[35]], thrDb: f[45], slope: f[46] };
+        const H = T.heard;
+        const count = Math.min(u[6], (b.byteLength - 320) >> 5);
+        if (count === 0) return;
+        const first = u[7];                             // the index of the first column delivered
+        if (H.next !== null && first !== H.next) H.lost += first > H.next ? first - H.next : 1;
+        H.next = (first + count) >>> 0;
+        const columns = new Float32Array(b, 320, count * 8);
+        for (let k = 0; k < count; k += 1) {
+          if (H.skip > 0) { H.skip -= 1; continue; }
+          const db = columns[k * 8];
+          H.n += 1;
+          if (H.levels.length < H.keep) H.levels.push(db);
+          if (H.min === null || db < H.min) H.min = db;
+          if (H.max === null || db > H.max) H.max = db;
+        }
       });
       return true;
     })()`);
     P.tapRead = async (clear = false) => JSON.parse(await ev(`JSON.stringify((() => {
       const T = globalThis.__tap;
       const r = { n: T.params.length, last: T.params[T.params.length - 1] || null, kinds: T.kinds, reply: T.reply,
-                  replies: T.replies };
+                  replies: T.replies, heard: { n: T.heard.n, min: T.heard.min, max: T.heard.max, lost: T.heard.lost } };
       ${clear ? 'T.params.length = 0;' : ''}
       return r;
     })())`));
+    // T.heard begins again, with the columns after the next `skip` (the milliseconds a change of source takes); the
+    // first `keep` of them are kept one by one.
+    P.tapHear = (skip = 0, keep = 0) => ev(`(() => {
+      Object.assign(globalThis.__tap.heard, { skip: ${Number(skip)}, n: 0, min: null, max: null, lost: 0,
+                                              keep: ${Number(keep)}, levels: [] });
+      return true;
+    })()`);
+    // The columns kept since tapHear(skip, keep), in dBFS, oldest first. A column of digital silence is -Infinity
+    // (JSON has no such number: it travels as null).
+    P.tapLevels = async () => JSON.parse(await ev('JSON.stringify(globalThis.__tap.heard.levels)'))
+      .map((db) => (db === null ? -Infinity : db));
     if (url) await P.go(url);
     return P;
   }

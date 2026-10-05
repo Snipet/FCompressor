@@ -63,8 +63,8 @@ const fewer = join(scratch, 'expect-fewer');            // the expectations with
 const bare = join(scratch, 'live-bare');                // a live directory with no page
 const home = join(scratch, 'home');                     // every run's HOME: the real one is neither read nor written
 const bin = join(scratch, 'bin');                       // the fake under each driver's own name
-for (const dir of [join(site, 'licences'), live, expect, fewer, bare, home, bin, join(scratch, 'tmp'),
-                   join(scratch, 'nosite')])
+for (const dir of [join(site, 'licences'), join(site, 'audio'), live, expect, fewer, bare, home, bin,
+                   join(scratch, 'tmp'), join(scratch, 'nosite')])
   mkdirSync(dir, { recursive: true });
 for (const name of ['chromedriver', 'geckodriver']) {
   writeFileSync(join(bin, name), `#!/bin/sh\nexec '${process.execPath}' '${fake}' "$@"\n`);
@@ -73,6 +73,7 @@ for (const name of ['chromedriver', 'geckodriver']) {
 writeFileSync(join(site, 'index.html'), '<!doctype html><title>RUNNING</title>');
 writeFileSync(join(site, 'main.js'), 'export {};');
 writeFileSync(join(site, 'fcmp-engine.wasm'), Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+writeFileSync(join(site, 'audio', 'loop.wav'), 'RIFF....WAVE');   // the sample loop's place in the site
 writeFileSync(join(scratch, 'secret.txt'), 'not the site');
 for (const name of ['a.html', 'b.html']) writeFileSync(join(live, name), '<!doctype html><title>RUNNING</title>');
 writeFileSync(join(live, 'fcmp-print.wasm'), Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
@@ -257,6 +258,8 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(s.page.status === 200 && s.page.type.startsWith('text/html'), 'server.page', JSON.stringify(s.page));
   row(s.wasm.status === 200 && s.wasm.type === 'application/wasm' && s.wasm.bytes === 8, 'server.wasm',
       JSON.stringify(s.wasm));
+  row(s.audio.status === 200 && s.audio.type === 'audio/wav' && s.audio.bytes === 12, 'server.audio',
+      JSON.stringify(s.audio));
   row(s.script.status === 200 && s.script.type.startsWith('text/javascript'), 'server.script',
       JSON.stringify(s.script));
   row(s.head.status === 200 && s.head.bytes === 0, 'server.head', JSON.stringify(s.head));

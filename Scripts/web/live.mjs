@@ -22,12 +22,13 @@
 //      and a PNG of the canvas.
 //   2. frame.chars.sidechain.async: the same page with no dt pin, which is the shipped asynchronous preview, reaches
 //      the same frame.
-//   3. selftest: the page's own self-test (index.html?selftest=1), its context suspended (no gesture).
+//   3. selftest: the page's own self-test (index.html?selftest=1), its context suspended (no gesture). It must
+//      have judged the sample loop: its rows sample.read, sample.fit and page.source.
 //   4. In a second Chrome with --autoplay-policy=no-user-gesture-required (a running AudioContext, still muted):
-//      selftest.autoplay, which must have judged page.audio; then page.<name> for every *.html of <live>, by the
-//      live-page protocol (document.title RUNNING, then PASS or "FAIL: <row>"; rows in #funkgui-log). A page that
-//      gives no verdict within the timeout is a FAIL that names the timeout. No page there is a NOTE. Where no
-//      AudioContext renders in that Chrome (a machine with no audio device), it is started again with the
+//      selftest.autoplay, which must have judged those three and page.audio; then page.<name> for every *.html of
+//      <live>, by the live-page protocol (document.title RUNNING, then PASS or "FAIL: <row>"; rows in #funkgui-log).
+//      A page that gives no verdict within the timeout is a FAIL that names the timeout. No page there is a NOTE.
+//      Where no AudioContext renders in that Chrome (a machine with no audio device), it is started again with the
 //      browser's null sink (--disable-audio-output), and a NOTE says so.
 //   5. scenario: Scripts/web/scenario.mjs --dir <site> --out <out>/scenario --chrome <the browser> --timeout <4 x
 //      --timeout> [--chrome-flag <switch>]... as a child process in its own process group, when the file is there:
@@ -42,9 +43,11 @@
 //
 // --url: the published site, at <base> (http or https). No server: <base>/built-from.txt is asked until it says
 // "site <commit> clean" (with --commit; a CDN may serve the previous build for a while), at most --wait seconds and a
-// NOTE per wait; that is the row `published`, and when it fails nothing more is run. Then 1 to 4 against <base>: the
-// capture pages, the asynchronous preview and the self-test twice. The live pages and the scenario are not on the
-// published site and are not run (NOTE lines say so).
+// NOTE per wait; that is the row `published`, and when it fails nothing more is run. Then the row `audio`:
+// <base>/audio/loop.wav, the sample loop the page plays, has the size and the SHA-256 of the repository's file (a host
+// may cut, change or leave out a file that is no page; when the row fails the pages are run all the same). Then 1 to 4
+// against <base>: the capture pages, the asynchronous preview and the self-test twice. The live pages and the scenario
+// are not on the published site and are not run (NOTE lines say so).
 //
 // Results in <out>: frames/<view>.theme<t>.live.fp, png/<view>.theme<t>.png, png/<page>.png, selftest.log,
 // selftest.autoplay.log, <page>.log, scenario.log, scenario/, summary.txt, and .web-live, which marks the directory as
@@ -80,6 +83,7 @@
 // Exit: 0 every row passed; 1 a view differs or a row failed (the published site never said the commit, too); 2 usage,
 // no Chrome, <out> refused, or no verdict (Chrome went away, the runner failed, a signal, nothing was judged).
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync,
          writeFileSync, writeSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -278,6 +282,18 @@ export function judgePage({ title, log, uncaught = [], timeoutS }) {
   return { ok: true, detail: `PASS, ${passed} row(s)` };
 }
 
+// What the self-test must have judged besides passing: its three rows about the sample loop (the file as the page
+// fetched it, the loop fitted to 48 kHz, and what START plays), and with a context that runs the live audio. A page
+// that passes without one of them did not look. Answers '' or what is missing, as the row's detail.
+export const SAMPLE_ROWS = ['sample.read', 'sample.fit', 'page.source'];
+export function unjudged(log, { audio = false } = {}) {
+  const passed = (name) => new RegExp(`^PASS +web\\.selftest ${name.replace('.', '\\.')}:`, 'm').test(String(log));
+  const missing = SAMPLE_ROWS.filter((name) => !passed(name));
+  if (missing.length > 0) return `the page did not judge ${missing.join(', ')}: its self-test holds the sample loop`;
+  return audio && !passed('page.audio')
+    ? 'the page did not judge page.audio: under the autoplay flag its context must run' : '';
+}
+
 // A run's last line, as a live page writes it when its run has ended (Page.run in web/live/fcmp-live.js).
 export const LAST_LINE = /^(PASS|FAIL) +\S+: \d+ row\(s\) passed, \d+ failed$/m;
 // The row a page writes for an uncaught error, before its title becomes FAIL (web/main.js and web/live/fcmp-live.js).
@@ -450,6 +466,35 @@ export async function awaitPublished({ base, commit = '', waitS = 600, say = () 
 async function fetchText(url, ms) {
   const response = await fetch(url, { cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(ms) });
   return { status: response.status, text: response.status === 200 ? await response.text() : '' };
+}
+
+// The sample loop, which the page plays by default: its address in the site, and the size and the SHA-256 of
+// web/audio/loop.wav (web/audio/README.md has them; web/main.js holds the same SHA-256 for the page's self-test, and
+// web/tests/weblive.mjs holds these three to the file).
+export const AUDIO = { path: 'audio/loop.wav', bytes: 2048600,
+                       sha256: '0327dec3cbc7de82cf3ed6d9f0533d7035681c20297b0c9cb7aae2bc9a8b7e52' };
+// <base>/audio/loop.wav asked once, for at most `timeoutS` seconds: the published file is the repository's, by its
+// size and its SHA-256. `get(url, ms)` answers { status, bytes (a Buffer) }. Answers { ok, detail }.
+export async function judgeAudio({ base, timeoutS = 120, get = fetchBytes }) {
+  const target = `${base}/${AUDIO.path}`;
+  let r = null;
+  try {
+    r = await get(target, timeoutS * 1000);
+  } catch (e) {
+    return { ok: false, detail: `${target}: no answer (${(e && e.cause && e.cause.code) || (e && e.name) || e})` };
+  }
+  if (r.status !== 200) return { ok: false, detail: `${target}: HTTP ${r.status}` };
+  const sha = createHash('sha256').update(r.bytes).digest('hex');
+  const ok = r.bytes.length === AUDIO.bytes && sha === AUDIO.sha256;
+  return { ok, detail: `${target}: ${r.bytes.length} bytes, SHA-256 ${sha}`
+                       + (ok ? ': the sample loop, as the repository has it'
+                             : r.bytes.length !== AUDIO.bytes ? `; the sample loop has ${AUDIO.bytes} bytes`
+                             : `; the sample loop's is ${AUDIO.sha256}`) };
+}
+async function fetchBytes(url, ms) {
+  const response = await fetch(url, { cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(ms) });
+  return { status: response.status,
+           bytes: response.status === 200 ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0) };
 }
 
 // ---- the rows of a run ----------------------------------------------------------------------------------------------
@@ -636,6 +681,8 @@ async function rows(opt, exe, tally) {
       tally.note('published: no page was opened: they are not the build that was asked for');
       return;
     }
+    const audio = await judgeAudio({ base, timeoutS: opt.timeoutS });
+    tally.row(audio.ok, 'audio', audio.detail);
   } else {
     server = await serve(opt.dir, { live: opt.live, expect: opt.expect });
     base = server.base;
@@ -875,7 +922,7 @@ async function rows(opt, exe, tally) {
     }, fail);
   };
   const contextOf = (log) => (/the context is (\w+)/.exec(log) || [])[1] || 'unknown';
-  await runPage('selftest', `${base}/index.html?selftest=1`, 'selftest.log');
+  await runPage('selftest', `${base}/index.html?selftest=1`, 'selftest.log', (log) => unjudged(log));
   tally.note(`selftest: with no gesture the page's context was ${contextOf(readOr(join(out, 'selftest.log'), ''))}`);
   await browser.close();
 
@@ -892,8 +939,7 @@ async function rows(opt, exe, tally) {
                + `sink (${NULL_SINK}), where one ${runs ? 'renders' : 'does not render either'}`);
   }
   await runPage('selftest.autoplay', `${base}/index.html?selftest=1`, 'selftest.autoplay.log',
-                (log) => (/^PASS +web\.selftest page\.audio:/m.test(log) ? ''
-                  : 'the page did not judge page.audio: under the autoplay flag its context must run'));
+                (log) => unjudged(log, { audio: true }));
   if (published) {
     tally.note('pages: the live pages are not part of the published site: the gate runs them on a build tree or an '
                + 'artifact');

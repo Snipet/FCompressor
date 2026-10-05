@@ -212,6 +212,7 @@ const server = createServer((request, response) => {
       if (page.kind === 'capture') page.want = (await raw(url.origin, 'GET', `/expect/${view}.theme0.node.fp`)).text;
       if (record.urls.length === 1) {
         const ask = { page: ['GET', url.pathname + url.search], wasm: ['GET', '/fcmp-engine.wasm'],
+                      audio: ['GET', '/audio/loop.wav'],
                       script: ['GET', '/main.js'], head: ['HEAD', url.pathname], missing: ['GET', '/no-such-file.js'],
                       above: ['GET', '/../secret.txt'], aboveEncoded: ['GET', '/%2e%2e/secret.txt'],
                       aboveSlash: ['GET', '/licences/..%2f..%2fsecret.txt'], post: ['POST', url.pathname],

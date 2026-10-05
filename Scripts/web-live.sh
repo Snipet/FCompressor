@@ -54,10 +54,11 @@
 #   --url            The site as it is published (http or https, the address of its index.html's directory). First
 #                    <base>/built-from.txt is asked until it says "site <commit> clean" (a CDN may serve the previous
 #                    build for a while): every --wait / 20 seconds (1 to 15), a NOTE each time, at most --wait seconds;
-#                    the row "published" fails, and nothing more is run, when it never does. Then the capture pages
-#                    (against <expect>, which a build-form run wrote as <out>/expect) and the self-test, both ways,
-#                    against <base>. The live pages and the scenario are not on the published site and are not run
-#                    (NOTE lines say so).
+#                    the row "published" fails, and nothing more is run, when it never does. Then the row "audio":
+#                    <base>/audio/loop.wav, the sample loop, has the size and the SHA-256 of the repository's file
+#                    (the pages are run all the same when it has not). Then the capture pages (against <expect>,
+#                    which a build-form run wrote as <out>/expect) and the self-test, both ways, against <base>. The
+#                    live pages and the scenario are not on the published site and are not run (NOTE lines say so).
 #   Lines: "EQUAL|DIFFERS|FAIL <view>.theme<t>: ...", the rows "PASS|FAIL|NOTE web.live <row>: ...", the pages' own
 #   lines two columns in, and last "web-live: N/M passed (results in <out>)" ("web-live: no verdict (...)" when there
 #   is none). Results in <out>: expect/ (a build tree), frames/<view>.theme<t>.live.fp, png/, selftest.log,
