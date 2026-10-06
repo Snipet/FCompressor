@@ -1349,11 +1349,12 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
     the configuration lists some (read in the source of wrangler 4.100.0, the lead's installed copy: `triggersDeploy`
     does it only inside `if (customDomainsOnly.length > 0)`, and routes only inside `if (routesOnly.length > 0)`), so a
     deploy leaves a domain attached in the dashboard as it is. Cloudflare's builder ran wrangler 4.147.0 on its earlier
-    deploys (its build log); that version's source was not read. On 2026-10-05 the three addresses (the domain, the
-    workers.dev address, GitHub Pages) each served `built-from.txt` as `site cc34611… clean`, and the lead ran
-    `Scripts/web-live.sh --url` against the domain from the Mac: 28 of 28 in 21.4 s (ANGLE Metal; pixel rows largest 1
-    to 2 of 255). That site was cc34611's, without the sample loop, and the run was before the gate had the row `audio`
-    (the browser gate, below). Nothing else is published.
+    deploys (its build log); the lead read that version's `triggersDeploy` as well (the package from npm, unpacked and
+    not run): the same two conditions. No deploy had been watched doing it when this was written. On 2026-10-05 the
+    three addresses (the domain, the workers.dev address, GitHub Pages) each served `built-from.txt` as `site cc34611…
+    clean`, and the lead ran `Scripts/web-live.sh --url` against the domain from the Mac: 28 of 28 in 21.4 s (ANGLE
+    Metal; pixel rows largest 1 to 2 of 255). That site was cc34611's, without the sample loop, and the run was before
+    the gate had the row `audio` (the browser gate, below). Nothing else is published.
   - **Tests under node** (`cmake/FcmpWeb.cmake`, 03 §2.12). `fcmp_web_check` is built from `Tools/web/*.cpp` in every
     configuration, and its subcommands and `web/tests/*.mjs` register themselves from `// FCMP_WEB_TEST` lines (labels
     `verify;web;global`, judged by exit code). `web.simd` holds the arithmetic contract on every backend (fma and fms
