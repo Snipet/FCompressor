@@ -34,9 +34,9 @@
 //   a page: s(method, params), ev(expression), consoleLines, targetId, metrics(w, h, 1), go(url, 0), at(x, y),
 //           move(x, y), wheel(x, y, deltaY), key(key, { modifiers, settle }), type(text), menu(), the port tap:
 //           tap(), tapRead() -> { n, last: { v, snap }, reply: { flags, publish, latency, frameLatency, rate,
-//           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies, heard: { n, min, max, lost } },
-//           tapHear(skip, keep), tapLevels(); and gate(pattern) -> { answer, requests, release(how), end() }, one
-//           address answered in the server's place
+//           modeSlot, fade, inPeak, outPeak, blockMaxGr, thrDb, slope }, replies, heard: { n, min, max, lost,
+//           replies, left, right } }, tapHear(skip, keep), tapLevels(); and gate(pattern) -> { answer, requests,
+//           release(how), end() }, one address answered in the server's place
 //   sleep, cleanUp, PID
 // The library stops the Chrome and the server it started on every way out of the process (its end, SIGINT, SIGTERM,
 // SIGHUP, an uncaught error); the run's scratch directory goes after it (launch() below). Nothing is done as this
@@ -505,8 +505,9 @@ export async function user(browser, base, asked = []) {
 
   // ---- what plays ---------------------------------------------------------------------------------------------------
   // The engine's input from now on: a look's tap.heard counts the 1 ms columns of the replies that come after the
-  // next `skip` (the library's tap has the layout), with the quietest and the loudest of them. plays.mjs judges a
-  // source by them. The first `keep` of them are also kept one by one, and u.levels() reads those (dBFS, in order).
+  // next `skip` (the library's tap has the layout), with the quietest and the loudest of them, and how the two input
+  // meters stood in the replies that brought them. The first `keep` of them are also kept one by one, and u.levels()
+  // reads those (dBFS, in order). plays.mjs judges a source by them.
   u.hear = (skip = 0, keep = 0) => p.tapHear(skip, keep);
   u.levels = () => p.tapLevels();
   // The sample loop's file out of the page's reach: the library's gate on the one address the page asks it of, for

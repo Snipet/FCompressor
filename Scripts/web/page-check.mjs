@@ -11,7 +11,10 @@
 //                  command sent, every reply and everything the driver prints go to --driver-log.
 //   the session    New Session with what the browser is asked for (capabilities() below); what it answers is printed.
 //   the self-test  index.html?selftest=1: document.title and #funkgui-log are read until the title is PASS or starts
-//                  with FAIL. The log is printed, the WebGL renderer named, a screenshot saved.
+//                  with FAIL. The log is printed, the WebGL renderer named, a screenshot saved. A page that says PASS
+//                  must also have judged the sample loop (its rows sample.read, sample.fit and page.source), and
+//                  with --autoplay the live audio (page.audio), as the Chrome gate asks of it (unjudged() in
+//                  Scripts/web/live.mjs): a self-test that passes without them did not look.
 //   --frames       the gate's six capture pages (theme 0): Module.fcmpFrame() against <expect>/<view>.theme0.node.fp
 //                  as the gate compares them: every line but `live` and `hooks`, and the hooks line must say dpi 2, a
 //                  fixed clock, drawn and idle.
@@ -34,8 +37,8 @@
 //   --frames             the six capture pages against the node values (needs --expect)
 //   --pages              the live pages (needs --live)
 //   --autoplay           let an AudioContext run with no gesture (chrome: the autoplay policy; firefox: its prefs), so
-//                        the page judges the live audio too. Without it the context stays suspended, which the page
-//                        expects and says. Safari has no such switch.
+//                        the page judges the live audio too, and the self-test fails when it did not. Without it the
+//                        context stays suspended, which the page expects and says. Safari has no such switch.
 //   --timeout <seconds>  the whole run's bound (default 300)
 //   --log <file>         what was printed, the failure included
 //   --driver-log <file>  the exchange with the driver and the driver's own output; always written (default: under
@@ -66,6 +69,16 @@ const usage = 'usage: page-check.mjs <site> --browser chrome|firefox|safari [--l
 // The gate's contract (docs/sprints/web-lead.md): the capture pages and their pins.
 const VIEWS = ['panel', 'chars.sidechain', 'chars.colour', 'modebrowser', 'presetbrowser', 'settings'];
 const PINS = 'theme=0&zoom=100&scale=2&dt=0.0166666675&nohint=1&nolive=1&host=WEB-LIVE';
+// What a self-test that passes must have judged, by the gate's own rule (Scripts/web/live.mjs, SAMPLE_ROWS and
+// unjudged(); web/tests/pagecheck.mjs holds the two lists to each other): the sample loop's three rows, and with
+// `audio` the live audio. Answers '' or what is missing.
+const SAMPLE_ROWS = ['sample.read', 'sample.fit', 'page.source'];
+function unjudged(log, audio) {
+  const passed = (name) => new RegExp(`^PASS +web\\.selftest ${name.replace('.', '\\.')}:`, 'm').test(log);
+  const missing = SAMPLE_ROWS.filter((name) => !passed(name));
+  if (missing.length > 0) return `it did not judge ${missing.join(', ')}: its self-test holds the sample loop`;
+  return audio && !passed('page.audio') ? 'it did not judge page.audio: under --autoplay its context must run' : '';
+}
 
 // ---- arguments ------------------------------------------------------------------------------------------------------
 const opt = { site: '', browser: '', live: '', expect: '', frames: false, pages: false, autoplay: false, headed: false,
@@ -400,7 +413,8 @@ async function go(url, what) {
     await command('POST', `/session/${session}/url`, { url }, Math.max(left(), 2000));
   } catch (e) { throw new Stop(`${what} did not load`, e); }
 }
-// A page of the self-test's protocol: its title once it is a verdict. The log is printed as it stood then.
+// A page of the self-test's protocol: its title once it is a verdict, and its log. The log is printed as it stood
+// then.
 const isVerdict = (title) => title === 'PASS' || title.startsWith('FAIL');
 async function verdictOf(url, what) {
   const t0 = Date.now();
@@ -410,8 +424,9 @@ async function verdictOf(url, what) {
     if (Array.isArray(value)) [title, pageLog] = value.map(String);
     return isVerdict(title);
   }, () => `${what} (the title was '${title}')`);
+  const log = pageLog;
   flushPageLog();
-  return { title, ms: Date.now() - t0 };
+  return { title, log, ms: Date.now() - t0 };
 }
 
 // A frame against its expectation, as the gate compares: every line but `live` and `hooks`, each `name value`.
@@ -526,12 +541,15 @@ async function main() {
 
   // The self-test.
   {
-    const { title, ms } = await verdictOf(`${origin}/index.html?selftest=1`, 'the self-test');
+    const { title, log, ms } = await verdictOf(`${origin}/index.html?selftest=1`, 'the self-test');
     try {
       out(`page-check: renderer: ${await execute(READ_RENDERER, 5000)}`);     // what drew the canvas, for the record
     } catch (e) { out(`page-check: renderer: unknown (${e.message})`); }
     await shoot();
-    judge(title === 'PASS' ? 'PASS' : 'FAIL', 'selftest', rowOf(title), ms);
+    // Safari has no switch for --autoplay: its context stays suspended, and the live audio is not asked of it.
+    const more = title === 'PASS' ? unjudged(log, opt.autoplay && opt.browser !== 'safari') : '';
+    judge(title === 'PASS' && more === '' ? 'PASS' : 'FAIL', 'selftest',
+          more === '' ? rowOf(title) : `the page says PASS, but ${more}`, ms);
   }
 
   // The capture pages: the settled frame against the node value.

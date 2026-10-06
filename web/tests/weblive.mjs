@@ -25,10 +25,11 @@
 //   published.*  the published site's built-from.txt asked over HTTP (a local server playing the remote host, under
 //                a sub path): another commit until a delay passes, a site that never updates, 404, no server; and its
 //                audio/loop.wav: the repository's file passes, and one of another size, one with another byte, a
-//                404 and no server each fail
+//                404, a redirect (to the right bytes too) and no server each fail
 //   contract.*   the capture page's address is the contract's, its pins are names Source/web/ui/WebMain.cpp reads,
 //                the views are the editor's, and web-live.sh computes node values for the views the runner opens; the
-//                sample loop's address, size and SHA-256 in the runner are the file's and the page's
+//                sample loop's address, size and SHA-256 in the runner are the file's and the page's; and the runner
+//                asks each of its two self-test pages for the rows that page must have judged
 //   summary.*    the count, the last line and the exit code of a run
 //   chrome.*     how the library starts Chrome, seen by a stand-in executable that writes down its arguments and
 //                ends: always --mute-audio and --headless=new, a throwaway profile that is gone afterwards, the GPU
@@ -37,8 +38,8 @@
 //                DevTools over the pipe, the keys a typed text sends, the bound of page.until on a page that does
 //                not answer, a tab's gate (one address answered in the server's place: each answer as the protocol
 //                has it, a request that waits, one the page gave up) and the port tap's count of a reply's columns
-//                (run under node on replies made here: the loudest and the quietest, the skip, a gap, and the first
-//                columns kept one by one)
+//                (run under node on replies made here: the loudest and the quietest, the skip, a gap, the first
+//                columns kept one by one, and the replies where one input meter stood over the other)
 //   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch;
 //                --gpu swiftshader; the results directory (a foreign one refused and untouched, in every form; an
 //                earlier run's results replaced; the default beside the site, never the current directory); the
@@ -618,24 +619,32 @@ process.exit(0);
         + `and no server fail`);
   }
   {
-    // The same host with the sample loop under its sub path: the repository's file, and four ways it is not.
+    // The same host with the sample loop under its sub path: the repository's file, and the ways it is not. A
+    // redirect is one of them, to the right bytes too: the file is asked at its own address.
     const loop = readFileSync(join(source, 'web', 'audio', 'loop.wav'));
     const flipped = Buffer.from(loop);
     flipped[flipped.length >> 1] ^= 1;                                // the same size, one bit of one sample
     const files = { '/right/audio/loop.wav': loop, '/flipped/audio/loop.wav': flipped,
                     '/cut/audio/loop.wav': loop.subarray(0, loop.length >> 1),
                     '/longer/audio/loop.wav': Buffer.concat([loop, Buffer.alloc(1)]) };
+    const moved = { '/found/audio/loop.wav': [302, '/right/audio/loop.wav'],
+                    '/moved/audio/loop.wav': [301, '/right/audio/loop.wav'],
+                    '/astray/audio/loop.wav': [307, '/nothing/audio/loop.wav'] };
     const remote = createServer((req, res) => {
       const bytes = files[req.url];
-      res.writeHead(bytes ? 200 : 404, bytes ? { 'Content-Type': 'audio/wav', 'Content-Length': bytes.length } : {});
+      const head = bytes ? { 'Content-Type': 'audio/wav', 'Content-Length': bytes.length } : {};
+      if (moved[req.url]) res.writeHead(moved[req.url][0], { Location: moved[req.url][1] });
+      else res.writeHead(bytes ? 200 : 404, head);
       res.end(bytes || '');
     });
     await new Promise((r) => remote.listen(0, '127.0.0.1', r));
     const host = `http://127.0.0.1:${remote.address().port}`;
     const judged = {};
-    for (const name of ['right', 'flipped', 'cut', 'longer', 'missing']) {
+    for (const name of ['right', 'flipped', 'cut', 'longer', 'missing', 'found', 'moved', 'astray']) {
       judged[name] = await live.judgeAudio({ base: `${host}/${name}`, timeoutS: 20 });
     }
+    const redirected = (name, status, to) => !judged[name].ok && judged[name].detail.endsWith(
+      `/${name}/audio/loop.wav: HTTP ${status} (a redirect to ${to}: the file is not at its own address)`);
     remote.close();
     remote.closeAllConnections();
     judged.closed = await live.judgeAudio({ base: `${host}/right`, timeoutS: 5 });
@@ -647,11 +656,14 @@ process.exit(0);
         && judged.cut.detail.endsWith(`the sample loop has ${live.AUDIO.bytes} bytes`)
         && !judged.longer.ok && judged.longer.detail.includes(`${loop.length + 1} bytes`)
         && !judged.missing.ok && /HTTP 404$/.test(judged.missing.detail)
+        && redirected('found', 302, '/right/audio/loop.wav') && redirected('moved', 301, '/right/audio/loop.wav')
+        && redirected('astray', 307, '/nothing/audio/loop.wav')
         && !judged.closed.ok && /no answer/.test(judged.closed.detail), 'published.audio',
         `the repository's file: ${judged.right.detail.replace(host, '<base>')}. One bit of it changed: `
         + `${judged.flipped.detail.split(': ').slice(1).join(': ').slice(0, 44)}...; half of it: `
         + `${judged.cut.detail.split(': ').slice(1).join(': ').replace(/, SHA-256 [0-9a-f]+/, '')}; one byte more, a `
-        + '404 and no server fail too');
+        + `404 and no server fail too; a redirect to the right bytes: `
+        + `${judged.found.detail.split(': ').slice(1).join(': ')} (302; 301 and 307 the same)`);
   }
 
   // ---- the contract -------------------------------------------------------------------------------------------------
@@ -701,6 +713,18 @@ process.exit(0);
         `the runner's ${live.AUDIO.path}, ${live.AUDIO.bytes} bytes, SHA-256 ${live.AUDIO.sha256.slice(0, 12)}...: `
         + `web/audio/loop.wav has ${loop.length} bytes and ${loopSha.slice(0, 12)}...; web/main.js holds `
         + `${String(pageSha).slice(0, 12)}..., and web/sample.js asks for ${pageUrl}`);
+    // What the runner asks of its two self-test pages besides a PASS: the function unjudged() is held by
+    // page.selftest_rows above, and here that each page is given it, the second with the live audio.
+    const runner = readFileSync(join(source, 'Scripts/web/live.mjs'), 'utf8');
+    const asked = new RegExp("\\bawait runPage\\('(selftest[.\\w]*)', `\\$\\{base\\}/index\\.html\\?selftest=1`, "
+                             + "'[\\w.]+',\\s*\\(log\\) => unjudged\\(log(, \\{ audio: true \\})?\\)\\);", 'g');
+    const asks = [...runner.matchAll(asked)].map((m) => `${m[1]}${m[2] ? ' with page.audio' : ''}`);
+    const selftests = (runner.match(/\bawait runPage\('selftest/g) || []).length;
+    const applied = new RegExp("const more = judged\\.ok \\? also\\(log\\) : '';\\s*done = true;\\s*"
+                               + "tally\\.row\\(judged\\.ok && more === '', name,").test(runner);
+    row(asks.join('; ') === 'selftest; selftest.autoplay with page.audio' && selftests === 2 && applied,
+        'contract.selftest_rows', `live.mjs runs ${selftests} self-test page(s) and asks unjudged() of: `
+        + `${asks.join('; ') || 'none'}; a page's row ${applied ? 'fails' : 'does NOT fail'} on what it answers`);
     row((statSync(script).mode & 0o111) === 0o111, 'contract.script_is_executable',
         `Scripts/web-live.sh has mode ${(statSync(script).mode & 0o777).toString(8)} (the verify-web-live target `
         + 'runs it)');
@@ -870,8 +894,10 @@ process.exit(0);
 
     // The port tap's count of a reply's columns. The tap is a script for the page: the stand-in kept its text, and
     // it runs here under node, on a port and on replies made here (a head of 320 bytes, then 32 bytes a column: the
-    // first float of each is the input's level over one millisecond). The columns kept one by one are read as the
-    // stand-in page gave them: digital silence has no number in JSON and comes back as -Infinity.
+    // first float of each is the input's level over one millisecond; the head's floats 16 and 17 are the two input
+    // meters). The columns kept one by one are read as the stand-in page gave them: digital silence has no number in
+    // JSON and comes back as -Infinity. Of the replies whose columns were counted, the tap also counts those where one
+    // meter stood more than 1 dB over the other.
     await gated.tap();
     await gated.tapHear(2, 3);
     await gated.tapRead();
@@ -884,9 +910,10 @@ process.exit(0);
                     Float32Array, Array, Object, Number, Math, JSON };
     world.globalThis = world;
     runInNewContext(tapJs, world);
-    const tell = (first, levels, count = levels.length) => {
+    const tell = (first, levels, count = levels.length, meters = [0, 0]) => {
       const data = new ArrayBuffer(320 + 32 * levels.length);
       new Uint32Array(data, 0, 80).set([count, first], 6);
+      new Float32Array(data, 0, 80).set(meters, 16);
       const columns = new Float32Array(data, 320, levels.length * 8);
       levels.forEach((db, k) => columns.set([db, 99, 99], k * 8));      // a column's other values are not the input's
       for (const hear of hearers) hear({ data });
@@ -895,31 +922,34 @@ process.exit(0);
     const levels = () => runInNewContext(levelsJs, world);
     const steps = [];
     const step = (what, want) => steps.push({ what, want: JSON.stringify(want), got: heard() });
-    step('before any reply', { n: 0, min: null, max: null, lost: 0 });
-    tell(100, [-10, -20, -3]);
-    step('three columns', { n: 3, min: -20, max: -3, lost: 0 });
+    const unheard = { replies: 0, left: 0, right: 0 };
+    step('before any reply', { n: 0, min: null, max: null, lost: 0, ...unheard });
+    tell(100, [-10, -20, -3], 3, [-4, -4.5]);           // the two meters within 1 dB: neither side is over the other
+    step('three columns', { n: 3, min: -20, max: -3, lost: 0, replies: 1, left: 0, right: 0 });
     const keptUnasked = levels();                       // nothing asked for them yet: none is kept
     runInNewContext(hearJs, world);                     // begins again, after two columns more, and keeps three
-    tell(103, [-1, -2, -30, -6]);
-    step('begun again with a skip of two', { n: 2, min: -30, max: -6, lost: 0 });
+    tell(103, [-1], 1, [0, -20]);
+    step('a reply whose columns are all skipped', { n: 0, min: null, max: null, lost: 0, ...unheard });
+    tell(104, [-2, -30, -6], 3, [-3, -5]);
+    step('begun again with a skip of two', { n: 2, min: -30, max: -6, lost: 0, replies: 1, left: 1, right: 0 });
     const keptTwo = levels();
     tell(107, []);
-    tell(107, [-0.5], 0);                               // the head says no column: what lies after it is not read
-    step('a reply with no column', { n: 2, min: -30, max: -6, lost: 0 });
-    tell(110, [-5]);
-    step('three columns not delivered', { n: 3, min: -30, max: -5, lost: 3 });
-    tell(50, [-40]);
-    step('the count began again', { n: 4, min: -40, max: -5, lost: 4 });
+    tell(107, [-0.5], 0, [-20, 0]);                     // the head says no column: what lies after it is not read
+    step('a reply with no column', { n: 2, min: -30, max: -6, lost: 0, replies: 1, left: 1, right: 0 });
+    tell(110, [-5], 1, [-9, -6]);
+    step('three columns not delivered', { n: 3, min: -30, max: -5, lost: 3, replies: 2, left: 1, right: 1 });
+    tell(50, [-40], 1, [-6, -7]);                       // 1 dB and no more: not over
+    step('the count began again', { n: 4, min: -40, max: -5, lost: 4, replies: 3, left: 1, right: 1 });
     for (const hear of hearers) {
       hear({ data: new ArrayBuffer(64) });
       hear({ data: { fcmp: 'stats' } });
     }
-    step('what is not a reply', { n: 4, min: -40, max: -5, lost: 4 });
+    step('what is not a reply', { n: 4, min: -40, max: -5, lost: 4, replies: 3, left: 1, right: 1 });
     const wrongSteps = steps.filter((x) => x.got !== x.want).map((x) => `${x.what}: ${x.got}, not ${x.want}`);
     const keptAll = levels();                           // the first three after the skip, and not the fourth
     const keptRight = keptUnasked === '[]' && keptTwo === '[-30,-6]' && keptAll === '[-30,-6,-5]'
                       && read.length === 3 && read[0] === -3.5 && read[1] === -Infinity && read[2] === -70;
-    row(hearers.length === 1 && wrongSteps.length === 0 && world.__tap.replies === 6 && keptRight, 'chrome.tap_hears',
+    row(hearers.length === 1 && wrongSteps.length === 0 && world.__tap.replies === 7 && keptRight, 'chrome.tap_hears',
         wrongSteps.join('; ') || `${steps.map((x) => x.what).join('; ')}: the last count is ${heard()}; kept one `
         + `by one: ${keptUnasked} before any was asked for, then ${keptTwo}, then ${keptAll} (three were asked for); `
         + `the library reads a page's [-3.5,null,-70] as ${read.join(', ')}`);

@@ -58,7 +58,9 @@
 // An error of the driver inside a group is that group's FAIL row `driver`, and the group ends there.
 //
 // Output: PASS|FAIL|NOTE rows, then `scenario: N/M passed`. Exit 0 every row passed; 1 a row failed; 2 it could not
-// run (usage, no site, no browser or one that went away, no verdict in time). No dependency; node 22 or later.
+// run (usage, no site, no browser or one that went away, no verdict in time). No dependency; node 22 or later. The
+// two loops are made from the repository this file lies in, not from the site (web/sample.js, web/loop.js and
+// web/audio/loop.wav; scenario/plays.mjs compares what the engine hears with them): it needs a checkout with web/.
 //
 // That the rows can fail is shown by Scripts/web/scenario/mutants.mjs: this scenario on copies of the site with one
 // thing broken in each.

@@ -11,6 +11,8 @@
 // is gone when the fake and that process both are. The site, the live directory and the expectations are scratch
 // files; nothing here needs a build.
 //   pass.*, fail.*, timeout.*    the three verdicts and their exit codes; the log, the versions first, the files
+//   selftest.*                   what a self-test that says PASS must have judged: the sample loop's rows, which are
+//                                the gate's own list, and with --autoplay the live audio (never asked of Safari)
 //   server.*                     the runner's server: the three roots, types, HEAD, no caching, nothing above a root
 //   hang, nosession, crash, ...  what can go wrong on the way: exit 2, one message that says what was sent and what
 //                                came back and names the driver's log; the session deleted and the driver gone
@@ -162,6 +164,9 @@ const made = join(scratch, 'made');                     // not there: the runner
 const R = {
   pass: run('pass', [...chrome, '--live', live, '--expect', expect, '--screenshot', shot, '--log', logFile]),
   fail: run('fail', [...chrome, '--log', join(scratch, 'fail.txt')]),
+  unjudged: run('unjudged', chrome),
+  noaudio: run('noaudio', [...chrome, '--autoplay']),
+  noaudioUnasked: run('noaudio', chrome),
   running: run('running', [...chrome, '--timeout', seconds(6), '--screenshot', lateShot]),
   hang: run('hang', [...chrome, '--timeout', seconds(6)]),
   nosession: run('nosession', chrome),
@@ -294,6 +299,28 @@ for (const key of Object.keys(R)) R[key] = await R[key];
   row(/^page-check: the driver's log: .*driver-\d+\.log$/m.test(r.err) && !/the driver said/.test(r.err)
       && textOf(join(scratch, 'fail.txt')).includes('the driver\'s log:'), 'fail.driverlog',
       'a FAIL names the driver\'s log, on stderr and in --log');
+}
+{
+  // A self-test that says PASS must also have judged the sample loop, and with --autoplay the live audio.
+  const r = R.unjudged;
+  const why = 'the page says PASS, but it did not judge page\\.source: its self-test holds the sample loop';
+  row(r.code === 1 && /^PASS {5}web\.selftest sample\.fit:/m.test(r.out) && !/web\.selftest page\.source/.test(r.out)
+      && new RegExp(`^FAIL {5}selftest: ${why} \\(\\d+ ms\\)$`, 'm').test(r.out)
+      && new RegExp(`^page-check: 0/1 passed\\npage-check: FAIL: selftest: ${why}$`, 'm').test(r.out),
+      'selftest.rows', `a PASS title over a log with no row page.source: ${said(r)}`);
+  const a = R.noaudio, u = R.noaudioUnasked, c = R.capsChrome, s = R.safari;
+  const audio = /^PASS {5}web\.selftest page\.audio:/m;
+  row(a.code === 1 && !audio.test(a.out)
+      && /^FAIL {5}selftest: the page says PASS, but it did not judge page\.audio: under --autoplay/m.test(a.out)
+      && u.code === 0 && !audio.test(u.out) && c.code === 0 && audio.test(c.out) && s.code === 0 && !audio.test(s.out),
+      'selftest.audio', `with --autoplay a log with no row page.audio fails (exit ${a.code}) and one with it passes `
+      + `(exit ${c.code}); without --autoplay it is not asked for (exit ${u.code}), nor of Safari, which has no such `
+      + `switch (exit ${s.code})`);
+  const listIn = (file, form) => (form.exec(readFileSync(file, 'utf8')) || [])[1];
+  const mine = listIn(runner, /^const SAMPLE_ROWS = (\[.*\]);$/m);
+  const gates = listIn(join(source, 'Scripts', 'web', 'live.mjs'), /^export const SAMPLE_ROWS = (\[.*\]);$/m);
+  row(mine !== undefined && mine === gates, 'selftest.gate_rows',
+      `page-check.mjs asks for ${mine}, the gate's runner (live.mjs) for ${gates}`);
 }
 {
   const r = R.running;

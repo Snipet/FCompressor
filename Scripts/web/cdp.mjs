@@ -651,12 +651,15 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
     // quietest (`min`) and the loudest (`max`), and `lost`, how many the engine did not deliver in between (its ring
     // lapped the reader, or its count began again). The first `keep` of them are also kept one by one, in the order
     // they came (tapHear(skip, keep); tapLevels() reads them): for a row that needs how the input rose, not only how
-    // far.
+    // far, or that compares them with a loop millisecond by millisecond.
+    // A column is the larger of the two sides, so it does not tell one side from the other. The frame's two input
+    // meters do: T.heard also counts the replies those columns came in (`replies`), and in how many of them the left
+    // meter stood more than 1 dB over the right (`left`) and the right over the left (`right`).
     P.tap = () => ev(`(() => {
       const port = fcmpPage.node().port;
       const T = globalThis.__tap = { params: [], kinds: {}, reply: null, replies: 0,
                                      heard: { next: null, skip: 0, n: 0, min: null, max: null, lost: 0, keep: 0,
-                                              levels: [] } };
+                                              levels: [], replies: 0, left: 0, right: 0 } };
       const orig = port.postMessage.bind(port);
       port.postMessage = (m, t) => {
         if (m instanceof ArrayBuffer) {
@@ -685,6 +688,7 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
         if (H.next !== null && first !== H.next) H.lost += first > H.next ? first - H.next : 1;
         H.next = (first + count) >>> 0;
         const columns = new Float32Array(b, 320, count * 8);
+        const before = H.n;
         for (let k = 0; k < count; k += 1) {
           if (H.skip > 0) { H.skip -= 1; continue; }
           const db = columns[k * 8];
@@ -693,13 +697,19 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
           if (H.min === null || db < H.min) H.min = db;
           if (H.max === null || db > H.max) H.max = db;
         }
+        if (H.n === before) return;                     // every column of this reply was skipped
+        H.replies += 1;
+        if (f[16] > f[17] + 1) H.left += 1;
+        else if (f[17] > f[16] + 1) H.right += 1;
       });
       return true;
     })()`);
     P.tapRead = async (clear = false) => JSON.parse(await ev(`JSON.stringify((() => {
       const T = globalThis.__tap;
       const r = { n: T.params.length, last: T.params[T.params.length - 1] || null, kinds: T.kinds, reply: T.reply,
-                  replies: T.replies, heard: { n: T.heard.n, min: T.heard.min, max: T.heard.max, lost: T.heard.lost } };
+                  replies: T.replies,
+                  heard: { n: T.heard.n, min: T.heard.min, max: T.heard.max, lost: T.heard.lost,
+                           replies: T.heard.replies, left: T.heard.left, right: T.heard.right } };
       ${clear ? 'T.params.length = 0;' : ''}
       return r;
     })())`));
@@ -707,7 +717,7 @@ export async function chrome({ width = 1280, height = 800, extra = [], profile =
     // first `keep` of them are kept one by one.
     P.tapHear = (skip = 0, keep = 0) => ev(`(() => {
       Object.assign(globalThis.__tap.heard, { skip: ${Number(skip)}, n: 0, min: null, max: null, lost: 0,
-                                              keep: ${Number(keep)}, levels: [] });
+                                              keep: ${Number(keep)}, levels: [], replies: 0, left: 0, right: 0 });
       return true;
     })()`);
     // The columns kept since tapHear(skip, keep), in dBFS, oldest first. A column of digital silence is -Infinity

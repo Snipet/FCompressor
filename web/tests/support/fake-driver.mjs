@@ -22,9 +22,11 @@
 // Scenarios. The driver: pass, noversion (--version fails), notready (/status says so for ever), silent (/status is
 // never answered), nostatus (/status is an unknown command), nosession, noid (New Session answers with no
 // sessionId), notimeouts (Set Timeouts is refused), slowquit (SIGTERM is ignored, by the browser too). The self-test:
-// fail, running (no verdict), hang (a script is never answered), garbage (a reply that is not JSON), scripterror
-// (every script fails), flaky (the first script on a page fails), crash (the connection is dropped and the driver
-// exits a moment later, its browser left in the group), lost (the session is gone), noshot (no screenshot). The
+// fail, unjudged (PASS without the row page.source), noaudio (PASS without the row page.audio, which every other
+// scenario's log has when the session was asked for autoplay), running (no verdict), hang (a script is never
+// answered), garbage (a reply that is not JSON), scripterror (every script fails), flaky (the first script on a page
+// fails), crash (the connection is dropped and the driver exits a moment later, its browser left in the group), lost
+// (the session is gone), noshot (no screenshot). The
 // capture pages: framediff (settings differs in its text line, chars.colour lacks a line, modebrowser has one more),
 // framebad (the hooks line says not idle for panel, dpi 1 for modebrowser, a free clock for presetbrowser and not
 // drawn for settings; chars.sidechain throws, chars.colour returns nothing), frameless (no Module.fcmpFrame),
@@ -112,7 +114,14 @@ function world() {
     const verdict = scenario !== 'running' && p.polls > 3;
     title = !verdict ? 'RUNNING' : scenario === 'fail' ? 'FAIL: editor.pixels' : 'PASS';
     log = 'NOTE     a fake browser\n';
-    if (verdict) log += 'PASS     web.selftest browser: everything\n';
+    // The rows a self-test logs about the sample loop, and with a context that runs (the session was asked for
+    // autoplay: Chrome's switch or Firefox's prefs) the live audio.
+    const judged = ['browser', 'sample.read', 'sample.fit', 'page.source']
+      .filter((name) => !(scenario === 'unjudged' && name === 'page.source'));
+    if (scenario !== 'noaudio' && JSON.stringify(record.capabilities || {}).includes('autoplay')) {
+      judged.push('page.audio');
+    }
+    if (verdict) log += judged.map((name) => `PASS     web.selftest ${name}: everything\n`).join('');
     if (verdict && scenario === 'fail') log += 'FAIL     web.selftest editor.pixels: 7 of 255\n';
   } else if (p.kind === 'live') {
     const mine = p.name === 'b.html';

@@ -1,7 +1,7 @@
 // Scripts/web/scenario/file.mjs: a file dropped on the page (the browser's own drag events, with files made here in
 // the run's scratch directory). What plays is judged by three witnesses together (plays.mjs): the page's source line,
 // fcmpPage.source() and the engine's input. The file is a 1 kHz sine at -6 dBFS: every millisecond of the engine's
-// input is then at -6 dBFS, which no loop holds for 0.4 s (the sample loop's level moves between -50 and -0.05 dBFS,
+// input is then at -6 dBFS, which no loop holds for 0.4 s (the sample loop's level moves between -61 and -0.05 dBFS,
 // the synth loop's between -42 and -3). The file is 30 s long so that it does not come round while the group runs:
 // the page fades a file's two ends, and at that seam the level falls for some milliseconds.
 //
@@ -10,7 +10,7 @@
 //   file.bad      a file that is not audio leaves the source, says so in the notice, and the engine's input stays
 //   file.short    a file under 0.1 s is refused the same way
 //   file.loop     SAMPLE LOOP returns: the page says so, the notice is gone, source() is the sample loop and the
-//                 engine's input is its again (it passes -1.5 dBFS, which the file never does)
+//                 engine's input is its again (0.4 s of it are 0.4 s of the loop, millisecond by millisecond)
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 

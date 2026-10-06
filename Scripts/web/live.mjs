@@ -45,9 +45,11 @@
 // "site <commit> clean" (with --commit; a CDN may serve the previous build for a while), at most --wait seconds and a
 // NOTE per wait; that is the row `published`, and when it fails nothing more is run. Then the row `audio`:
 // <base>/audio/loop.wav, the sample loop the page plays, has the size and the SHA-256 of the repository's file (a host
-// may cut, change or leave out a file that is no page; when the row fails the pages are run all the same). Then 1 to 4
-// against <base>: the capture pages, the asynchronous preview and the self-test twice. The live pages and the scenario
-// are not on the published site and are not run (NOTE lines say so).
+// may cut, change or leave out a file that is no page; when the row fails the pages are run all the same, and the two
+// self-test rows fail with it when the page's own row sample.read reads the same wrong file). The file is asked at
+// that address and no other: a redirect fails the row, wherever it leads. Then 1 to 4 against <base>: the capture
+// pages, the asynchronous preview and the self-test twice. The live pages and the scenario are not on the published
+// site and are not run (NOTE lines say so).
 //
 // Results in <out>: frames/<view>.theme<t>.live.fp, png/<view>.theme<t>.png, png/<page>.png, selftest.log,
 // selftest.autoplay.log, <page>.log, scenario.log, scenario/, summary.txt, and .web-live, which marks the directory as
@@ -474,7 +476,9 @@ async function fetchText(url, ms) {
 export const AUDIO = { path: 'audio/loop.wav', bytes: 2048600,
                        sha256: '0327dec3cbc7de82cf3ed6d9f0533d7035681c20297b0c9cb7aae2bc9a8b7e52' };
 // <base>/audio/loop.wav asked once, for at most `timeoutS` seconds: the published file is the repository's, by its
-// size and its SHA-256. `get(url, ms)` answers { status, bytes (a Buffer) }. Answers { ok, detail }.
+// size and its SHA-256. `get(url, ms)` answers { status, bytes (a Buffer), to (where a redirect leads, else '') }.
+// Answers { ok, detail }. A redirect is not followed, and fails the row even when the right bytes lie at its end: the
+// published site is the built one file for file, and the built site has the loop at this address.
 export async function judgeAudio({ base, timeoutS = 120, get = fetchBytes }) {
   const target = `${base}/${AUDIO.path}`;
   let r = null;
@@ -483,7 +487,10 @@ export async function judgeAudio({ base, timeoutS = 120, get = fetchBytes }) {
   } catch (e) {
     return { ok: false, detail: `${target}: no answer (${(e && e.cause && e.cause.code) || (e && e.name) || e})` };
   }
-  if (r.status !== 200) return { ok: false, detail: `${target}: HTTP ${r.status}` };
+  if (r.status !== 200) {
+    return { ok: false, detail: `${target}: HTTP ${r.status}`
+                                + (r.to ? ` (a redirect to ${r.to}: the file is not at its own address)` : '') };
+  }
   const sha = createHash('sha256').update(r.bytes).digest('hex');
   const ok = r.bytes.length === AUDIO.bytes && sha === AUDIO.sha256;
   return { ok, detail: `${target}: ${r.bytes.length} bytes, SHA-256 ${sha}`
@@ -492,8 +499,8 @@ export async function judgeAudio({ base, timeoutS = 120, get = fetchBytes }) {
                              : `; the sample loop's is ${AUDIO.sha256}`) };
 }
 async function fetchBytes(url, ms) {
-  const response = await fetch(url, { cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(ms) });
-  return { status: response.status,
+  const response = await fetch(url, { cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(ms) });
+  return { status: response.status, to: response.headers.get('location') || '',
            bytes: response.status === 200 ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0) };
 }
 

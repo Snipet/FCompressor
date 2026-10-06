@@ -6,11 +6,12 @@
 //
 // A page as it is shipped:
 //   source.sample   after START the sample loop plays: the page says so, source() is the file as one period at the
-//                   context's rate, and over one whole loop the engine's input peaks where the loop's own largest
-//                   sample is (-0.05 dBFS: the page plays the file at its own level; the synth loop never passes
-//                   -3). The file was asked of the server once, with no word about the cache
-//   source.synth    SYNTH LOOP pressed: the synth loop plays, and the engine's input stays under -2.5 dBFS for one
-//                   whole loop, with the synth loop's own peak in it
+//                   context's rate, and one whole loop of the engine's input is the file's loop millisecond by
+//                   millisecond, on into its second pass: the page plays the file at its own level, with no fade,
+//                   and looped. The two input meters show the file's two sides. The file was asked of the server
+//                   once, with no word about the cache
+//   source.synth    SYNTH LOOP pressed: the synth loop plays, and one whole loop of the engine's input is the synth
+//                   loop millisecond by millisecond, on into its second pass
 //   source.back     SAMPLE LOOP pressed: the sample loop is back, the notice empty, and the file was not asked again
 //   source.quick    SAMPLE LOOP and then SYNTH LOOP pressed under 30 ms apart, while a file at -70 dBFS plays: the
 //                   source between the two never reaches the engine. The engine's input rises from the file's level
@@ -22,7 +23,8 @@
 //                   and SAMPLE LOOP stays enabled
 //   source.again    a press while the file is still missing says LOADING, then that the source is unchanged, and the
 //                   synth loop plays on; a press once the server answers plays the sample loop and clears the
-//                   notice, and that request went round the browser's cache (Cache-Control: no-cache at the server)
+//                   notice, and that request went round the browser's cache (Cache-Control: no-cache at the server).
+//                   The three buttons are right after each
 // The file held back while START loads:
 //   source.kept     a file dropped while the page says LOADING is kept, and plays once the demo runs
 //   source.fault    the engine says it stopped, and on another page the editor aborts: START ends at once on each
@@ -31,12 +33,14 @@
 //   source.ends     the audio context closed from outside while a load runs: the demo stops and says so, the notice
 //                   is cleared, the three buttons are disabled, and the request is given up
 // The file never answered:
-//   source.slow     START says LOADING for the 15 s the page gives the file, then plays the synth loop with the
-//                   notice of source.lost; the page has given the request up by then
-//   source.turn     a later choice wins over a load that still runs. A file dropped during one plays, and the load
-//                   says nothing when it fails. SYNTH LOOP pressed during the next plays, and the load says nothing
-//                   and changes nothing when the whole file has come; a press then plays the sample loop with no
-//                   new request
+//   source.slow     START says LOADING for the 15 s the page gives the file, and no more than 1.5 s longer; then it
+//                   plays the synth loop with the notice of source.lost; the page has given the request up by then
+//   source.turn     a later choice wins over a load that still runs, and the load says nothing and changes nothing
+//                   when it ends: a file dropped during a load, and SYNTH LOOP pressed during one, each with a load
+//                   that then fails and with one whose whole file then comes. The three buttons are right after
+//                   each. Once the file has come, a press plays the sample loop with no new request. (A load that
+//                   came whole leaves the loop loaded, so the fourth of the four is on a page of its own, where the
+//                   file answered 404 at START.)
 // The engine's stop and the editor's abort are what the page hears of each: a message `error` on the worklet's port,
 // and Module.onAbort, the editor's half of the seam. The context is closed by its own close(). A user can do none of
 // the three, so the script does them in the page; nothing else here is made in the page.
@@ -47,7 +51,11 @@ import { NOTICE, QUIET_DB, RISE_MS, SAMPLE, SYNTH, buttons, quiet, rise, sampleL
 export const page = 'own';
 
 const SAMPLE_MS = 15000;                              // web/main.js: how long START waits for the file
-const LATE_MS = 3000;                                 // the page runs this long after that at most
+// The page runs this long after that at most. Of it are the press itself, the synth loop that is then made (50 ms) and
+// the look that sees the page run: 134 to 262 ms in twenty runs under load here, and 244 to 539 ms with the page's CPU
+// slowed four and six times, on the software renderer too (a CI runner is slower than this machine). It was 3000, and
+// a page that waited 17 s passed: at 1500 that page fails by half a second.
+const LATE_MS = 1500;
 const FAULT_MS = 5000;                                // "at once", against the 15 s of a load that is not given up
 const QUIET_MS = 400;                                 // what a load must not say is watched for this long
 const STOPPED = 'THE DEMO STOPPED: THE AUDIO CONTEXT CLOSED. RELOAD THE PAGE TO START IT AGAIN.';
@@ -66,6 +74,10 @@ const QUICK = { least: 7, under: 29.5, ask: 12, step: 6, tries: 6 };
 
 const kindOf = (s) => (s && s.plays ? s.plays.kind : 'none');
 const noButton = (s) => !!s && !s.can.loop && !s.can.synth && !s.can.open;
+// The three buttons while each source plays: OPEN always, and a loop's button unless that loop is what plays.
+const samplePlays = (s) => !!s && !s.can.loop && s.can.synth && s.can.open;
+const synthPlays = (s) => !!s && s.can.loop && !s.can.synth && s.can.open;
+const filePlays = (s) => !!s && s.can.loop && s.can.synth && s.can.open;
 const given = (requests) => requests.length === 1 && requests[0].gone;
 const givenSaid = (requests) => (given(requests) ? 'was given up' : 'was NOT given up');
 
@@ -121,7 +133,7 @@ export async function run({ u, row, scratch, leave }) {
       const first = await sampleLoop(u, { whole: true });
       const s = first.s;
       const asked = u.askedForLoop().slice(before);
-      row(started.ok && first.ok && s.notice === '' && !s.can.loop && s.can.synth && s.can.open && asked.length === 1
+      row(started.ok && first.ok && s.notice === '' && samplePlays(s) && asked.length === 1
           && asked[0].cache === '', 'sample',
           started.ok ? `after START ${first.text}; the notice is "${s.notice}"; ${buttons(s)}; the server was asked `
                        + `for the file ${asked.length} time(s)`
@@ -132,8 +144,7 @@ export async function run({ u, row, scratch, leave }) {
         const turned = await u.until((x) => x.source === SYNTH.line && x.notice === '');
         const whole = await synthLoop(u, { whole: true });
         const y = whole.s;
-        row(kindOf(s) === 'sample' && turned.ok && whole.ok && y.notice === '' && y.can.loop && !y.can.synth
-            && y.can.open, 'synth',
+        row(kindOf(s) === 'sample' && turned.ok && whole.ok && y.notice === '' && synthPlays(y), 'synth',
             `SYNTH LOOP pressed while the ${kindOf(s)} source played: ${whole.text}; the notice is "${y.notice}"; `
             + `${buttons(y)}`);
 
@@ -142,8 +153,8 @@ export async function run({ u, row, scratch, leave }) {
         const back = await sampleLoop(u);
         const z = back.s;
         const inAll = u.askedForLoop().length - before;
-        row(kindOf(y) === 'synth' && returned.ok && back.ok && z.notice === '' && !z.can.loop && z.can.synth
-            && z.can.open && inAll === 1, 'back',
+        row(kindOf(y) === 'synth' && returned.ok && back.ok && z.notice === '' && samplePlays(z) && inAll === 1,
+            'back',
             `SAMPLE LOOP pressed while the ${kindOf(y)} source played: ${back.text}; the notice is "${z.notice}"; `
             + `${buttons(z)}; the server was asked for the file ${inAll} time(s) in all`);
 
@@ -161,8 +172,8 @@ export async function run({ u, row, scratch, leave }) {
       const lost = await synthLoop(u);
       const s = lost.s;
       const asked = wav.requests.length - before;
-      row(started.ok && s.says === 'PLAYING' && lost.ok && s.notice === NOTICE.lost && s.can.loop && !s.can.synth
-          && s.can.open && asked === 1, 'lost',
+      row(started.ok && s.says === 'PLAYING' && lost.ok && s.notice === NOTICE.lost && synthPlays(s) && asked === 1,
+          'lost',
           started.ok ? `the file answered 404 (asked ${asked} time(s)): the page says "${s.says}"; ${lost.text}; the `
                        + `notice is "${s.notice}"; ${buttons(s)}`
                      : `the file answered 404: ${started.why}`);
@@ -185,8 +196,8 @@ export async function run({ u, row, scratch, leave }) {
         const b = back.s;
         const retry = u.askedForLoop().slice(served);
         const round = retry.length === 1 && /\bno-cache\b/.test(retry[0].cache);
-        row(waits.ok && told.ok && stays.ok && a.notice === NOTICE.unchanged && a.can.loop && waitsAgain.ok
-            && cleared.ok && back.ok && b.notice === '' && !b.can.loop && b.can.synth && round, 'again',
+        row(waits.ok && told.ok && stays.ok && a.notice === NOTICE.unchanged && synthPlays(a) && waitsAgain.ok
+            && cleared.ok && back.ok && b.notice === '' && samplePlays(b) && round, 'again',
             `a press with the file still missing: "${waits.s.notice}", then "${told.s.notice}"; ${stays.text}; `
             + `${buttons(a)}. A press once the server answers: "${waitsAgain.s.notice}", then "${b.notice}"; `
             + `${back.text}; ${buttons(b)}; the server was asked ${retry.length} time(s)`
@@ -209,8 +220,7 @@ export async function run({ u, row, scratch, leave }) {
       const named = started.ok ? await u.until((s) => s.source === kept.line && s.notice === '', 8000) : started;
       const plays = await tone(u, kept);
       const s = plays.s;
-      row(waits.ok && keeps.ok && started.ok && named.ok && plays.ok && s.notice === '' && s.can.loop && s.can.synth
-          && s.can.open, 'kept',
+      row(waits.ok && keeps.ok && started.ok && named.ok && plays.ok && s.notice === '' && filePlays(s), 'kept',
           started.ok ? `a file dropped while the page said "${waits.s.says}" (the sample loop's file held back for `
                        + `${heldFor} ms): the page went on loading with the notice "${keeps.s.notice}"; once the demo `
                        + `ran: ${plays.text}; the notice is "${s.notice}"; ${buttons(s)}`
@@ -278,48 +288,89 @@ export async function run({ u, row, scratch, leave }) {
       const synth = await synthLoop(u);
       const s = synth.s;
       const onTime = started.ran >= SAMPLE_MS && started.ran <= SAMPLE_MS + LATE_MS;
-      row(waits.ok && started.ok && onTime && synth.ok && s.notice === NOTICE.lost && s.can.loop && !s.can.synth
-          && s.can.open && given(requests), 'slow',
+      row(waits.ok && started.ok && onTime && synth.ok && s.notice === NOTICE.lost && synthPlays(s)
+          && given(requests), 'slow',
           started.ok ? `the file never answered: the page said "${waits.s.says}" and ran ${started.ran} ms after the `
                        + `press (${SAMPLE_MS} to ${SAMPLE_MS + LATE_MS}); ${synth.text}; the notice is "${s.notice}"; `
                        + `${buttons(s)}; the request for the file ${givenSaid(requests)}`
                      : `the file never answered: ${started.why}`);
 
-      if (started.ok) {
-        // A file chosen while a load runs, and the load then fails.
+      if (!started.ok) return;
+      // A later choice wins over a load that still runs. What a load that ended must not say or change is watched
+      // for QUIET_MS after its answer.
+      const fileOn = (x) => x.source === choice.line && x.notice === '' && kindOf(x) === 'file' && filePlays(x);
+      const synthOn = (x) => x.source === SYNTH.line && x.notice === '' && kindOf(x) === 'synth' && synthPlays(x);
+      // A file chosen while a load runs, and the load then fails.
+      wav.answer = 'hold';
+      await u.pressElement('fcmp-loop');
+      const first = await loading();
+      await u.drop(choice.file);
+      const chosen = await u.until((x) => x.source === choice.line && x.notice === '', 8000);
+      const file = await tone(u, choice);
+      await wav.release('fail');
+      const fileStays = await holds(u, fileOn, QUIET_MS);
+      // The other loop chosen while a load runs, and the load then fails.
+      await u.pressElement('fcmp-loop');
+      const second = await loading();
+      await u.pressElement('fcmp-synth');
+      const other = await u.until((x) => x.source === SYNTH.line && x.notice === '');
+      await wav.release('fail');
+      const synthStays = await holds(u, synthOn, QUIET_MS);
+      // The other loop chosen while a load runs, and the whole file then comes. The file plays first: SYNTH LOOP
+      // cannot be pressed while the synth loop plays.
+      await u.drop(choice.file);
+      const fileAgain = await u.until((x) => x.source === choice.line && x.notice === '', 8000);
+      await u.pressElement('fcmp-loop');
+      const third = await loading();
+      await u.pressElement('fcmp-synth');
+      const otherAgain = await u.until((x) => x.source === SYNTH.line && x.notice === '');
+      const before = otherAgain.s.loaded;
+      await wav.release('pass');
+      const came = await u.until((x) => x.loaded > before, 8000);
+      const stays = await synthLoop(u);
+      const y = stays.s;
+      // The loop is there: it plays at a press, and the page asks for nothing.
+      const asked = wav.requests.length;
+      await u.pressElement('fcmp-loop');
+      const atOnce = await u.until((x) => x.source === SAMPLE.line && x.notice === '');
+      const sample = await sampleLoop(u);
+      const z = sample.s;
+      const more = wav.requests.length - asked;
+      await leave();
+
+      // A file chosen while a load runs, and the whole file of the loop then comes: on a page where it is not loaded.
+      await open('missing');
+      const again = await u.start();
+      let fourth = { ok: false, text: again.ok ? '' : again.why };
+      if (again.ok) {
         wav.answer = 'hold';
         await u.pressElement('fcmp-loop');
-        const first = await loading();
+        const waits = await loading();
         await u.drop(choice.file);
-        const chosen = await u.until((x) => x.source === choice.line && x.notice === '', 8000);
-        const file = await tone(u, choice);
-        await wav.release('fail');
-        const quiet = await holds(u, (x) => x.source === choice.line && x.notice === '' && kindOf(x) === 'file',
-                                  QUIET_MS);
-        // The other loop chosen while a load runs, and the whole file then comes.
-        await u.pressElement('fcmp-loop');
-        const second = await loading();
-        await u.pressElement('fcmp-synth');
-        const other = await u.until((x) => x.source === SYNTH.line && x.notice === '');
-        const loaded = other.s.loaded;
+        const named = await u.until((x) => x.source === choice.line && x.notice === '', 8000);
+        const plays = await tone(u, choice);
+        const loaded = plays.s.loaded;
         await wav.release('pass');
-        const came = await u.until((x) => x.loaded > loaded, 8000);
-        const stays = await synthLoop(u);
-        const y = stays.s;
-        // The loop is there: it plays at a press, and the page asks for nothing.
-        const asked = wav.requests.length;
-        await u.pressElement('fcmp-loop');
-        const atOnce = await u.until((x) => x.source === SAMPLE.line && x.notice === '');
-        const sample = await sampleLoop(u);
-        const more = wav.requests.length - asked;
-        row(first.ok && chosen.ok && file.ok && quiet.ok && second.ok && other.ok && came.ok && stays.ok
-            && y.notice === '' && atOnce.ok && sample.ok && more === 0, 'turn',
-            `a file dropped while the notice said "${first.s.notice}": ${file.text}; the load then failed, and `
-            + `${QUIET_MS} ms later the page says "${quiet.s.source}" with the notice "${quiet.s.notice}". SYNTH LOOP `
-            + `pressed while the notice said "${second.s.notice}", and the whole file came `
-            + `${came.ok ? `${came.ms} ms after it was let through` : 'NOT'}: ${stays.text}; the notice is `
-            + `"${y.notice}". SAMPLE LOOP pressed then: ${sample.text}, with ${more} new request(s)`);
+        const whole = await u.until((x) => x.loaded > loaded, 8000);
+        const on = await holds(u, fileOn, QUIET_MS);
+        fourth = { ok: waits.ok && named.ok && plays.ok && whole.ok && on.ok,
+                   text: `a file dropped while the notice said "${waits.s.notice}": ${plays.text}; the whole file of `
+                         + `the loop came ${whole.ok ? `${whole.ms} ms after it was let through` : 'NOT'}, and `
+                         + `${QUIET_MS} ms later the page says "${on.s.source}" with the notice "${on.s.notice}", `
+                         + `source() is ${kindOf(on.s)}; ${buttons(on.s)}` };
       }
+      row(first.ok && chosen.ok && file.ok && fileStays.ok && second.ok && other.ok && synthStays.ok && fileAgain.ok
+          && third.ok && otherAgain.ok && came.ok && stays.ok && y.notice === '' && synthPlays(y) && atOnce.ok
+          && sample.ok && samplePlays(z) && more === 0 && fourth.ok, 'turn',
+          `a file dropped while the notice said "${first.s.notice}": ${file.text}; the load then failed, and `
+          + `${QUIET_MS} ms later the page says "${fileStays.s.source}" with the notice "${fileStays.s.notice}"; `
+          + `${buttons(fileStays.s)}. SYNTH LOOP pressed while the notice said "${second.s.notice}", and the load then `
+          + `failed: ${QUIET_MS} ms later the page says "${synthStays.s.source}" with the notice `
+          + `"${synthStays.s.notice}", source() is ${kindOf(synthStays.s)}; ${buttons(synthStays.s)}. SYNTH LOOP `
+          + `pressed while the notice said "${third.s.notice}" (the file played again), and the whole file of the loop `
+          + `came ${came.ok ? `${came.ms} ms after it was let through` : 'NOT'}: ${stays.text}; the notice is `
+          + `"${y.notice}"; ${buttons(y)}. SAMPLE LOOP pressed then: ${sample.text}, with ${more} new request(s); `
+          + `${buttons(z)}. On a page where the file answered 404 at START: ${fourth.text}`);
     }
   } finally {
     await wav.end();
