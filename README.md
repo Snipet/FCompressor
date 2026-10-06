@@ -12,7 +12,7 @@ steps. Everything the display draws (the transfer curve, the operating point, th
 computed by the same code the audio runs, and the test suite checks that it matches.
 
 The same DSP and the same editor also run in a browser, as a demo:
-[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/) (see [Web demo](#web-demo)).
+[fcompressor.seanfunk.xyz](https://fcompressor.seanfunk.xyz) (see [Web demo](#web-demo)).
 
 ![FCompressor running the Opto 2A Mode](docs/images/fcompressor.png)
 

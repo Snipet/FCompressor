@@ -70,7 +70,7 @@ Ownership in a shared branch: note `git rev-parse HEAD` when you start; when you
 - **`#fcmp-synth`**, while the demo runs: the synth loop plays and the notice is cleared.
 - **A file**: as today (decoded by the browser, 5 ms fades at both ends).
 - **What the review of W-P added** (commit baa06c2; frozen with the rest): a retry of the sample loop asks the server
-  and not the cache (`cache: 'reload'`; START's own fetch is the plain one); a file chosen or dropped while START is
+  and not the cache (`cache: 'reload'`; START's own fetch is the plain one); a file dropped while START is
   still loading is kept and plays once the demo runs (it wins over the sample loop); a failure of the engine or the
   editor while START loads ends the load at once (not after `SAMPLE_MS`); when the demo ends (failed or stopped) the
   notice is cleared and a load that runs is given up; a context that is closed from outside stops the demo; two
@@ -259,7 +259,7 @@ DELIVERABLES
         1. Every row of the scripted user that named the old words or relied on the old default is restated so that
            it proves what it proved: a row that told a dropped file from "the built-in loop" by level (the synth
            loop never passes -3 dBFS; the sample loop's largest sample is -0.04 dBFS in the file and -0.05 dBFS
-           fitted to 48 kHz: W-A measured that no sample reaches full scale at any rate) must tell them apart some
+           fitted to 48 kHz: W-A measured that no sample reaches full scale from 24 kHz up) must tell them apart some
            other way that cannot pass by accident (fcmpPage.source() and what the engine's input meter shows
            together, for example).
         2. The new rows of "The page": source.sample (after START: the page says SAMPLE LOOP, fcmpPage.source() is

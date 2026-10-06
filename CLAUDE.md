@@ -33,7 +33,8 @@ ARCHITECTURE; SPRINTS beats 03 §4.9 on scheduling and ownership only.
 - `FROZEN` files: never edit. Propose changes as an interface-change request in the handoff. A card may add bodies to a
   frozen header it OWNS, never rename, remove or change a frozen declaration (SPRINTS §0.3).
 - Lead-only: `CMakeLists.txt`, `cmake/**`, `CMakePresets.json`, `Scripts/**`, `.github/**`, `.gitignore`, `CLAUDE.md`,
-  `README.md`, `LICENSE`, `docs/**`, `Resources/**`, `web/**` (the demo's page, its test-only pages and node tests),
+  `README.md`, `LICENSE`, `docs/**`, `Resources/**`, `web/**` (the demo's page, its test-only pages and node tests, and
+  its sample loop, `web/audio/loop.wav`, which nobody edits, converts or re-encodes: tests hold its SHA-256),
   `tests/golden/**`, `tests/fixtures/**` (write-once) — except where a card's OWNS names them. Exception:
   `docs/modes/<key>.md` belongs to that Mode's card.
 - `Source/fcdsp/modes/Modes.def`: lead or the sprint's descriptor-wave card only. A slot is permanent once its line

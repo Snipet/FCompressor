@@ -17,7 +17,9 @@
 //                  place of the source. A file that is too large, too short, too long or not audio leaves the source
 //                  as it was and says so. A file dropped while START is loading is kept, and plays once the demo runs.
 //   a new source   takes the place of the old one: the old one fades out in 30 ms, then the new one fades in. A
-//                  second choice inside those 30 ms replaces the first, which never plays.
+//                  second choice inside those 30 ms replaces the first, which never plays. One case differs: the
+//                  first use of the synth loop makes it inside the press (some 50 ms), so a source chosen just
+//                  before it plays for that time, faded in and out.
 //   RESUME         whenever the context is not running (no gesture yet, or the browser paused it).
 //   a failure      of the engine or of the editor, whenever it comes, ends the demo and says why: THE DEMO COULD NOT
 //                  START before it runs, THE DEMO STOPPED afterwards. The editor fails in three ways and only abort()
