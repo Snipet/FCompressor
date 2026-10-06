@@ -9,32 +9,42 @@
 // where a row is about their arguments. No browser is started. The rows:
 //   server.*     the gate's static server over scratch directories: the wasm type, no caching, HEAD, 404, 405, the
 //                three roots (/ the site, /live/, /expect/), nothing above a root in any spelling (plain, encoded,
-//                behind a prefix, a link that points out), and a server that is gone once killed
+//                behind a prefix, a link that points out), what it was asked (with a request's word about the cache),
+//                and a server that is gone once killed
 //   compare.*    the browser's frame against the node value: equal, a differing line, a missing and an extra line,
 //                `live` and `hooks` left out, no expectation (a FAIL, never a pass), and each way a hooks line is wrong
 //   pixels.*     the pixel rule by renderer class, on both sides of each bound
 //   page.*       a page's end by the self-test's protocol: no verdict within the timeout, a FAIL title, and a PASS
 //                title that the log or an uncaught error contradicts; a log read on after an early FAIL to its last
-//                line, until it is quiet, until the timeout, or until the page stops answering
+//                line, until it is quiet, until the timeout, or until the page stops answering; and what a self-test
+//                that passes must have judged (the sample loop's three rows, and the live audio with a running context)
 //   scenario.*   the scenario's end by its contract: the last line, the exit code, a run that never ended; its
 //                command line (four times --timeout, a forced renderer as --chrome-flag); a stand-in scenario with a
 //                Chrome and a scratch directory stopped at the bound and by SIGINT, SIGTERM and SIGHUP to the gate:
 //                its own cleanup runs, nothing of it is left
 //   published.*  the published site's built-from.txt asked over HTTP (a local server playing the remote host, under
-//                a sub path): another commit until a delay passes, a site that never updates, 404, no server
+//                a sub path): another commit until a delay passes, a site that never updates, 404, no server; and its
+//                audio/loop.wav: the repository's file passes, and one of another size, one with another byte, a
+//                404, a redirect (to the right bytes too) and no server each fail
 //   contract.*   the capture page's address is the contract's, its pins are names Source/web/ui/WebMain.cpp reads,
-//                the views are the editor's, and web-live.sh computes node values for the views the runner opens
+//                the views are the editor's, and web-live.sh computes node values for the views the runner opens; the
+//                sample loop's address, size and SHA-256 in the runner are the file's and the page's; and the runner
+//                asks each of its two self-test pages for the rows that page must have judged
 //   summary.*    the count, the last line and the exit code of a run
 //   chrome.*     how the library starts Chrome, seen by a stand-in executable that writes down its arguments and
 //                ends: always --mute-audio and --headless=new, a throwaway profile that is gone afterwards, the GPU
 //                flag by platform, the autoplay, sandbox and null-sink switches only where asked, no flag from any
 //                other variable of the environment, a missing browser said; and, through a stand-in that speaks
-//                DevTools over the pipe, the keys a typed text sends and the bound of page.until on a page that does
-//                not answer
+//                DevTools over the pipe, the keys a typed text sends, the bound of page.until on a page that does
+//                not answer, a tab's gate (one address answered in the server's place: each answer as the protocol
+//                has it, a request that waits, one the page gave up) and the port tap's count of a reply's columns
+//                (run under node on replies made here: the loudest and the quietest, the skip, a gap, the first
+//                columns kept one by one, and the replies where one input meter stood over the other)
 //   gate.*       web-live.sh with that stand-in: no verdict, exit 2, its first Chrome without the autoplay switch;
 //                --gpu swiftshader; the results directory (a foreign one refused and untouched, in every form; an
 //                earlier run's results replaced; the default beside the site, never the current directory); the
-//                --url form with the stand-in server
+//                --url form with the stand-in server: `published`, then `audio`, and the pages after either verdict
+//                of `audio`
 //   script.*     what web-live.sh runs, seen by a stand-in for node: the results directory prepared first, the
 //                twelve ui.dump calls of the contract with scratch preference paths, the expectation tool, the
 //                runner's arguments for a build tree, an artifact, the published site and --serve, what a failing
@@ -51,12 +61,14 @@
 // The test sets FCMP_WEB_LIVE_NO_SANDBOX itself for every run it makes (CI may have it set for the gate). Output:
 // PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync,
          statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const TEST = 'web.live.runner';
 // The gate's switch reaches every Chrome the library starts (cdp.mjs reads it), and CI may have it set for the gate:
@@ -106,6 +118,7 @@ put(join(site, 'main.js'), 'export {};\n');
 put(join(site, 'fcmp-ui.wasm'), WASM);
 put(join(site, 'built-from.txt'), `site ${'0'.repeat(40)} clean 2026-10-02T00:00:00Z\n`);
 put(join(site, 'licences', 'GPL-3.0.txt'), 'licence\n');
+put(join(site, 'audio', 'loop.wav'), 'RIFF....WAVE');
 put(join(liveDir, 'page.html'), '<!doctype html><title>RUNNING</title>');
 put(join(liveDir, 'golden', 'clean.dsp.print.txt'), 'rows\n');
 live.VIEWS.forEach((view, i) => put(join(expectDir, `${view}.theme0.node.fp`), FP(`${i}`.repeat(16), 'f'.repeat(16))));
@@ -113,9 +126,9 @@ put(join(expectDir, 'rows.json'), '{}\n');
 symlinkSync(join(scratch, 'secret.txt'), join(site, 'link.txt'));          // a link that points out of the root
 
 // One request with the path sent as it is written (no client-side normalising).
-const ask = (base, path, method = 'GET') => new Promise((answered) => {
+const ask = (base, path, method = 'GET', headers = {}) => new Promise((answered) => {
   const url = new URL(base);
-  const req = request({ host: url.hostname, port: url.port, path, method, agent: false }, (res) => {
+  const req = request({ host: url.hostname, port: url.port, path, method, headers, agent: false }, (res) => {
     const chunks = [];
     res.on('data', (c) => chunks.push(c));
     res.on('end', () => answered({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -137,6 +150,11 @@ const ended = async (pid, ms = 3000) => {
 // message ended by a NUL), and draws nothing: every command is answered with {}, a version, a target and a session
 // with theirs. Runtime.evaluate is answered `true`, or never ($FAKE_EVAL=never: a page whose main thread never rests).
 // Input.dispatchKeyEvent's parameters go to $FAKE_KEYS, one JSON a line. Browser.close, or its driver gone, ends it.
+// For the gate: every Fetch command goes to $FAKE_FETCH, one JSON a line; an evaluation of `request:<id>` is a page
+// that asks for a file, which this browser stops (the event Fetch.requestPaused, to that tab's session); and an
+// answer for a request whose id begins with `gone` is refused, as Chrome refuses one for a request the page gave up.
+// Every expression evaluated goes to $FAKE_EVALS, one JSON a line. A page that is asked for the columns its tap kept
+// answers $FAKE_LEVELS, a JSON text.
 const devtools = join(scratch, 'devtools chrome.mjs');
 writeFileSync(devtools, `import { appendFileSync } from 'node:fs';
 import { Socket } from 'node:net';
@@ -148,7 +166,25 @@ const handle = (m) => {
   if (m.method === 'Target.createTarget') return answer(m.id, { targetId: 'T' + m.id });
   if (m.method === 'Target.attachToTarget') return answer(m.id, { sessionId: 'S' + m.id });
   if (m.method === 'Runtime.evaluate') {
+    if (process.env.FAKE_EVALS) appendFileSync(process.env.FAKE_EVALS, JSON.stringify(m.params.expression) + '\\n');
+    if (process.env.FAKE_LEVELS && /heard\\.levels\\)$/.test(m.params.expression)) {
+      return answer(m.id, { result: { type: 'string', value: process.env.FAKE_LEVELS } });
+    }
+    const asks = /^request:(.+)$/.exec(m.params.expression);
+    if (asks) {
+      output.write(JSON.stringify({ method: 'Fetch.requestPaused', sessionId: m.sessionId, params: {
+        requestId: asks[1], request: { url: 'http://site.invalid/audio/loop.wav', headers: { Accept: '*/*' } } } })
+        + '\\0');
+    }
     return process.env.FAKE_EVAL === 'never' ? undefined : answer(m.id, { result: { type: 'boolean', value: true } });
+  }
+  if (m.method.startsWith('Fetch.')) {
+    if (process.env.FAKE_FETCH) {
+      appendFileSync(process.env.FAKE_FETCH, JSON.stringify({ method: m.method, ...m.params }) + '\\n');
+    }
+    if (String(m.params.requestId).startsWith('gone')) {
+      return output.write(JSON.stringify({ id: m.id, error: { message: 'Invalid InterceptionId.' } }) + '\\0');
+    }
   }
   if (m.method === 'Input.dispatchKeyEvent' && process.env.FAKE_KEYS) {
     appendFileSync(process.env.FAKE_KEYS, JSON.stringify(m.params) + '\\n');
@@ -184,13 +220,27 @@ try {
     const types = [];
     for (const [path, type] of [['/index.html', 'text/html'], ['/main.js', 'text/javascript'],
                                 ['/licences/GPL-3.0.txt', 'text/plain'], ['/expect/rows.json', 'application/json'],
-                                ['/expect/panel.theme0.node.fp', 'text/plain']]) {
+                                ['/expect/panel.theme0.node.fp', 'text/plain'], ['/audio/loop.wav', 'audio/wav']]) {
       const r = await get(path);
       if (r.status !== 200 || !String(r.headers['content-type']).startsWith(type)) {
         types.push(`${path}: ${r.status} ${r.headers['content-type']}`);
       }
     }
-    row(types.length === 0, 'server.types', types.join('; ') || 'html, js, txt, json and fp have their types');
+    row(types.length === 0, 'server.types', types.join('; ') || 'html, js, txt, json, fp and wav have their types');
+
+    // What it was asked, in order, with a request's own word about the cache: how a row tells a fetch that went
+    // round the browser's cache from a plain one.
+    const from = server.asked.length;
+    await ask(server.base, '/audio/loop.wav');
+    await ask(server.base, '/audio/loop.wav?again', 'GET', { 'Cache-Control': 'no-cache', Pragma: 'no-cache' });
+    await ask(server.base, '/nope.wav', 'HEAD');
+    const asked = server.asked.slice(from);
+    row(from >= 7 && server.asked[0].url === '/fcmp-ui.wasm' && JSON.stringify(asked) === JSON.stringify([
+      { method: 'GET', url: '/audio/loop.wav', cache: '' },
+      { method: 'GET', url: '/audio/loop.wav?again', cache: 'no-cache' },
+      { method: 'HEAD', url: '/nope.wav', cache: '' }]), 'server.asked',
+        `every request is kept, the missed ones too: ${asked.map((r) => `${r.method} ${r.url} `
+          + `(Cache-Control "${r.cache}")`).join(', ')}`);
 
     const answers = [await get('/'), wasm, await get('/nope.js'), await get('/../secret.txt'),
                      await get('/', 'POST')];
@@ -393,6 +443,25 @@ try {
         'page.log_to_its_end', `after a FAIL title the log is read on: to its last line (${toEnd.ms} ms, `
         + `${toEnd.log.split('\n').length - 1} lines), until it is quiet (${quiet.ms} ms), until the timeout `
         + `(${busy.ms} ms), until the page stops answering; a log that has its last line is not read again`);
+
+    // What a self-test that passes must have judged: the sample loop's three rows, and page.audio where its context
+    // ran. A row that failed, or that is only named in another row's detail, is not a row that was judged.
+    const rowsOf = (names, word = 'PASS') => names.map((name) => `${word}     web.selftest ${name}: detail\n`).join('');
+    const SUSPENDED = rowsOf(['browser', 'engine.silence', ...live.SAMPLE_ROWS, 'page.start', 'editor.link']);
+    const without = (name) => SUSPENDED.replace(rowsOf([name]), '');
+    const gaps = live.SAMPLE_ROWS.map((name) => live.unjudged(without(name)));
+    const failedRow = live.unjudged(without('sample.fit') + rowsOf(['sample.fit'], 'FAIL'));
+    const named = live.unjudged(without('page.source') + 'NOTE     the row page.source: was not run\n');
+    const noAudio = live.unjudged(SUSPENDED, { audio: true });
+    row(live.SAMPLE_ROWS.join() === 'sample.read,sample.fit,page.source' && live.unjudged(SUSPENDED) === ''
+        && live.unjudged(SUSPENDED + rowsOf(['page.audio']), { audio: true }) === ''
+        && gaps.every((said, i) => said.startsWith(`the page did not judge ${live.SAMPLE_ROWS[i]}:`))
+        && /did not judge sample\.fit:/.test(failedRow) && /did not judge page\.source:/.test(named)
+        && /did not judge page\.audio: under the autoplay flag/.test(noAudio)
+        && /did not judge sample\.read, sample\.fit, page\.source:/.test(live.unjudged('', { audio: true })),
+        'page.selftest_rows', `a log with ${live.SAMPLE_ROWS.join(', ')} passes, and with page.audio where the `
+        + `context ran; without one of them: "${gaps[0]}"; a row that failed or is only named does not count; `
+        + `without page.audio under the autoplay flag: "${noAudio}"`);
   }
 
   // ---- the scenario's end -------------------------------------------------------------------------------------------
@@ -549,6 +618,53 @@ process.exit(0);
         + `updated: ${never.detail.replace(base, '<base>')} (${never.ms} ms, ${never.notes.length} NOTE(s)); 404 `
         + `and no server fail`);
   }
+  {
+    // The same host with the sample loop under its sub path: the repository's file, and the ways it is not. A
+    // redirect is one of them, to the right bytes too: the file is asked at its own address.
+    const loop = readFileSync(join(source, 'web', 'audio', 'loop.wav'));
+    const flipped = Buffer.from(loop);
+    flipped[flipped.length >> 1] ^= 1;                                // the same size, one bit of one sample
+    const files = { '/right/audio/loop.wav': loop, '/flipped/audio/loop.wav': flipped,
+                    '/cut/audio/loop.wav': loop.subarray(0, loop.length >> 1),
+                    '/longer/audio/loop.wav': Buffer.concat([loop, Buffer.alloc(1)]) };
+    const moved = { '/found/audio/loop.wav': [302, '/right/audio/loop.wav'],
+                    '/moved/audio/loop.wav': [301, '/right/audio/loop.wav'],
+                    '/astray/audio/loop.wav': [307, '/nothing/audio/loop.wav'] };
+    const remote = createServer((req, res) => {
+      const bytes = files[req.url];
+      const head = bytes ? { 'Content-Type': 'audio/wav', 'Content-Length': bytes.length } : {};
+      if (moved[req.url]) res.writeHead(moved[req.url][0], { Location: moved[req.url][1] });
+      else res.writeHead(bytes ? 200 : 404, head);
+      res.end(bytes || '');
+    });
+    await new Promise((r) => remote.listen(0, '127.0.0.1', r));
+    const host = `http://127.0.0.1:${remote.address().port}`;
+    const judged = {};
+    for (const name of ['right', 'flipped', 'cut', 'longer', 'missing', 'found', 'moved', 'astray']) {
+      judged[name] = await live.judgeAudio({ base: `${host}/${name}`, timeoutS: 20 });
+    }
+    const redirected = (name, status, to) => !judged[name].ok && judged[name].detail.endsWith(
+      `/${name}/audio/loop.wav: HTTP ${status} (a redirect to ${to}: the file is not at its own address)`);
+    remote.close();
+    remote.closeAllConnections();
+    judged.closed = await live.judgeAudio({ base: `${host}/right`, timeoutS: 5 });
+    const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+    row(judged.right.ok && judged.right.detail.includes(`${host}/right/audio/loop.wav: ${loop.length} bytes`)
+        && !judged.flipped.ok && judged.flipped.detail.includes(`${loop.length} bytes, SHA-256 ${sha(flipped)}; the `
+                                                                + `sample loop's is ${live.AUDIO.sha256}`)
+        && !judged.cut.ok && judged.cut.detail.includes(`${loop.length >> 1} bytes`)
+        && judged.cut.detail.endsWith(`the sample loop has ${live.AUDIO.bytes} bytes`)
+        && !judged.longer.ok && judged.longer.detail.includes(`${loop.length + 1} bytes`)
+        && !judged.missing.ok && /HTTP 404$/.test(judged.missing.detail)
+        && redirected('found', 302, '/right/audio/loop.wav') && redirected('moved', 301, '/right/audio/loop.wav')
+        && redirected('astray', 307, '/nothing/audio/loop.wav')
+        && !judged.closed.ok && /no answer/.test(judged.closed.detail), 'published.audio',
+        `the repository's file: ${judged.right.detail.replace(host, '<base>')}. One bit of it changed: `
+        + `${judged.flipped.detail.split(': ').slice(1).join(': ').slice(0, 44)}...; half of it: `
+        + `${judged.cut.detail.split(': ').slice(1).join(': ').replace(/, SHA-256 [0-9a-f]+/, '')}; one byte more, a `
+        + `404 and no server fail too; a redirect to the right bytes: `
+        + `${judged.found.detail.split(': ').slice(1).join(': ')} (302; 301 and 307 the same)`);
+  }
 
   // ---- the contract -------------------------------------------------------------------------------------------------
   {
@@ -585,6 +701,30 @@ process.exit(0);
         && guiLive.includes(`\nDT=${live.DT}\n`) && sh.includes(`&dt=${live.DT}&`), 'contract.script_and_runner_agree',
         `web-live.sh: views '${shValue('VIEWS')}', themes '${shValue('THEMES')}', host ${shValue('HOST')}, node `
         + `${shValue('NODE_MAJOR')}; the dt is gui-live.sh's ${live.DT}`);
+    // The sample loop as the runner knows it: the repository's file, and what the page asks for and holds it to.
+    const loop = readFileSync(join(source, 'web', 'audio', 'loop.wav'));
+    const loopSha = createHash('sha256').update(loop).digest('hex');
+    const pageSha = (/^export const SAMPLE_SHA256 = '([0-9a-f]{64})';/m
+      .exec(readFileSync(join(source, 'web', 'main.js'), 'utf8')) || [])[1];
+    const pageUrl = (/^export const SAMPLE_URL = '([^']+)';/m
+      .exec(readFileSync(join(source, 'web', 'sample.js'), 'utf8')) || [])[1];
+    row(live.AUDIO.bytes === loop.length && live.AUDIO.sha256 === loopSha && live.AUDIO.sha256 === pageSha
+        && live.AUDIO.path === pageUrl, 'contract.audio',
+        `the runner's ${live.AUDIO.path}, ${live.AUDIO.bytes} bytes, SHA-256 ${live.AUDIO.sha256.slice(0, 12)}...: `
+        + `web/audio/loop.wav has ${loop.length} bytes and ${loopSha.slice(0, 12)}...; web/main.js holds `
+        + `${String(pageSha).slice(0, 12)}..., and web/sample.js asks for ${pageUrl}`);
+    // What the runner asks of its two self-test pages besides a PASS: the function unjudged() is held by
+    // page.selftest_rows above, and here that each page is given it, the second with the live audio.
+    const runner = readFileSync(join(source, 'Scripts/web/live.mjs'), 'utf8');
+    const asked = new RegExp("\\bawait runPage\\('(selftest[.\\w]*)', `\\$\\{base\\}/index\\.html\\?selftest=1`, "
+                             + "'[\\w.]+',\\s*\\(log\\) => unjudged\\(log(, \\{ audio: true \\})?\\)\\);", 'g');
+    const asks = [...runner.matchAll(asked)].map((m) => `${m[1]}${m[2] ? ' with page.audio' : ''}`);
+    const selftests = (runner.match(/\bawait runPage\('selftest/g) || []).length;
+    const applied = new RegExp("const more = judged\\.ok \\? also\\(log\\) : '';\\s*done = true;\\s*"
+                               + "tally\\.row\\(judged\\.ok && more === '', name,").test(runner);
+    row(asks.join('; ') === 'selftest; selftest.autoplay with page.audio' && selftests === 2 && applied,
+        'contract.selftest_rows', `live.mjs runs ${selftests} self-test page(s) and asks unjudged() of: `
+        + `${asks.join('; ') || 'none'}; a page's row ${applied ? 'fails' : 'does NOT fail'} on what it answers`);
     row((statSync(script).mode & 0o111) === 0o111, 'contract.script_is_executable',
         `Scripts/web-live.sh has mode ${(statSync(script).mode & 0o777).toString(8)} (the verify-web-live target `
         + 'runs it)');
@@ -686,15 +826,18 @@ process.exit(0);
     // Through the DevTools stand-in: what a typed text sends. A character's key code is the key's on a US keyboard
     // (or 0), never its ASCII code, which is another key's (46 '.' is Delete, 39 "'" ArrowRight, 45 '-' Insert).
     const keysFile = join(scratch, 'keys.jsonl');
-    process.env.FAKE_KEYS = keysFile;
+    const fetchFile = join(scratch, 'fetch.jsonl');
+    const evalsFile = join(scratch, 'evals.jsonl');
+    Object.assign(process.env, { FAKE_KEYS: keysFile, FAKE_FETCH: fetchFile, FAKE_EVALS: evalsFile,
+                                 FAKE_LEVELS: '[-3.5,null,-70]' });
     const typing = await cdp.chrome({ chrome: devtoolsChrome, gpu: 'swiftshader', answerMs: 5000 });
+    for (const name of ['FAKE_KEYS', 'FAKE_FETCH', 'FAKE_EVALS', 'FAKE_LEVELS']) delete process.env[name];
     const tab = await typing.page(null);
     const TYPED = "aZ09 -12.5 dB_A/b:c;d,e'f (x)!\"é";
     await tab.type(TYPED);
     await tab.key('Enter');
     let notAKey = '';
     try { await tab.key('F13'); } catch (e) { notAKey = e.message; }
-    delete process.env.FAKE_KEYS;
     const sent = readFileSync(keysFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const downs = sent.filter((k) => k.type !== 'keyUp');
     const want = { a: ['KeyA', 65], Z: ['KeyZ', 90], 0: ['Digit0', 48], 9: ['Digit9', 57], ' ': ['Space', 32],
@@ -715,6 +858,101 @@ process.exit(0);
         wrongKeys.join('; ') || `${JSON.stringify(TYPED)}: each character with its US key's code ('.' Period 190, '-' `
         + `Minus 189, "'" Quote 222, '(' Digit9 57, 'é' none), never 33-46; Enter 13; no nativeVirtualKeyCode; an `
         + 'unknown named key refused');
+
+    // A tab's gate, through the same stand-in: one address answered in the server's place. A request the stand-in
+    // stops is answered as the gate says at that moment; one that is held waits for release(); one the page gave up
+    // (its answer is refused) is marked; and after end() the gate hears no more.
+    const gated = await typing.page(null);
+    const door = await gated.gate('*/audio/loop.wav');
+    const stops = (id) => gated.ev(`request:${id}`);
+    await stops('r1');                                  // the answer a gate begins with: pass
+    door.answer = 'missing';
+    await stops('r2');
+    door.answer = 'fail';
+    await stops('r3');
+    door.answer = 'hold';
+    await stops('r4');
+    await stops('gone5');
+    await Promise.all(door.requests.slice(0, 3).map((r) => r.done));
+    const waiting = door.requests.filter((r) => r.done === null).length;
+    const released = await door.release('missing');
+    await door.end();
+    await stops('r6');
+    const fetched = readFileSync(fetchFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const did = fetched.map((c) => `${c.method.slice(6)} ${c.requestId || ''}`.trim()).join(', ');
+    const how = door.requests.map((r) => `${r.id} ${r.how}${r.gone ? ' gone' : ''}`).join(', ');
+    row(JSON.stringify(fetched[0]) === JSON.stringify({ method: 'Fetch.enable', patterns: [
+          { urlPattern: '*/audio/loop.wav', requestStage: 'Request' }] })
+        && did === 'enable, continueRequest r1, fulfillRequest r2, failRequest r3, fulfillRequest r4, '
+                   + 'fulfillRequest gone5, disable'
+        && fetched[2].responseCode === 404 && fetched[3].errorReason === 'ConnectionRefused'
+        && how === 'r1 pass, r2 missing, r3 fail, r4 missing, gone5 missing gone' && waiting === 2
+        && released.length === 2 && door.requests[0].url === 'http://site.invalid/audio/loop.wav'
+        && door.requests[0].headers.Accept === '*/*', 'chrome.gate',
+        `the commands sent: ${did}; the requests: ${how}; ${waiting} waited until release(), and one stopped after `
+        + 'end() was not heard');
+
+    // The port tap's count of a reply's columns. The tap is a script for the page: the stand-in kept its text, and
+    // it runs here under node, on a port and on replies made here (a head of 320 bytes, then 32 bytes a column: the
+    // first float of each is the input's level over one millisecond; the head's floats 16 and 17 are the two input
+    // meters). The columns kept one by one are read as the stand-in page gave them: digital silence has no number in
+    // JSON and comes back as -Infinity. Of the replies whose columns were counted, the tap also counts those where one
+    // meter stood more than 1 dB over the other.
+    await gated.tap();
+    await gated.tapHear(2, 3);
+    await gated.tapRead();
+    const read = await gated.tapLevels();
+    const [tapJs, hearJs, readJs, levelsJs] = readFileSync(evalsFile, 'utf8').trim().split('\n').slice(-4)
+      .map((l) => JSON.parse(l));
+    const hearers = [];
+    const port = { postMessage: () => {}, addEventListener: (type, f) => hearers.push(f) };
+    const world = { fcmpPage: { node: () => ({ port }) }, performance, ArrayBuffer, Uint16Array, Uint32Array,
+                    Float32Array, Array, Object, Number, Math, JSON };
+    world.globalThis = world;
+    runInNewContext(tapJs, world);
+    const tell = (first, levels, count = levels.length, meters = [0, 0]) => {
+      const data = new ArrayBuffer(320 + 32 * levels.length);
+      new Uint32Array(data, 0, 80).set([count, first], 6);
+      new Float32Array(data, 0, 80).set(meters, 16);
+      const columns = new Float32Array(data, 320, levels.length * 8);
+      levels.forEach((db, k) => columns.set([db, 99, 99], k * 8));      // a column's other values are not the input's
+      for (const hear of hearers) hear({ data });
+    };
+    const heard = () => JSON.stringify(JSON.parse(runInNewContext(readJs, world)).heard);
+    const levels = () => runInNewContext(levelsJs, world);
+    const steps = [];
+    const step = (what, want) => steps.push({ what, want: JSON.stringify(want), got: heard() });
+    const unheard = { replies: 0, left: 0, right: 0 };
+    step('before any reply', { n: 0, min: null, max: null, lost: 0, ...unheard });
+    tell(100, [-10, -20, -3], 3, [-4, -4.5]);           // the two meters within 1 dB: neither side is over the other
+    step('three columns', { n: 3, min: -20, max: -3, lost: 0, replies: 1, left: 0, right: 0 });
+    const keptUnasked = levels();                       // nothing asked for them yet: none is kept
+    runInNewContext(hearJs, world);                     // begins again, after two columns more, and keeps three
+    tell(103, [-1], 1, [0, -20]);
+    step('a reply whose columns are all skipped', { n: 0, min: null, max: null, lost: 0, ...unheard });
+    tell(104, [-2, -30, -6], 3, [-3, -5]);
+    step('begun again with a skip of two', { n: 2, min: -30, max: -6, lost: 0, replies: 1, left: 1, right: 0 });
+    const keptTwo = levels();
+    tell(107, []);
+    tell(107, [-0.5], 0, [-20, 0]);                     // the head says no column: what lies after it is not read
+    step('a reply with no column', { n: 2, min: -30, max: -6, lost: 0, replies: 1, left: 1, right: 0 });
+    tell(110, [-5], 1, [-9, -6]);
+    step('three columns not delivered', { n: 3, min: -30, max: -5, lost: 3, replies: 2, left: 1, right: 1 });
+    tell(50, [-40], 1, [-6, -7]);                       // 1 dB and no more: not over
+    step('the count began again', { n: 4, min: -40, max: -5, lost: 4, replies: 3, left: 1, right: 1 });
+    for (const hear of hearers) {
+      hear({ data: new ArrayBuffer(64) });
+      hear({ data: { fcmp: 'stats' } });
+    }
+    step('what is not a reply', { n: 4, min: -40, max: -5, lost: 4, replies: 3, left: 1, right: 1 });
+    const wrongSteps = steps.filter((x) => x.got !== x.want).map((x) => `${x.what}: ${x.got}, not ${x.want}`);
+    const keptAll = levels();                           // the first three after the skip, and not the fourth
+    const keptRight = keptUnasked === '[]' && keptTwo === '[-30,-6]' && keptAll === '[-30,-6,-5]'
+                      && read.length === 3 && read[0] === -3.5 && read[1] === -Infinity && read[2] === -70;
+    row(hearers.length === 1 && wrongSteps.length === 0 && world.__tap.replies === 7 && keptRight, 'chrome.tap_hears',
+        wrongSteps.join('; ') || `${steps.map((x) => x.what).join('; ')}: the last count is ${heard()}; kept one `
+        + `by one: ${keptUnasked} before any was asked for, then ${keptTwo}, then ${keptAll} (three were asked for); `
+        + `the library reads a page's [-3.5,null,-70] as ${read.join(', ')}`);
 
     // page.until on a page that does not answer (its main thread never rests): it ends at its bound, not at the
     // library's answer timeout.
@@ -854,11 +1092,16 @@ process.exit(0);
         + `directory left empty (${cwdLeft.length} entries)`);
 
     // The published site: built-from.txt is asked first; a site that never says the commit is exit 1 and no Chrome.
+    // Then its sample loop: the row `audio` comes after `published`, and the pages are run whatever it says.
     const NEW = `site abcdef1${'2'.repeat(33)} clean 2026-10-02T00:00:00Z\n`;
     let says = `site ${'1'.repeat(40)} clean 2026-10-01T00:00:00Z\n`;
+    const loop = readFileSync(join(source, 'web', 'audio', 'loop.wav'));
+    let audio = loop;
     const remote = createServer((req, res) => {
-      res.writeHead(req.url === '/some/sub/path/built-from.txt' ? 200 : 404);
-      res.end(req.url === '/some/sub/path/built-from.txt' ? says : '');
+      const body = req.url === '/some/sub/path/built-from.txt' ? says
+                 : req.url === '/some/sub/path/audio/loop.wav' ? audio : null;
+      res.writeHead(body === null ? 404 : 200);
+      res.end(body === null ? '' : body);
     });
     await new Promise((r) => remote.listen(0, '127.0.0.1', r));
     const url = `http://127.0.0.1:${remote.address().port}/some/sub/path/`;
@@ -875,6 +1118,8 @@ process.exit(0);
     const stale = await viaUrl(['--wait', '2', '--out', join(scratch, 'published never')]);
     says = NEW;
     const fresh = await viaUrl(['--wait', '2']);
+    audio = loop.subarray(0, 1000);
+    const cut = await viaUrl(['--wait', '2', '--out', join(scratch, 'published cut')]);
     remote.close();
     const defaultOut = join(scratch, 'web-live');                      // beside the expectations
     const freshSummary = existsSync(join(defaultOut, 'summary.txt'))
@@ -883,14 +1128,21 @@ process.exit(0);
     row(stale.code === 1 && /^NOTE {5}web\.live published: .*not yet 'site abcdef1 clean'/m.test(stale.stdout)
         && /^FAIL {5}web\.live published: .*still says 'site 1{40} clean/m.test(stale.stdout)
         && /^web-live: 0\/1 passed \(results in .*published never\)$/m.test(stale.stdout)
-        && stale.chromeArgs.length === 0
-        && fresh.code === 2 && /^PASS {5}web\.live published: .*says 'site abcdef12{33} clean/m.test(fresh.stdout)
+        && stale.chromeArgs.length === 0 && !/web\.live audio/.test(stale.stdout)
+        && fresh.code === 2
+        && /^PASS {5}web\.live published: .*says 'site abcdef12{33} clean.*\nPASS {5}web\.live audio: /m
+          .test(fresh.stdout)
+        && /^PASS {5}web\.live audio: .*\/some\/sub\/path\/audio\/loop\.wav: 2048600 bytes/m.test(fresh.stdout)
         && /web-live: no verdict \(Chrome went away/.test(fresh.stdout) && fresh.chromeArgs.includes('--mute-audio')
-        && freshSummary.startsWith(`web-live.sh: ${url} (the published site`), 'gate.url_form',
-        `a site that never says the commit: exit ${stale.code}, no Chrome started, `
+        && freshSummary.startsWith(`web-live.sh: ${url} (the published site`)
+        && cut.code === 2 && /^PASS {5}web\.live published: .*\nFAIL {5}web\.live audio: .*: 1000 bytes, /m
+          .test(cut.stdout) && /web-live: no verdict \(Chrome went away/.test(cut.stdout)
+        && cut.chromeArgs.includes('--mute-audio'), 'gate.url_form',
+        `a site that never says the commit: exit ${stale.code}, no Chrome started, no audio row, `
         + `'${(/^web-live: \d+\/\d+ passed.*$/m.exec(stale.stdout) || [''])[0].replace(scratch, '.')}'; one that `
-        + `does: PASS published, then the pages (exit ${fresh.code} with the stand-in), results beside the `
-        + 'expectations');
+        + `does: PASS published, PASS audio, then the pages (exit ${fresh.code} with the stand-in), results beside `
+        + 'the expectations; one whose sample loop is cut to 1000 bytes: FAIL audio, and the pages all the same '
+        + `(its Chrome was started, exit ${cut.code})`);
   }
 
   // ---- what the script runs -----------------------------------------------------------------------------------------

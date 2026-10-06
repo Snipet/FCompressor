@@ -25,8 +25,9 @@
 </div>
 </div>
 <div id="fcmp-source">
-<span id="fcmp-source-name">SOURCE: BUILT-IN LOOP</span>
-<button id="fcmp-loop" type="button" disabled>BUILT-IN LOOP</button>
+<span id="fcmp-source-name">SOURCE: SAMPLE LOOP</span>
+<button id="fcmp-loop" type="button" disabled>SAMPLE LOOP</button>
+<button id="fcmp-synth" type="button" disabled>SYNTH LOOP</button>
 <button id="fcmp-open" type="button" disabled>OPEN AN AUDIO FILE</button>
 <input id="fcmp-file" type="file" accept="audio/*" hidden>
 <span>OR DROP ONE ON THE PAGE. IT STAYS IN THIS BROWSER.</span>
@@ -54,7 +55,8 @@ MOVES.</li>
 </section>
 </main>
 <footer>
-<p>FCOMPRESSOR IS FREE SOFTWARE UNDER THE <a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>.
+<p>FCOMPRESSOR IS FREE SOFTWARE UNDER THE
+<a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>, AND SO IS THE SAMPLE LOOP, WHICH SEAN FUNK MADE FOR THIS DEMO.
 THE TYPEFACE IS JETBRAINS MONO, UNDER THE <a href="licences/JetBrainsMono-OFL.txt">SIL OPEN FONT LICENSE 1.1</a>.
 THE BUILD TOOLS' LIBRARIES HAVE <a href="licences/THIRD-PARTY.txt">THEIR OWN LICENCES</a>.</p>
 <p>THE <a href="https://github.com/Snipet/FCompressor">SOURCE CODE</a>.<span id="fcmp-built"></span></p>
@@ -62,9 +64,9 @@ THE BUILD TOOLS' LIBRARIES HAVE <a href="licences/THIRD-PARTY.txt">THEIR OWN LIC
 <pre id="funkgui-log" hidden></pre>
 <script>
   // What the page says until main.js runs, and when it never does: a module script that fails says nothing by itself.
-  // A file that is not there (main.js, or loop.js, which it imports) is an error event on the tag, and so is a file:
-  // address, where a module never loads; a file that does not parse is one on the window; a browser without module
-  // scripts runs the nomodule script instead. On the self-test path the title is the verdict a runner waits for.
+  // A file that is not there (main.js, or loop.js or sample.js, which it imports) is an error event on the tag, and so
+  // is a file: address, where a module never loads; a file that does not parse is one on the window; a browser without
+  // module scripts runs the nomodule script instead. On the self-test path the title is the verdict a runner waits for.
   // main.js sets fcmpBooted first thing: from then on the words and the verdict are its own.
   var fcmpBooted = false;
   function fcmpLost(words) {

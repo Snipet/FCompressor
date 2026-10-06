@@ -172,9 +172,13 @@ and the same editor for a browser: two WebAssembly modules joined by one `Messag
 - **The editor module** (`Source/web/ui`: `WebMain.cpp`, `PortLink`): target `fcmp_web_ui`, `fcmp-ui.js` and
   `fcmp-ui.wasm`: the editor outside `gpu/`, `plugin/portable`, the facade and FunkGui's core and web host. The same
   sources, with every `ui.*` probe, make `fcmp_probe_web`, which runs under node against the plugin's goldens.
-- **The page** (`web/`): `index.html`, `main.js`, `fcmp-worklet.js`, `loop.js` and `demo.css`, plain ES modules.
-- **The site** (`fcmp_web_site`, `build-web/site`): the page, the two modules, the licences and `built-from.txt`,
-  exactly what CI publishes to GitHub Pages from `main`.
+- **The page** (`web/`): `index.html`, `main.js`, `fcmp-worklet.js`, `loop.js`, `sample.js` and `demo.css`, plain ES
+  modules, and `audio/loop.wav`, the sample loop: an audio file made for the demo, which the page plays when its START
+  button is pressed. `sample.js` reads the file and resamples it to the audio context's rate so that the result is
+  exactly one period of the loop: it loops with no seam and no fade. `loop.js` makes the synth loop, a loop the page
+  synthesises, which plays when it is chosen and when the file does not load.
+- **The site** (`fcmp_web_site`, `build-web/site`): the page with the sample loop, the two modules, the licences and
+  `built-from.txt`, 15 files, exactly what CI publishes to GitHub Pages from `main`.
 - **The test-only side**, never in the site: `fcmp_web_print` (`fcmp-print.wasm`, from `Tools/web/live`) and
   `fcmp_web_live` (`build-web/live`: `web/live`'s pages and the `dsp.print` goldens), which `Scripts/web-live.sh`, the
   browser gate, serves beside the site (03 §2.12).

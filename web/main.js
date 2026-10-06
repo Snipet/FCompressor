@@ -6,15 +6,26 @@
 //   before START   says what the browser lacks, if anything (no WebAssembly, a file: address, an insecure context, no
 //                  AudioWorklet, no WebGL2), and otherwise loads the editor, which draws behind the overlay.
 //   START          creates the AudioContext inside the click (48 kHz asked for; the rate it gets is the rate used),
-//                  loads fcmp-worklet.js and the engine's bytes, hands the worklet's port to the editor module and
-//                  plays the built-in loop (loop.js) through a gain node into the engine.
+//                  loads fcmp-worklet.js, the engine's bytes and the sample loop, hands the worklet's port to the
+//                  editor module and plays the sample loop through a gain node into the engine.
+//   the loops      the SAMPLE LOOP is a file made for the demo (audio/loop.wav). sample.js reads it and fits it to the
+//                  context's rate as one exact period, so it plays at unity with no fade: the page never changes the
+//                  file's level. The SYNTH LOOP is the one the page makes (loop.js). Each has its button. A sample
+//                  loop that does not load never fails START: the synth loop plays, the page says so, and a press on
+//                  SAMPLE LOOP tries again, from the server.
 //   a file         chosen or dropped: decoded by the browser at the context's rate, faded at both ends and looped in
 //                  place of the source. A file that is too large, too short, too long or not audio leaves the source
-//                  as it was and says so.
+//                  as it was and says so. A file dropped while START is loading is kept, and plays once the demo runs.
+//   a new source   takes the place of the old one: the old one fades out in 30 ms, then the new one fades in. A
+//                  second choice inside those 30 ms replaces the first, which never plays. One case differs: the
+//                  first use of the synth loop makes it inside the press (some 50 ms), so a source chosen just
+//                  before it plays for that time, faded in and out.
 //   RESUME         whenever the context is not running (no gesture yet, or the browser paused it).
 //   a failure      of the engine or of the editor, whenever it comes, ends the demo and says why: THE DEMO COULD NOT
 //                  START before it runs, THE DEMO STOPPED afterwards. The editor fails in three ways and only abort()
-//                  tells Module.onAbort: an exception or a trap in its main() or in a frame is an uncaught error.
+//                  tells Module.onAbort: an exception or a trap in its main() or in a frame is an uncaught error. A
+//                  demo that has ended gives up a load of the sample loop that still runs, and its notice is empty:
+//                  nothing it said of the source is true any more.
 //   the status     what the overlay says (#fcmp-status) is a live region, so it is never display: none and never
 //                  holds an old word: while the demo plays the overlay is away and the line says PLAYING.
 //   the footer     the commit the site was built from (built-from.txt), linked only when the build was that commit.
@@ -24,7 +35,7 @@
 // ?selftest=1, and the path fcmp-ui.html (which FunkGui's page runner opens): the checks of runSelftest() below.
 // document.title is RUNNING, then PASS or "FAIL: <the first failing row>", and the rows are in #funkgui-log. An
 // uncaught error or an unhandled rejection is a FAIL at once, and no PASS replaces it. When this file never runs
-// (it or loop.js is missing or does not parse), index.html says so itself, until boot() sets fcmpBooted.
+// (it, loop.js or sample.js is missing or does not parse), index.html says so itself, until boot() sets fcmpBooted.
 //
 // Of the seam the page uses Module.fcmpPort.connect and disconnect, Module.fcmpStatus and Module.fcmpSelftest; and,
 // in the self-test only, Module.fcmpA11y's fullRate where the module has it (the web lead phase's contract). It
@@ -34,8 +45,10 @@
 //
 // The pieces with no browser in them are exported, and web/tests/page.mjs runs them under node; the page itself
 // starts only where there is a document. For a driver (a DevTools session), globalThis.fcmpPage answers state(),
-// context(), node() and stats(), the worklet's counters.
+// context(), node(), source() (what plays: null, or { kind, name, frames, sampleRate } of the buffer, the kind
+// 'sample', 'synth' or 'file') and stats(), the worklet's counters.
 import { synthLoop } from './loop.js';
+import { SAMPLE_URL, fitLoop, readWav } from './sample.js';
 
 export const SELF_CHECK_HASH = '5a96ce217d29ca6f';    // Tools/web/enginecheck.cpp kSelfCheckHash
 export const ATLAS_HASH = 'b744c79b9bb755d0';         // tests/golden/base/global/ui.font.txt font.atlas.hash
@@ -43,11 +56,19 @@ export const QUANTUM = 128;                           // fcmp-worklet.js QUANTUM
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const MIN_FILE_SECONDS = 0.1;
 export const MAX_FILE_SECONDS = 600;
+// The sample loop's file, web/audio/loop.wav, as docs/sprints/web-loop.md gives it: the self-test holds what the page
+// fetched to these, and web/tests/page.mjs holds these to the file.
+export const SAMPLE_SHA256 = '0327dec3cbc7de82cf3ed6d9f0533d7035681c20297b0c9cb7aae2bc9a8b7e52';
+export const SAMPLE_RATE = 44100;
+export const SAMPLE_FRAMES = 341420;
+// The sample loop has this long from the moment its fetch began. Then the fetch is given up and the synth loop
+// plays. Under the 20 s the self-test gives START, on purpose.
+export const SAMPLE_MS = 15000;
 // What the self-test knows of Source/web/engine/WebProtocol.h: an Attach record, and three flags of a reply.
 export const PROTOCOL = { magic: 0x50574346, version: 1, attach: 2, attachBytes: 20,
                           replyGated: 1 << 3, replyConfigured: 1 << 4, replyAttached: 1 << 5 };
 const FADE_SECONDS = 0.005;                           // both ends of a file: its seam when it loops
-const SWAP_SECONDS = 0.03;                            // the old source out, then the new one in
+export const SWAP_SECONDS = 0.03;                     // the old source out, then the new one in
 const EDITOR_MS = 60000;                              // START waits this long for the editor: 1.4 MB on a slow line
 const REPOSITORY = 'https://github.com/Snipet/FCompressor';   // a link to follow, never a load
 
@@ -64,8 +85,12 @@ export const SAY = {
   noWorklet: 'THIS BROWSER HAS NO AUDIO WORKLET, WHICH THE COMPRESSOR RUNS IN. TRY A CURRENT DESKTOP BROWSER.',
   noWebgl2: 'THIS BROWSER GIVES THE PAGE NO WEBGL2, WHICH THE EDITOR IS DRAWN WITH. TRY A CURRENT DESKTOP BROWSER WITH '
           + 'HARDWARE ACCELERATION ON.',
-  loop: 'BUILT-IN LOOP',
+  sample: 'SAMPLE LOOP',
+  synth: 'SYNTH LOOP',
   source: (name) => `SOURCE: ${name}`,
+  sampleLoading: 'LOADING THE SAMPLE LOOP.',
+  sampleLost: 'THE SAMPLE LOOP DID NOT LOAD. THE SYNTH LOOP PLAYS INSTEAD.',
+  sampleUnchanged: 'THE SAMPLE LOOP DID NOT LOAD. THE SOURCE IS UNCHANGED.',
   startFirst: 'PRESS START FIRST, THEN CHOOSE A FILE.',
   tooLarge: (name) => `${name} IS LARGER THAN 32 MB. THE SOURCE IS UNCHANGED.`,
   tooShort: (name) => `${name} IS SHORTER THAN 0.1 S. THE SOURCE IS UNCHANGED.`,
@@ -124,6 +149,15 @@ export function lengthRefusal(seconds) {
   return seconds > MAX_FILE_SECONDS ? 'tooLong' : '';
 }
 
+// What a chosen or dropped file does, by the page's state: 'play' while the demo runs; 'keep' while START is loading
+// (the file is kept, and plays once the demo runs); 'startFirst' before START (the page says SAY.startFirst); and ''
+// in any other state (the demo cannot run here, or has ended: the overlay says so).
+export function fileChoice(state) {
+  if (state === 'running') return 'play';
+  if (state === 'loading') return 'keep';
+  return state === 'idle' ? 'startFirst' : '';
+}
+
 // 5 ms linear fades at both ends of one channel, in place: a file loops, and its ends rarely meet.
 export function fadeEnds(samples, sampleRate) {
   const n = Math.min(Math.round(FADE_SECONDS * sampleRate), samples.length >> 1);
@@ -131,6 +165,53 @@ export function fadeEnds(samples, sampleRate) {
     samples[i] *= i / n;
     samples[samples.length - 1 - i] *= i / n;
   }
+}
+
+// How a new source takes the place of the one before it: { at, old }. `now` is the context's time, and `started` the
+// time the source before it starts at (null when there is none). `at` is when the new source starts, and `old` what
+// becomes of the other one:
+//   'none'   there is none: the new source starts at once, with no fade.
+//   'fade'   it plays: it fades out over SWAP_SECONDS, and the new source starts then and fades in.
+//   'drop'   it has not begun (a second choice within SWAP_SECONDS of the first): it is stopped at once and never
+//            plays, and the new source takes its start time, when the source before both has faded out. Faded out
+//            like one that plays, it would begin part of the way down that fade, at up to full level.
+export function swapPlan(now, started) {
+  if (started === null) return { at: now, old: 'none' };
+  if (started > now) return { at: started, old: 'drop' };
+  return { at: now + SWAP_SECONDS, old: 'fade' };
+}
+
+// Which of the three source buttons can be pressed: { loop, synth, open }, true where enabled. `running` is whether
+// the demo runs, `kind` what plays ('sample', 'synth' or 'file'), `sampleLoaded` whether the sample loop is loaded.
+// None before START, and none once the demo has failed or stopped. While it runs a file can always be opened, and a
+// loop's button is enabled unless that loop is what plays. SAMPLE LOOP is enabled whenever the sample loop is not
+// loaded: a press tries again.
+export function sourceButtons(running, kind, sampleLoaded) {
+  if (!running) return { loop: false, synth: false, open: false };
+  return { loop: kind !== 'sample' || !sampleLoaded, synth: kind !== 'synth', open: true };
+}
+
+// The self-test's rule for the sample loop fitted to another rate (its row sample.fit). `file` is what readWav
+// returns and `fitted` what fitLoop makes of it. The frames are Math.round(frames * rate / the file's rate); each
+// side's RMS is within FIT.level dB of the file's (the page plays the loop at unity); and each side's last
+// millisecond is under FIT.end dBFS RMS (the file ends in near silence, so the loop's seam needs no fade).
+// { ok, frames (wanted), level (dB from the file's, left and right), end (dBFS, left and right) }. A loop with no
+// frame gives no number, and no pass.
+export const FIT = { level: 0.01, end: -60 };
+export function fitRule(file, fitted) {
+  const rms = (samples, from = 0) => {
+    let squares = 0;
+    for (let i = from; i < samples.length; i += 1) squares += samples[i] * samples[i];
+    return Math.sqrt(squares / (samples.length - from));
+  };
+  const db = (ratio) => 20 * Math.log10(ratio);
+  const frames = Math.round(file.frames * fitted.sampleRate / file.sampleRate);
+  const level = [db(rms(fitted.left) / rms(file.left)), db(rms(fitted.right) / rms(file.right))];
+  const last = Math.max(0, frames - Math.round(fitted.sampleRate / 1000));
+  const end = [db(rms(fitted.left, last)), db(rms(fitted.right, last))];
+  const whole = fitted.frames === frames && fitted.left.length === frames && fitted.right.length === frames;
+  return { ok: whole && level.every((d) => Math.abs(d) <= FIT.level) && end.every((d) => d < FIT.end),
+           frames, level, end };
 }
 
 // built-from.txt's line, "site <sha|none> <clean|dirty> <UTC time>" (cmake/FcmpBuiltFrom.cmake), as what the footer
@@ -264,9 +345,16 @@ function boot() {
   let node = null;
   let source = null;
   let gain = null;
-  let loopBuffer = null;
+  let startsAt = 0;                                   // the context's time at which `source` starts
+  let playing = null;                                 // what plays: fcmpPage.source() answers it
+  let waiting = null;                                 // a file dropped while START was loading: it plays once it runs
+  let sampleBuffer = null;                            // the sample loop at the context's rate, once it is loaded
+  let sampleLoad = null;                              // the load of it that is running, if one is
+  let sampleAbort = null;                             // what gives that load up: its fetch's AbortController
+  let sampleFailed = false;                           // a load of it has failed: the next one asks the server anew
+  let synthBuffer = null;                             // the synth loop, made when it is first needed
   let engine = null;                                  // the bytes of fcmp-engine.wasm, fetched once
-  let opening = 0;                                    // the latest file asked for: an older, slower one is dropped
+  let opening = 0;                                    // the latest source asked for: an older, slower one is dropped
   let fault = null;                                   // what went wrong while START was loading: start() ends on it
 
   // The status line is a live region: a change is announced only when the region is in the accessibility tree before
@@ -327,13 +415,15 @@ function boot() {
   let editorLost = null;
   const editor = new Promise((ready, lost) => {
     // The editor is no more. Said once (abort() calls onAbort and then throws, which is an uncaught error as well).
-    // While START is loading, start() ends on it after its next await.
+    // While START is loading, start() ends on it after its next await: the longest one, for the sample loop, is
+    // given up.
     editorLost = (error) => {
       if (editorGone !== null) return;
       editorGone = error;
       lost(error);
       if (state === 'running') stop(error);
       else if (state === 'idle') fail(error);
+      else if (state === 'loading') giveUpSample();
     };
     globalThis.Module = {
       fcmpReady: () => {
@@ -406,34 +496,118 @@ function boot() {
   }));
 
   // ---- sources ------------------------------------------------------------------------------------------------------
-  const play = (buffer, name) => {
+  const showButtons = () => {
+    const on = sourceButtons(state === 'running', playing === null ? '' : playing.kind, sampleBuffer !== null);
+    $('fcmp-loop').disabled = !on.loop;
+    $('fcmp-synth').disabled = !on.synth;
+    $('fcmp-open').disabled = !on.open;
+  };
+  // A loop of loop.js or sample.js as a buffer of the context: exactly its frames, at the context's rate.
+  const bufferOf = (loop) => {
+    const buffer = context.createBuffer(2, loop.frames, context.sampleRate);
+    buffer.copyToChannel(loop.left, 0);
+    buffer.copyToChannel(loop.right, 1);
+    return buffer;
+  };
+  // The sample loop: fetched, read and fitted to the context's rate (sample.js). The promise never rejects: it gives
+  // the buffer, or null when the response is not ok, the fetch fails, readWav refuses the bytes, or the bytes are not
+  // all here SAMPLE_MS after the fetch began (the fetch is then given up). giveUpSample() gives the fetch up before
+  // that, and the load gives null at once: the demo has ended, or START is ending on a failure, and nothing is read
+  // or fitted for a demo that is over. One load runs at a time, and a second asker waits for the first; a load that
+  // failed is forgotten, so the next asker tries again. A load after a failed one asks the server and not the
+  // browser's cache ('reload'): the cache may hold the answer that failed (a file that was cut short and came with
+  // status 200, or a 404 the server lets it keep), and gives that answer again for as long as it keeps it. Seen with
+  // python3 -m http.server and a cut file one hour old: Chrome 154 asked the server once and answered the two loads
+  // after that from its cache, the second when the whole file was back.
+  // What it costs: readWav and fitLoop run on this thread, in one task, when the last byte has come. At 48 kHz on an
+  // Apple M5 the fit takes 60 to 80 ms, in Chrome 154 and under node alike, and readWav 3 ms (the self-test's NOTE
+  // has this browser's time for the fit). Until it ends the editor draws no frame and the page answers no press. It
+  // runs after an await, so it never stands between a click and what the click must do at once (START makes and
+  // resumes its context before it asks for the loop), and the audio thread plays on.
+  const loadSample = () => {
+    if (sampleBuffer !== null) return Promise.resolve(sampleBuffer);
+    if (sampleLoad !== null) return sampleLoad;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), SAMPLE_MS);
+    const load = (async () => {
+      const response = await fetch(SAMPLE_URL, { signal: abort.signal, cache: sampleFailed ? 'reload' : 'default' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = await response.arrayBuffer();
+      if (abort.signal.aborted) throw new Error('given up');
+      const file = readWav(bytes);
+      sampleBuffer = bufferOf(fitLoop(file, context.sampleRate));
+      return sampleBuffer;
+    })().catch(() => {
+      sampleFailed = true;
+      return null;
+    }).finally(() => {
+      clearTimeout(timer);
+      sampleLoad = null;
+      sampleAbort = null;
+    });
+    sampleLoad = load;
+    sampleAbort = abort;
+    return load;
+  };
+  const giveUpSample = () => {
+    if (sampleAbort !== null) sampleAbort.abort();
+  };
+  // The synth loop is made at its first use, not at every START: making it holds this thread for about 50 ms (at
+  // 48 kHz in Chrome 154 on an Apple M5; 70 ms under node), and most visitors never hear it.
+  const synth = () => {
+    if (synthBuffer === null) synthBuffer = bufferOf(synthLoop(context.sampleRate));
+    return synthBuffer;
+  };
+  // `kind` is 'sample', 'synth' or 'file'; `name` is what the page says after SOURCE. The swap is swapPlan()'s.
+  const play = (buffer, kind, name) => {
     const now = context.currentTime;
-    let at = now;
-    if (source !== null) {
+    const plan = swapPlan(now, source === null ? null : startsAt);
+    if (plan.old === 'fade') {
       const old = gain;
       old.gain.cancelScheduledValues(now);
       old.gain.setValueAtTime(old.gain.value, now);
-      old.gain.linearRampToValueAtTime(0, now + SWAP_SECONDS);
+      old.gain.linearRampToValueAtTime(0, plan.at);
       source.onended = () => old.disconnect();
-      source.stop(now + SWAP_SECONDS);
-      at = now + SWAP_SECONDS;
+      source.stop(plan.at);
+    } else if (plan.old === 'drop') {
+      source.stop();                                   // before its start time: it renders nothing
+      gain.disconnect();
     }
     gain = context.createGain();
-    if (at > now) {
-      gain.gain.setValueAtTime(0, at);
-      gain.gain.linearRampToValueAtTime(1, at + SWAP_SECONDS);
+    if (plan.at > now) {
+      gain.gain.setValueAtTime(0, plan.at);
+      gain.gain.linearRampToValueAtTime(1, plan.at + SWAP_SECONDS);
     }
     source = context.createBufferSource();
     source.buffer = buffer;
     source.loop = true;
     source.connect(gain).connect(node);
-    source.start(at);
+    source.start(plan.at);
+    startsAt = plan.at;
+    playing = { kind, name, frames: buffer.length, sampleRate: buffer.sampleRate };
     $('fcmp-source-name').textContent = SAY.source(name);
-    $('fcmp-loop').disabled = buffer === loopBuffer;
+    showButtons();
   };
+  // SAMPLE LOOP was pressed. When the loop is not loaded it is loaded first, and whatever plays goes on meanwhile. A
+  // later choice (SYNTH LOOP, a file, another press) wins over a load that is still running: its `opening` turn.
+  const playSample = async () => {
+    const turn = (opening += 1);
+    notice(sampleBuffer === null ? SAY.sampleLoading : '');
+    const buffer = await loadSample();
+    if (turn !== opening || state !== 'running') return;
+    if (buffer === null) {
+      notice(SAY.sampleUnchanged);
+      return;
+    }
+    notice('');
+    play(buffer, 'sample', SAY.sample);
+  };
+  // A file was chosen or dropped: what it does is fileChoice()'s, by the page's state.
   const openFile = async (file) => {
-    notice(state === 'idle' ? SAY.startFirst : '');
-    if (state !== 'running') return;
+    const choice = fileChoice(state);
+    notice(choice === 'startFirst' ? SAY.startFirst : '');
+    if (choice === 'keep') waiting = file;             // START is loading: start() opens it once the demo runs
+    if (choice !== 'play') return;
     const turn = (opening += 1);
     const name = file.name.toUpperCase();
     let refusal = fileRefusal(file.size);
@@ -452,7 +626,7 @@ function boot() {
       return;
     }
     for (let c = 0; c < decoded.numberOfChannels; c += 1) fadeEnds(decoded.getChannelData(c), decoded.sampleRate);
-    play(decoded, name);
+    play(decoded, 'file', name);
   };
 
   // ---- start, pause, stop -------------------------------------------------------------------------------------------
@@ -470,6 +644,9 @@ function boot() {
     }
     const resumed = context.resume().catch(() => {});
     context.onstatechange = contextChanged;
+    // The sample loop loads beside the worklet and the engine. Asked for here, after the context is made and resumed:
+    // it needs the context's rate, and no gesture. It never rejects, so nothing of it can throw out of this start.
+    const sample = loadSample();
     // Asked after every await. A failure of the engine or the editor that came meanwhile ends this start (the worklet
     // says its error once, and stop() acts only on a demo that runs, so it is remembered: `fault`). And a start that
     // was given up meanwhile (fail(), after the self-test's time limit) goes no further.
@@ -492,22 +669,28 @@ function boot() {
         if (event.data && event.data.fcmp === 'error') stop(new Error(`the engine stopped (${event.data.error})`));
       });
       node.connect(context.destination);
-      const loop = synthLoop(context.sampleRate);
-      loopBuffer = context.createBuffer(2, loop.frames, context.sampleRate);
-      loopBuffer.copyToChannel(loop.left, 0);
-      loopBuffer.copyToChannel(loop.right, 1);
+      // The buffer, or null: at most SAMPLE_MS after the click, however slow the file is. And null at once when the
+      // engine or the editor fails meanwhile (stop() and editorLost give the load up): wanted() then ends this start.
+      const loaded = await sample;
+      if (!wanted()) return;
       // Drawing since the page loaded, as a rule: the port is all it lacks. Bounded, for an editor that never says
       // it is ready and never fails either.
       await within(EDITOR_MS, 'the editor', editor);
       if (!wanted()) return;
       Module.fcmpPort.connect(node.port, context.sampleRate, QUANTUM);
       connected = true;
-      play(loopBuffer, SAY.loop);
+      if (loaded !== null) {
+        play(loaded, 'sample', SAY.sample);
+      } else {                                         // a sample loop that fails never fails START
+        play(synth(), 'synth', SAY.synth);
+        notice(SAY.sampleLost);
+      }
       await Promise.race([resumed, sleep(250)]);       // a context that is about to run shows no RESUME on the way
       if (!wanted()) return;
       state = 'running';
-      $('fcmp-open').disabled = false;
+      showButtons();
       contextChanged();
+      if (waiting !== null) openFile(waiting);         // a file dropped while this was loading: it wins
       return made.ready;
     } finally {
       // Not running after all: an editor that lives must not go on posting to an engine nobody hears.
@@ -516,7 +699,9 @@ function boot() {
   };
   function contextChanged() {
     if (state !== 'running') return;
-    if (context.state === 'running') {
+    if (context.state === 'closed') {                  // not by this page: nothing can resume it
+      stop(new Error('the audio context closed'));
+    } else if (context.state === 'running') {
       overlayAway(SAY.playing);
     } else {                                           // suspended (no gesture yet, or by the browser) or interrupted
       overlay(SAY.paused, SAY.resume);
@@ -524,8 +709,9 @@ function boot() {
     }
   }
   const silence = () => {
-    $('fcmp-loop').disabled = true;
-    $('fcmp-open').disabled = true;
+    showButtons();                                     // the demo no longer runs: all three are disabled
+    notice('');                                        // what it said of the source is no longer true
+    giveUpSample();                                    // a load of the sample loop that still runs has no use
     if (context !== null) context.close().catch(() => {});
   };
   function fail(error) {
@@ -535,7 +721,10 @@ function boot() {
     silence();
   }
   function stop(error) {
-    if (state === 'loading' && fault === null) fault = error;      // START is loading: start() ends on it
+    if (state === 'loading' && fault === null) {       // START is loading: start() ends on it, after its next await
+      fault = error;
+      giveUpSample();                                  // the longest of them, which is then over at once
+    }
     if (state !== 'running') return;
     state = 'stopped';
     overlay(SAY.stopped(`${upper(error)}.`));
@@ -668,9 +857,43 @@ function boot() {
           + `over 2/3 s from ${(worstAt / 3).toFixed(1)} s (x${(worst / best.active).toFixed(2)}, limit x3; `
           + 'best of 3 runs, gate off)');
     }
+
+    // 4. The sample loop, as START loads it: the page's own fetch of the file gives the bytes the repository holds
+    //    (their SHA-256), readWav reads them, and fitLoop's loop at 48 kHz is the file's by fitRule(). worklet.render
+    //    and engine.silence, above, keep the synth loop: at 48 kHz it is a whole number of quanta, and the sample loop
+    //    is not.
+    {
+      let file = null;
+      try {
+        const response = await within(SAMPLE_MS, 'the sample loop', fetch(SAMPLE_URL));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const bytes = await within(SAMPLE_MS, 'the sample loop', response.arrayBuffer());
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        const sha = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        file = readWav(bytes);
+        row(sha === SAMPLE_SHA256 && file.sampleRate === SAMPLE_RATE && file.frames === SAMPLE_FRAMES, 'sample.read',
+            `${SAMPLE_URL}: ${bytes.byteLength} bytes, SHA-256 ${sha} (want ${SAMPLE_SHA256}); ${file.sampleRate} Hz, `
+            + `${file.frames} frames (want ${SAMPLE_RATE} and ${SAMPLE_FRAMES})`);
+      } catch (error) {
+        row(false, 'sample.read', `${SAMPLE_URL}: ${(error && error.message) || error}`);
+      }
+      if (file !== null) {
+        const t0 = performance.now();
+        const fitted = fitLoop(file, 48000);
+        const fitMs = performance.now() - t0;
+        const judged = fitRule(file, fitted);
+        const two = (values, digits) => values.map((v) => v.toFixed(digits)).join(' and ');
+        row(judged.ok && fitted.frames === 371614, 'sample.fit',
+            `${fitted.frames} frames at 48000 Hz (want 371614); the RMS is ${two(judged.level, 5)} dB from `
+            + `the file's (left and right; at most ${FIT.level}); the last 1 ms is at ${two(judged.end, 1)} dBFS `
+            + `(under ${FIT.end})`);
+        note(`sample loop: fitLoop took ${fitMs.toFixed(0)} ms on the main thread (${file.frames} frames at `
+             + `${file.sampleRate} Hz to ${fitted.frames} at 48000 Hz)`);
+      }
+    }
     if (lack !== '') return;
 
-    // 4. The editor's own check (the seam's Module.fcmpSelftest), before START: the atlas it draws with is the
+    // 5. The editor's own check (the seam's Module.fcmpSelftest), before START: the atlas it draws with is the
     //    committed bake, and one frame through the WebGL2 sink, read back inside that call, is SoftRaster's by
     //    pixelRule(). A still frame, on purpose: it is asked for once the Panel is at rest (untilRest(): before START
     //    the meters' first fall and the first-use hint keep it moving for some 6 s; a Panel that does not rest within
@@ -719,7 +942,7 @@ function boot() {
       }
     }
 
-    // 5. The page itself, and the live context (without a gesture it stays suspended, which is the RESUME state:
+    // 6. The page itself, and the live context (without a gesture it stays suspended, which is the RESUME state:
     //    messages are answered all the same, so the link is judged either way; the audio only when it runs).
     try {
       await within(20000, 'the start', start());
@@ -729,6 +952,20 @@ function boot() {
     const started = state === 'running';
     if (!row(started, 'page.start', started ? `${context.sampleRate} Hz, the context is ${context.state}`
                                             : $('fcmp-status').textContent)) return;
+    // What START plays is the sample loop, as one period at the context's rate, and the page says so.
+    {
+      const plays = globalThis.fcmpPage.source() || {};
+      const frames = Math.round(SAMPLE_FRAMES * context.sampleRate / SAMPLE_RATE);
+      const name = $('fcmp-source-name').textContent;
+      const told = $('fcmp-notice').textContent;
+      const off = (id) => $(id).disabled;
+      row(plays.kind === 'sample' && plays.name === SAY.sample && plays.frames === frames
+          && plays.sampleRate === context.sampleRate && name === SAY.source(SAY.sample) && told === ''
+          && off('fcmp-loop') && !off('fcmp-synth'), 'page.source',
+          `the ${plays.kind || 'no'} source plays: ${plays.frames} frames at ${plays.sampleRate} Hz (want `
+          + `${frames} at ${context.sampleRate}); the page says "${name}", the notice is "${told}"; SAMPLE LOOP is `
+          + `${off('fcmp-loop') ? 'disabled' : 'ENABLED'}, SYNTH LOOP ${off('fcmp-synth') ? 'DISABLED' : 'enabled'}`);
+    }
     // What the page says of itself is true and can be heard: the status line is rendered (a live region that is
     // display: none announces nothing) and says PLAYING while the context runs; otherwise it says how to go on, and
     // the button that does has the focus.
@@ -781,6 +1018,7 @@ function boot() {
 
   // ---- wiring -------------------------------------------------------------------------------------------------------
   globalThis.fcmpPage = { state: () => state, context: () => context, node: () => node,
+                          source: () => (playing === null ? null : { ...playing }),
                           stats: () => ask(node, 'stats') };
   fetch('built-from.txt').then((response) => (response.ok ? response.text() : '')).then((line) => {
     const built = builtFrom(line);
@@ -807,10 +1045,13 @@ function boot() {
     else if (state === 'running') context.resume().catch(() => {});
   });
   $('fcmp-loop').addEventListener('click', () => {
+    if (state === 'running') playSample();
+  });
+  $('fcmp-synth').addEventListener('click', () => {
     if (state !== 'running') return;
     opening += 1;
     notice('');
-    play(loopBuffer, SAY.loop);
+    play(synth(), 'synth', SAY.synth);
   });
   $('fcmp-open').addEventListener('click', () => $('fcmp-file').click());
   $('fcmp-file').addEventListener('change', (event) => {

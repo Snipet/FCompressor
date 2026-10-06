@@ -11,6 +11,10 @@
 # The site holds
 #   web/*.html, *.js, *.css, *.svg   the page (an explicit list of kinds, never a plain glob of web/: .DS_Store,
 #                                    editor backups, package.json and web/tests stay out)
+#   audio/loop.wav                   the sample loop, web/audio/loop.wav byte for byte (web/audio/*.wav, and nothing
+#                                    else of web/audio: its README.md stays in the repository). Files only, and
+#                                    the ending as written here: a directory named x.wav stays out with what is in
+#                                    it, and so does TAKE.WAV, on macOS as on Linux
 #   fcmp-ui.html                     index.html again: FunkGui's page runner opens <stem>.html beside <stem>.js, and
 #                                    the page treats that path as its self-test
 #   fcmp-engine.wasm, fcmp-ui.js, fcmp-ui.wasm
@@ -38,7 +42,7 @@ endforeach()
 string(REGEX REPLACE "\\.js$" ".wasm" _ui_wasm "${FCMP_UI_JS}")
 set(_font_licence "${FCMP_FUNKGUI_DIR}/fonts/JetBrainsMono-LICENSE.txt")
 foreach(_f ${FCMP_ENGINE_WASM} ${FCMP_UI_JS} ${_ui_wasm} ${_font_licence} ${FCMP_SOURCE_DIR}/LICENSE
-           ${FCMP_SOURCE_DIR}/web/index.html)
+           ${FCMP_SOURCE_DIR}/web/index.html ${FCMP_SOURCE_DIR}/web/audio/loop.wav)
   if(NOT EXISTS "${_f}")
     message(FATAL_ERROR "FcmpWebSite.cmake: no file ${_f}")
   endif()
@@ -46,11 +50,15 @@ endforeach()
 
 file(GLOB _static ${FCMP_SOURCE_DIR}/web/*.html ${FCMP_SOURCE_DIR}/web/*.js ${FCMP_SOURCE_DIR}/web/*.css
                   ${FCMP_SOURCE_DIR}/web/*.svg)
+# A glob lists directories too unless told not to, and on macOS it matches without regard to case.
+file(GLOB _audio LIST_DIRECTORIES false ${FCMP_SOURCE_DIR}/web/audio/*.wav)
+list(FILTER _audio INCLUDE REGEX "\\.wav$")
 set(_tmp "${FCMP_SITE_DIR}.tmp")
 file(REMOVE_RECURSE "${_tmp}")
-file(MAKE_DIRECTORY "${_tmp}/licences")
+file(MAKE_DIRECTORY "${_tmp}/licences" "${_tmp}/audio")
 file(COPY ${_static} ${FCMP_ENGINE_WASM} ${FCMP_UI_JS} ${_ui_wasm} DESTINATION "${_tmp}"
      FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+file(COPY ${_audio} DESTINATION "${_tmp}/audio" FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 file(COPY_FILE "${FCMP_SOURCE_DIR}/web/index.html" "${_tmp}/fcmp-ui.html")
 file(COPY_FILE "${FCMP_SOURCE_DIR}/LICENSE" "${_tmp}/licences/GPL-3.0.txt")
 file(COPY_FILE "${_font_licence}" "${_tmp}/licences/JetBrainsMono-OFL.txt")

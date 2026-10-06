@@ -2,7 +2,9 @@
 //
 //   start.idle        a new page: idle, no AudioContext yet, the editor draws behind the overlay, START is shown
 //   start.list        Module.fcmpA11y() gives the Panel's list (the rest of the scenario finds its controls in it)
-//   start.early-drop  a file dropped before START changes nothing, and the page says to press START first
+//   start.early-drop  a file dropped before START changes nothing (the page still names the sample loop, nothing
+//                     plays and no source button can be pressed), and the page says to press START first. The file
+//                     is not kept either: once START has been pressed it is not what plays
 //   start.running     one press on START: the page runs, the context runs, the overlay is away and says PLAYING
 //   start.telemetry   replies arrive from a configured, attached engine at the context's rate; the gate is open and the
 //                     input meter shows the loop; nothing was refused, by the worklet or by the editor
@@ -11,12 +13,16 @@
 import { join } from 'node:path';
 
 import { REPLY, writeTone } from './driver.mjs';
+import { holds } from './engine.mjs';
+import { SAMPLE, buttons } from './plays.mjs';
 import { num } from './report.mjs';
 
 export const page = 'own';
 
 const IDLE = 'A LOOP PLAYS THROUGH THE COMPRESSOR. SOUND STARTS WHEN YOU PRESS START.';
 const QUANTUM = 128;
+const EARLY = 'scenario-early';                       // the file dropped before START
+const KEPT_MS = 400;                                  // a file that was kept would play within this of START's end
 
 // The context's clock and the worklet's count, read together in the page.
 const CLOCK = `(async () => {
@@ -39,15 +45,27 @@ export async function run({ u, row, scratch }) {
                         + `${s0.a11y.overlay}, revision ${s0.a11y.revision}`
                       : 'the module gives no Module.fcmpA11y()');
 
-  await u.drop(writeTone(join(scratch, 'files', 'scenario-early.wav'), { seconds: 1 }));
+  await u.drop(writeTone(join(scratch, 'files', `${EARLY}.wav`), { seconds: 1 }));
   const told = await u.until((s) => s.notice === 'PRESS START FIRST, THEN CHOOSE A FILE.');
-  row(told.ok && told.s.state === 'idle' && told.s.source === 'SOURCE: BUILT-IN LOOP' && told.s.context === '',
-      'early-drop', `a file dropped before START: the notice "${told.s.notice}", the page is `
-      + `${told.s.state || 'not booted'} and says `
-      + `"${told.s.source}"`);
+  const can = told.s.can;
 
   const started = await u.start();
   const s1 = started.s || {};
+  // The file is not kept: a kept file plays when START ends (as one dropped while START loads does), so for a while
+  // after it the page does not name the file and source() is not a file. A START that did not come to run is the
+  // next row's.
+  const notFile = (s) => !!s.plays && s.plays.kind !== 'file' && !s.source.includes(EARLY.toUpperCase());
+  const after = started.ok ? await holds(u, notFile, KEPT_MS) : null;
+  const afterSaid = after === null ? ''
+                  : `the page says "${after.s.source}" and source() is ${after.s.plays ? after.s.plays.kind : 'null'}`;
+  row(told.ok && told.s.state === 'idle' && told.s.source === SAMPLE.line && told.s.plays === null
+      && told.s.context === '' && !can.loop && !can.synth && !can.open && (after === null || after.ok),
+      'early-drop', `a file dropped before START: the notice "${told.s.notice}", the page is `
+      + `${told.s.state || 'not booted'} and says "${told.s.source}"; source() is `
+      + `${told.s.plays === null ? 'null' : told.s.plays.kind}; ${buttons(told.s)}. `
+      + (after === null ? 'START did not come to run: what plays after it was not seen'
+         : after.ok ? `For ${KEPT_MS} ms after START ${afterSaid}: the file was not kept`
+         : `Within ${KEPT_MS} ms of START ${afterSaid}: the file WAS kept, or nothing plays`));
   if (!row(started.ok && s1.says === 'PLAYING' && s1.button === '', 'running',
            started.ok ? `${started.ms} ms after the press: the page runs, the context is ${s1.context} at `
                         + `${s1.rate} Hz, the page says "${s1.says}"`

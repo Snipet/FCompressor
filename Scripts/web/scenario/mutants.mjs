@@ -16,14 +16,15 @@
 //                    it is stopped, and its mutant fails
 //   --chrome, --chrome-flag   passed to the scenario
 //
-// A mutant passes when the scenario ends with exit 1 on it and every row the mutant names is red. A text that is to
-// be replaced must be in its file exactly once: every mutant chosen is worked out before anything is written, and when
-// the page has changed so that one does not apply, the run ends there with exit 2, nothing copied, and the mutant must
-// be written again. Each scenario runs in a process group of its own, with the Chrome it starts. SIGINT, SIGTERM and
-// SIGHUP are passed on to it (its library then stops its Chrome); should it not have ended 10 s later, its whole
-// group is killed; then its directories go, its log says it was interrupted, and the run ends with exit 2. Output:
-// PASS|FAIL rows, then `mutants: N/M passed`. Exit 0, 1, or 2 (usage, no site, a mutant that does not apply, an
-// interrupted run).
+// A mutant passes when the scenario ends with exit 1 on it and every row the mutant names is red. One marked `exact`
+// passes only when no other row is red besides: the rows it names are the ones meant for what it breaks, and no
+// more (the mutants of the sample loop and its buttons are marked so). A text that is to be replaced must be in its
+// file exactly once: every mutant chosen is worked out before anything is written, and when the page has changed so
+// that one does not apply, the run ends there with exit 2, nothing copied, and the mutant must be written again. Each
+// scenario runs in a process group of its own, with the Chrome it starts. SIGINT, SIGTERM and SIGHUP are passed on to
+// it (its library then stops its Chrome); should it not have ended 10 s later, its whole group is killed; then its
+// directories go, its log says it was interrupted, and the run ends with exit 2. Output: PASS|FAIL rows, then
+// `mutants: N/M passed`. Exit 0, 1, or 2 (usage, no site, a mutant that does not apply, an interrupted run).
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -34,8 +35,21 @@ const deaf = (type, when) => `window.addEventListener('${type}', (e) => { if (${
                              + '}, true);\n';
 const ON_CANVAS = "e.target && e.target.id === 'fcmp-canvas'";
 
+// A function of the page made to do nothing inside one other function of web/main.js: `put` after that function's
+// first line, it hides the page's own there.
+const idle = (name, indent) => `${indent}const ${name} = () => {};\n`;
+
+// Where web/main.js makes the sample loop's buffer, and where a load that ended asks whether its turn still stands:
+// several mutants change these two places.
+const FIT = 'sampleBuffer = bufferOf(fitLoop(file, context.sampleRate));';
+const TURN = "    const buffer = await loadSample();\n    if (turn !== opening || state !== 'running') return;";
+// The sample loop's buffer made of `sides`, an expression over `fitted` (the loop as fitLoop gives it).
+const fitted = (sides) => `const fitted = fitLoop(file, context.sampleRate);\n      sampleBuffer = bufferOf(${sides});`;
+const scaled = (gain) => `{ ...fitted, left: fitted.left.map((x) => ${gain} * x), `
+                         + `right: fitted.right.map((x) => ${gain} * x) }`;
+
 // { name, what, edits: [{ file, find ('' puts the text at the top of the file), put }], groups (the scenario's, run
-// with --only), red (rows that must fail) }.
+// with --only), red (rows that must fail), exact (true: no other row may fail) }.
 const MUTANTS = [
   { name: 'drop-params',
     what: 'the worklet drops every Params record after its third record: an edit never reaches the engine',
@@ -98,12 +112,241 @@ const MUTANTS = [
               put: '' }],
     groups: ['start', 'file'],
     red: ['start.early-drop', 'file.drop', 'file.bad', 'file.short'] },
-  { name: 'stuck-source',
-    what: 'BUILT-IN LOOP does nothing',
+  { name: 'stuck-sample',
+    what: 'SAMPLE LOOP does nothing',
     edits: [{ file: 'main.js', find: "$('fcmp-loop').addEventListener('click', () => {",
               put: "$('fcmp-loop').addEventListener('fcmp-mutant', () => {" }],
-    groups: ['file'],
-    red: ['file.loop'] },
+    groups: ['file', 'source'], exact: true,
+    red: ['file.loop', 'source.back', 'source.again', 'source.ends', 'source.turn'] },
+  { name: 'stuck-synth',
+    what: 'SYNTH LOOP does nothing',
+    edits: [{ file: 'main.js', find: "$('fcmp-synth').addEventListener('click', () => {",
+              put: "$('fcmp-synth').addEventListener('fcmp-mutant', () => {" }],
+    groups: ['source'], exact: true,
+    red: ['source.synth', 'source.back', 'source.quick', 'source.turn'] },
+  { name: 'synth-plays-sample',
+    what: 'SYNTH LOOP plays the sample loop under the synth loop\'s name',
+    edits: [{ file: 'main.js', find: "    play(synth(), 'synth', SAY.synth);\n  });",
+              put: "    play(sampleBuffer || synth(), 'synth', SAY.synth);\n  });" }],
+    groups: ['source'], exact: true,
+    red: ['source.synth', 'source.quick'] },
+  { name: 'sample-level',
+    what: 'the sample loop plays at 0.99 of its own level (0.09 dB under it)',
+    edits: [{ file: 'main.js', find: FIT, put: fitted(scaled('0.99')) }],
+    groups: ['source'], exact: true,
+    red: ['source.sample', 'source.back', 'source.again', 'source.turn'] },
+  { name: 'retry-level',
+    what: 'a sample loop that loads after a load that failed plays at 0.9 of its own level',
+    edits: [{ file: 'main.js', find: FIT, put: fitted(scaled('(sampleFailed ? 0.9 : 1)')) }],
+    groups: ['source'], exact: true,
+    red: ['source.again', 'source.turn'] },
+  { name: 'sample-faded',
+    what: 'the sample loop\'s two ends are faded over 5 ms, as a file\'s are',
+    edits: [{ file: 'main.js', find: FIT,
+              put: 'const fitted = fitLoop(file, context.sampleRate);\n'
+                   + '      fadeEnds(fitted.left, fitted.sampleRate);\n'
+                   + '      fadeEnds(fitted.right, fitted.sampleRate);\n'
+                   + '      sampleBuffer = bufferOf(fitted);' }],
+    groups: ['source'], exact: true,
+    red: ['source.sample'] },
+  { name: 'sample-other-sound',
+    what: 'the sample loop\'s buffer has its frames and its largest sample, and the synth loop\'s sound',
+    edits: [{ file: 'main.js', find: FIT,
+              put: 'const fitted = fitLoop(file, context.sampleRate);\n'
+                   + '      const other = synthLoop(context.sampleRate);\n'
+                   + '      const peak = (a) => a.reduce((most, x) => Math.max(most, Math.abs(x)), 0);\n'
+                   + '      const gain = Math.max(peak(fitted.left), peak(fitted.right))\n'
+                   + '                   / Math.max(peak(other.left), peak(other.right));\n'
+                   + '      sampleBuffer = bufferOf({ ...fitted,\n'
+                   + '        left: other.left.slice(0, fitted.frames).map((x) => gain * x),\n'
+                   + '        right: other.right.slice(0, fitted.frames).map((x) => gain * x) });' }],
+    groups: ['source'], exact: true,
+    red: ['source.sample', 'source.back', 'source.again', 'source.turn'] },
+  { name: 'sample-left-on-both',
+    what: 'the sample loop\'s left side plays on both channels',
+    edits: [{ file: 'main.js', find: FIT, put: fitted('{ ...fitted, right: fitted.left }') }],
+    groups: ['source'], exact: true,
+    red: ['source.sample', 'source.back', 'source.again', 'source.turn'] },
+  { name: 'sample-right-silent',
+    what: 'the sample loop\'s right channel is silent',
+    edits: [{ file: 'main.js', find: FIT, put: fitted('{ ...fitted, right: new Float32Array(fitted.frames) }') }],
+    groups: ['source'], exact: true,
+    red: ['source.sample', 'source.back', 'source.again', 'source.turn'] },
+  { name: 'sample-sides-swapped',
+    what: 'the sample loop\'s right side plays on the left channel and its left side on the right',
+    edits: [{ file: 'main.js', find: FIT, put: fitted('{ ...fitted, left: fitted.right, right: fitted.left }') }],
+    groups: ['source'], exact: true,
+    red: ['source.sample'] },
+  { name: 'sample-not-looped',
+    what: 'the sample loop plays once and is not looped',
+    edits: [{ file: 'main.js', find: '    source.loop = true;\n', put: "    source.loop = kind !== 'sample';\n" }],
+    groups: ['source'], exact: true,
+    red: ['source.sample'] },
+  { name: 'synth-not-looped',
+    what: 'the synth loop plays once and is not looped',
+    edits: [{ file: 'main.js', find: '    source.loop = true;\n', put: "    source.loop = kind !== 'synth';\n" }],
+    groups: ['source'], exact: true,
+    red: ['source.synth'] },
+  { name: 'synth-left-on-both',
+    what: 'the synth loop\'s left side plays on both channels',
+    edits: [{ file: 'main.js', find: 'bufferOf(synthLoop(context.sampleRate));',
+              put: 'bufferOf(((made) => ({ ...made, right: made.left }))(synthLoop(context.sampleRate)));' }],
+    groups: ['source'], exact: true,
+    red: ['source.synth', 'source.quick', 'source.lost', 'source.again', 'source.slow', 'source.turn'] },
+  { name: 'no-sample-at-start',
+    what: 'START never asks for the sample loop: the synth loop plays, as when the file is missing',
+    edits: [{ file: 'main.js', find: '    const sample = loadSample();\n',
+              put: '    const sample = Promise.resolve(null);\n' }],
+    groups: ['start', 'file', 'source'], exact: true,
+    red: ['file.drop', 'source.sample', 'source.synth', 'source.lost', 'source.kept', 'source.fault',
+          'source.slow'] },
+  { name: 'unfitted',
+    what: 'the page plays the file\'s frames as they are, not fitted to the context\'s rate (341,420 frames at 48 kHz)',
+    edits: [{ file: 'main.js', find: FIT, put: 'sampleBuffer = bufferOf(file);' }],
+    groups: ['file', 'source'], exact: true,
+    red: ['file.loop', 'source.sample', 'source.back', 'source.again', 'source.turn'] },
+  { name: 'start-round-cache',
+    what: 'START\'s own request for the sample loop goes round the browser\'s cache, as only a retry should',
+    edits: [{ file: 'main.js', find: "cache: sampleFailed ? 'reload' : 'default'", put: "cache: 'reload'" }],
+    groups: ['source'], exact: true,
+    red: ['source.sample'] },
+  { name: 'retry-from-cache',
+    what: 'a retry of the sample loop may be answered by the browser\'s cache, which may hold the answer that failed',
+    edits: [{ file: 'main.js', find: "cache: sampleFailed ? 'reload' : 'default'", put: "cache: 'default'" }],
+    groups: ['source'], exact: true,
+    red: ['source.again'] },
+  { name: 'silent-lost',
+    what: 'START swallows a sample loop that did not load: the synth loop plays and no notice says why',
+    edits: [{ file: 'main.js', find: '        notice(SAY.sampleLost);\n', put: '' }],
+    groups: ['source'], exact: true,
+    red: ['source.lost', 'source.slow'] },
+  { name: 'silent-retry',
+    what: 'a press on SAMPLE LOOP that fails says nothing: the notice goes on saying that it loads',
+    edits: [{ file: 'main.js', find: '      notice(SAY.sampleUnchanged);\n', put: '' }],
+    groups: ['source'], exact: true,
+    red: ['source.again'] },
+  { name: 'retry-enables-synth',
+    what: 'a press on SAMPLE LOOP that fails enables SYNTH LOOP, although the synth loop is what plays',
+    edits: [{ file: 'main.js', find: '      notice(SAY.sampleUnchanged);\n',
+              put: "      notice(SAY.sampleUnchanged);\n      $('fcmp-synth').disabled = false;\n" }],
+    groups: ['source'], exact: true,
+    red: ['source.again'] },
+  { name: 'lost-fails-start',
+    what: 'a sample loop that did not load fails START',
+    edits: [{ file: 'main.js', find: '      const loaded = await sample;\n',
+              put: '      const loaded = await sample;\n'
+                   + "      if (loaded === null) throw new Error('mutant: no sample loop');\n" }],
+    groups: ['source'], exact: true,
+    red: ['source.lost', 'source.fault', 'source.ends', 'source.slow'] },
+  { name: 'loop-disabled',
+    what: 'SAMPLE LOOP is disabled while the sample loop is not loaded: nothing can try again',
+    edits: [{ file: 'main.js', find: "loop: kind !== 'sample' || !sampleLoaded",
+              put: "loop: kind !== 'sample' && sampleLoaded" }],
+    groups: ['source'], exact: true,
+    red: ['source.lost', 'source.again', 'source.ends', 'source.slow', 'source.turn'] },
+  { name: 'notice-stays',
+    what: 'the notice is not cleared when the sample loop has loaded and plays',
+    edits: [{ file: 'main.js', find: "    notice('');\n    play(buffer, 'sample', SAY.sample);",
+              put: "    play(buffer, 'sample', SAY.sample);" }],
+    groups: ['source'], exact: true,
+    red: ['source.again'] },
+  { name: 'short-wait',
+    what: 'START gives the sample loop 5 s, not 15',
+    edits: [{ file: 'main.js', find: 'export const SAMPLE_MS = 15000;', put: 'export const SAMPLE_MS = 5000;' }],
+    groups: ['source'], exact: true,
+    red: ['source.slow'] },
+  { name: 'long-wait',
+    what: 'START gives the sample loop 17 s, not 15',
+    edits: [{ file: 'main.js', find: 'export const SAMPLE_MS = 15000;', put: 'export const SAMPLE_MS = 17000;' }],
+    groups: ['source'], exact: true,
+    red: ['source.slow'] },
+  { name: 'turn-ignored',
+    what: 'a load of the sample loop that ends takes its turn whatever was chosen since',
+    edits: [{ file: 'main.js', find: TURN,
+              put: "    const buffer = await loadSample();\n    if (state !== 'running') return;" }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'file-loses-to-load',
+    what: 'a file chosen during a load of the sample loop loses to it when the whole file of the loop comes',
+    edits: [{ file: 'main.js', find: TURN,
+              put: "    const buffer = await loadSample();\n    if (state !== 'running') return;\n"
+                   + "    if (turn !== opening && !(buffer !== null && playing.kind === 'file')) return;" }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'synth-told-of-load',
+    what: 'SYNTH LOOP pressed during a load of the sample loop: when that load fails, the notice says so all the same',
+    edits: [{ file: 'main.js', find: TURN,
+              put: "    const buffer = await loadSample();\n    if (state !== 'running') return;\n"
+                   + '    if (turn !== opening) {\n'
+                   + "      if (buffer === null && playing.kind === 'synth') notice(SAY.sampleUnchanged);\n"
+                   + '      return;\n    }' }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'file-disables-open',
+    what: 'a file that plays once a load of the sample loop has failed leaves OPEN disabled',
+    edits: [{ file: 'main.js', find: "    play(decoded, 'file', name);",
+              put: "    play(decoded, 'file', name);\n    if (sampleFailed) $('fcmp-open').disabled = true;" }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'synth-no-turn',
+    what: 'SYNTH LOOP takes no turn: a load of the sample loop that still runs wins over it',
+    edits: [{ file: 'main.js', find: "    opening += 1;\n    notice('');\n    play(synth(), 'synth', SAY.synth);",
+              put: "    notice('');\n    play(synth(), 'synth', SAY.synth);" }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'synth-keeps-notice',
+    what: 'SYNTH LOOP does not clear the notice',
+    edits: [{ file: 'main.js', find: "    opening += 1;\n    notice('');\n    play(synth(), 'synth', SAY.synth);",
+              put: "    opening += 1;\n    play(synth(), 'synth', SAY.synth);" }],
+    groups: ['source'], exact: true,
+    red: ['source.turn'] },
+  { name: 'second-fades-first',
+    what: 'a source chosen under 30 ms after another does not take its place: the first one begins, part of the way '
+          + 'down its fade',
+    edits: [{ file: 'main.js', find: "  if (started > now) return { at: started, old: 'drop' };\n", put: '' }],
+    groups: ['source'], exact: true,
+    red: ['source.quick'] },
+  { name: 'kept-file-lost',
+    what: 'a file dropped while START loads is forgotten',
+    edits: [{ file: 'main.js', find: "    if (choice === 'keep') waiting = file;", put: '' }],
+    groups: ['source'], exact: true,
+    red: ['source.kept'] },
+  { name: 'early-file-kept',
+    what: 'a file dropped before START is kept, although the page says to press START first: it plays once the demo '
+          + 'runs',
+    edits: [{ file: 'main.js', find: "    if (choice === 'keep') waiting = file;",
+              put: "    if (choice === 'keep' || choice === 'startFirst') waiting = file;" }],
+    groups: ['start'], exact: true,
+    red: ['start.early-drop'] },
+  { name: 'engine-fault-waits',
+    what: 'an engine that stops while START loads does not give the sample loop\'s load up: START ends when that does',
+    edits: [{ file: 'main.js', find: '  function stop(error) {\n',
+              put: `  function stop(error) {\n${idle('giveUpSample', '    ')}` }],
+    groups: ['source'], exact: true,
+    red: ['source.fault'] },
+  { name: 'editor-fault-waits',
+    what: 'an editor that aborts while START loads does not give the sample loop\'s load up',
+    edits: [{ file: 'main.js', find: '    editorLost = (error) => {\n',
+              put: `    editorLost = (error) => {\n${idle('giveUpSample', '      ')}` }],
+    groups: ['source'], exact: true,
+    red: ['source.fault'] },
+  { name: 'closed-as-paused',
+    what: 'an audio context closed from outside is taken for one the browser paused',
+    edits: [{ file: 'main.js', find: "    if (context.state === 'closed') {", put: '    if (false) {' }],
+    groups: ['source'], exact: true,
+    red: ['source.ends'] },
+  { name: 'notice-survives-end',
+    what: 'the notice stays when the demo ends',
+    edits: [{ file: 'main.js', find: '  const silence = () => {\n',
+              put: `  const silence = () => {\n${idle('notice', '    ')}` }],
+    groups: ['source'], exact: true,
+    red: ['source.ends'] },
+  { name: 'load-survives-end',
+    what: 'a load of the sample loop that runs is not given up when the demo ends',
+    edits: [{ file: 'main.js', find: '  const silence = () => {\n',
+              put: `  const silence = () => {\n${idle('giveUpSample', '    ')}` }],
+    groups: ['source'], exact: true,
+    red: ['source.ends'] },
   { name: 'wrong-latency',
     what: 'the worklet reports one sample more than the engine has',
     edits: [{ file: 'fcmp-worklet.js', find: 'latency: this.ok ? this.x.fcmp_web_latency(this.engine) : 0 });',
@@ -379,12 +622,15 @@ for (const { m, files } of planned) {
   const rows = output.split('\n').map((line) => /^(PASS|FAIL)\s+scenario ([^\s:]+)/.exec(line)).filter((r) => r);
   const red = rows.filter((r) => r[1] === 'FAIL').map((r) => r[2]);
   const green = m.red.filter((name) => !red.includes(name));
-  const ok = !hung && code === 1 && green.length === 0;
+  const more = m.exact ? red.filter((name) => !m.red.includes(name)) : [];
+  const ok = !hung && code === 1 && green.length === 0 && more.length === 0;
   if (ok) passed += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}     mutants ${m.name}: ${m.what}: the scenario ends with exit ${code} after `
               + `${((Date.now() - t0) / 1000).toFixed(0)} s${hung ? ' (it overran its bound and was stopped)' : ''}, `
               + `${red.length} of ${rows.length} rows red`
-              + `${green.length > 0 ? `; NOT red: ${green.join(', ')}` : ''}; red: ${red.join(', ') || 'none'}`);
+              + `${green.length > 0 ? `; NOT red: ${green.join(', ')}` : ''}`
+              + `${more.length > 0 ? `; red and NOT named: ${more.join(', ')}` : ''}`
+              + `; red: ${red.join(', ') || 'none'}`);
 }
 console.log(`mutants: ${passed}/${chosen.length} passed`);
 process.exit(passed === chosen.length ? 0 : 1);

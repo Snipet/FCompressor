@@ -7,33 +7,44 @@
 //
 // THE BUDGETS. Each file of the site with its size as last measured, raw and gzip -9, in bytes. A file may be at most
 // 20 % larger than its entry, raw and gzip each. To re-measure (after the modules or the page change on purpose): run
-// this test, and replace the table with the "measured now" lines it prints at the end.
+// this test, and replace the table with the "measured now" lines it prints at the end. The sample loop has no budget:
+// its bytes are held exactly (the row audio.loop).
 //
 // Measured at web Sprint D's merge (the three cards with their review fixes, FunkGui v0.14.0), Emscripten 6.0.3, on
 // arm64 macOS (another host's build of the same toolchain may differ by a little: the 20 % is also for that).
 // fcmp-ui.js, fcmp-ui.wasm and main.js were measured again at the web lead phase's merge (the module's frame and
 // accessibility exports; the self-test's pixel rule by renderer class, on a still frame).
+// The whole table was measured again on 2026-10-05, for the sample loop (docs/sprints/web-loop.md, card W-P): the site
+// has 15 files with sample.js and audio/loop.wav; main.js and index.html (fcmp-ui.html is the same file) grew, and
+// the other files came out as they were. main.js was measured once more that day, after the card's review fixes.
 const MEASURED = {
+  'audio/loop.wav': [2048600, 1955479],
   'built-from.txt': [73, 89],
   'demo.css': [3240, 1418],
   'fcmp-engine.wasm': [545704, 136515],
-  'fcmp-ui.html': [4144, 2077],
+  'fcmp-ui.html': [4283, 2133],
   'fcmp-ui.js': [55742, 16153],
   'fcmp-ui.wasm': [1330842, 451250],
   'fcmp-worklet.js': [10548, 3556],
-  'index.html': [4144, 2077],
+  'index.html': [4283, 2133],
   'licences/GPL-3.0.txt': [35149, 12091],
   'licences/JetBrainsMono-OFL.txt': [4399, 1969],
   'licences/THIRD-PARTY.txt': [62770, 9135],
-  'loop.js': [7409, 2658],
-  'main.js': [45260, 14897],
+  'loop.js': [7529, 2713],
+  'main.js': [61312, 19854],
+  'sample.js': [12751, 4597],
 };
 const HEADROOM = 1.2;
+// The sample loop is the user's file, byte for byte (docs/sprints/web-loop.md, "The loop's contract"). Nobody edits or
+// re-encodes it, so it never grows by 20 %: its size and its SHA-256 are held as they are.
+const SAMPLE = { file: 'audio/loop.wav', bytes: 2048600,
+                 sha256: '0327dec3cbc7de82cf3ed6d9f0533d7035681c20297b0c9cb7aae2bc9a8b7e52' };
 //
 // The rows:
 //   files            the site is exactly the table's files: nothing missing, nothing else (no source map, no test,
 //                    no package.json, no file a build left behind)
-//   size.<file>      not empty, and within its raw and its gzip budget
+//   size.<file>      not empty, and within its raw and its gzip budget (every file but the sample loop)
+//   audio.loop       the site's audio/loop.wav has the sample loop's size and SHA-256
 //   urls.<file>      every HTML, JavaScript and CSS file: no URL written in it is absolute or of another origin, so
 //                    the directory works from any path of any static host and nothing comes from elsewhere. A scan
 //                    of the forms a URL is written in, not a proof about every load: a URL computed some other way
@@ -52,6 +63,7 @@ const HEADROOM = 1.2;
 //                    fcmp-ui.js is the toolchain's glue (it holds file-system paths as strings): only the scheme rule
 //                    is applied to it, with XML's namespace names allowed (they are names, never fetched).
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -101,10 +113,19 @@ for (const f of files) {
   raw += bytes.length;
   zipped += gz;
   now.push(`  '${f}': [${bytes.length}, ${gz}],`);
-  if (!(f in MEASURED)) continue;
+  if (!(f in MEASURED) || f === SAMPLE.file) continue;
   const [rawBudget, gzBudget] = MEASURED[f].map((m) => Math.ceil(m * HEADROOM));
   row(bytes.length > 0 && bytes.length <= rawBudget && gz <= gzBudget, `size.${f}`,
       `${bytes.length} bytes (budget ${rawBudget}), gzip ${gz} (budget ${gzBudget})`);
+}
+if (files.includes(SAMPLE.file)) {
+  const bytes = readFileSync(join(site, SAMPLE.file));
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  row(bytes.length === SAMPLE.bytes && sha === SAMPLE.sha256, 'audio.loop',
+      `${SAMPLE.file}: ${bytes.length} bytes (the sample loop has ${SAMPLE.bytes}), SHA-256 ${sha}`
+      + (sha === SAMPLE.sha256 ? '' : ` (the sample loop's is ${SAMPLE.sha256})`));
+} else {
+  row(false, 'audio.loop', `${SAMPLE.file} is not in the site`);
 }
 note(`the site: ${raw} bytes in ${files.length} files, gzip ${zipped}`);
 

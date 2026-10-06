@@ -8,9 +8,11 @@
 // document). The rows:
 //   constants.*    what the page and the worklet know by value equals the repository's: the engine's self-check hash
 //                  (Tools/web/enginecheck.cpp; the same in every web test), the atlas hash (the ui.font golden), the
-//                  protocol's numbers (WebProtocol.h, WebEngine.h), and one block size in the page and the worklet
-//   site.*         the site's page files are the repository's (fcmp-ui.html is index.html); every file index.html and
-//                  main.js name is in the site; the footer links the licences
+//                  protocol's numbers (WebProtocol.h, WebEngine.h), one block size in the page and the worklet, and
+//                  the sample loop's SHA-256, rate and frames (web/audio/loop.wav, read by web/sample.js)
+//   site.*         the site's page files are the repository's (fcmp-ui.html is index.html), sample.js and the sample
+//                  loop among them; every file index.html, main.js and sample.js name is in the site; the footer
+//                  links the licences and says whose the sample loop is
 //   licences.*     the licence files are byte-equal to their sources, and THIRD-PARTY.txt holds each of the
 //                  toolchain's texts whole
 //   wording.*      what the page says is upper case, in the HTML and in main.js's table; the differences are listed
@@ -25,11 +27,24 @@
 //                  GPU: none over 2 of 255; software: none over 16, at most 10 per mille over 2); no frame, no pass;
 //                  the Panel's rest (Module.fcmpA11y's fullRate 0, bounded; a quiet time where the module does not
 //                  say); and the frame is asked for at rest, in that task, before the demo starts, which the row says
-//   files.*        the limits of a dropped file, and the fades at its ends
+//   files.*        the limits of a dropped file, the fades at its ends, and what a file does in each state of the
+//                  page (one dropped while START is loading is kept, and plays once the demo runs)
+//   source.*       the sample loop and the synth loop (docs/sprints/web-loop.md, "The page"): what the page says of
+//                  them, and nothing of the old name; index.html's controls, in their order; which buttons are
+//                  enabled, in every state; the time the sample loop has, under the self-test's time for START, and
+//                  its timer, cleared only when the load has ended; the self-test's rule for the fitted loop, on the
+//                  file and on wrong fits of each side; the self-test's rows in their order, and the conditions of
+//                  the three rows of the sample loop, word for word; START makes and resumes its context, and asks
+//                  for the loop, before it first waits, fits it to the context's rate and never fades it; a load
+//                  after a failed one asks the server, not the browser's cache; how a new source takes the place of
+//                  the old one, and that a second choice inside one swap replaces the first; a later choice wins
+//                  over a load that still runs; and a demo that ends (a failure, a context closed from outside)
+//                  clears its notice and gives up the load
 //   built_from.*   the footer's line: a link only for `clean`, nothing for `none` or an unreadable line
 //   verdict.*      the self-test's title: RUNNING, then PASS or FAIL: <the first failing row>; an uncaught error is a
 //                  FAIL at once; no PASS ever replaces a FAIL
 // Output: PASS/FAIL/NOTE lines, as the probes print them. Exit 0 pass, 1 fail, 2 usage.
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -56,7 +71,15 @@ if (!source || !site) {
 const read = (...parts) => readFileSync(join(...parts), 'utf8');
 const found = (text, pattern) => (pattern.exec(text) || [])[1];
 const page = await import(pathToFileURL(join(source, 'web', 'main.js')).href);
+const sample = await import(pathToFileURL(join(source, 'web', 'sample.js')).href);
 const index = read(source, 'web/index.html');
+// main.js as code alone: without its line comments, and with every run of white space as one space. For the rows that
+// hold a statement of the page word for word: such a row says where the statement is, not what a browser does with it.
+const pageCode = read(source, 'web/main.js').replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ');
+const holds = (...statements) => statements.every((text) => pageCode.split(text).length === 2);
+// The sample loop's file, as the repository holds it and as sample.js reads it.
+const wav = readFileSync(join(source, 'web', sample.SAMPLE_URL));
+const loop = sample.readWav(wav);
 
 // ---- constants -----------------------------------------------------------------------------------------------------
 {
@@ -96,12 +119,19 @@ const index = read(source, 'web/index.html');
       wrong.length === 0 ? `${pairs.length} values equal WebProtocol.h's and WebEngine.h's` : wrong.join('; '));
   row(page.QUANTUM === own('QUANTUM') && page.QUANTUM === 128, 'constants.quantum',
       `main.js ${page.QUANTUM}, fcmp-worklet.js ${own('QUANTUM')}`);
+
+  const sha = createHash('sha256').update(wav).digest('hex');
+  row(page.SAMPLE_SHA256 === sha && page.SAMPLE_RATE === loop.sampleRate && page.SAMPLE_FRAMES === loop.frames,
+      'constants.sample',
+      `main.js ${page.SAMPLE_SHA256}, ${page.SAMPLE_RATE} Hz, ${page.SAMPLE_FRAMES} frames; web/${sample.SAMPLE_URL} `
+      + `${sha}, ${loop.sampleRate} Hz, ${loop.frames} frames`);
 }
 
 // ---- the site ------------------------------------------------------------------------------------------------------
 const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(readFileSync(b));
 {
-  const pageFiles = ['index.html', 'demo.css', 'main.js', 'loop.js', 'fcmp-worklet.js'];
+  const pageFiles = ['index.html', 'demo.css', 'main.js', 'loop.js', 'sample.js', 'fcmp-worklet.js',
+                     sample.SAMPLE_URL];
   const stale = pageFiles.filter((f) => !same(join(source, 'web', f), join(site, f)));
   if (!same(join(source, 'web/index.html'), join(site, 'fcmp-ui.html'))) stale.push('fcmp-ui.html (index.html again)');
   row(stale.length === 0, 'site.is_the_source',
@@ -109,20 +139,32 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
   row(!existsSync(join(site, 'package.json')) && !existsSync(join(site, 'tests')), 'site.no_tests',
       'no package.json, no tests');
 
-  // Every file the page names: index.html's attributes, and main.js's imports and strings that name a file.
-  const named = new Set();
+  // Every file the page names: index.html's attributes, main.js's imports and strings that name a file, and the
+  // sample loop, which sample.js names.
+  const named = new Set([sample.SAMPLE_URL]);
   for (const m of index.matchAll(/\b(?:src|href)\s*=\s*"([^"]*)"/g)) if (!/^[a-z]+:/i.test(m[1])) named.add(m[1]);
   const main = read(source, 'web/main.js');
   for (const m of main.matchAll(/'(?:\.\/)?([\w\-/]+\.(?:js|wasm|txt|css|html))'/g)) named.add(m[1]);
   const lost = [...named].filter((f) => !existsSync(join(site, f)));
-  row(named.size >= 9 && lost.length === 0, 'site.names',
-      lost.length === 0 ? `${named.size} files named by index.html and main.js: ${[...named].sort().join(', ')}`
+  row(named.size >= 11 && named.has('sample.js') && named.has('audio/loop.wav') && lost.length === 0, 'site.names',
+      lost.length === 0 ? `${named.size} files named by index.html, main.js and sample.js: `
+                          + [...named].sort().join(', ')
                         : `not in the site: ${lost.join(', ')}`);
 
   const links = ['licences/GPL-3.0.txt', 'licences/JetBrainsMono-OFL.txt', 'licences/THIRD-PARTY.txt'];
   const footer = found(index, /<footer>([\s\S]*?)<\/footer>/) || '';
   row(links.every((l) => footer.includes(`href="${l}"`)) && footer.includes('id="fcmp-built"'), 'site.footer',
       'the footer links the three licences and holds the built commit');
+  // The footer's first sentence, as a reader sees it, and as it is written: its link is on GNU GPL VERSION 3, inside
+  // the sentence.
+  const first = 'FCOMPRESSOR IS FREE SOFTWARE UNDER THE GNU GPL VERSION 3, AND SO IS THE SAMPLE LOOP, WHICH SEAN FUNK '
+              + 'MADE FOR THIS DEMO.';
+  const seen = footer.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const written = `<p>${first.replace('GNU GPL VERSION 3', '<a href="licences/GPL-3.0.txt">GNU GPL VERSION 3</a>')} `;
+  const linked = footer.replace(/\s+/g, ' ').trim().startsWith(written);
+  row(seen.startsWith(`${first} `) && linked, 'site.footer.loop',
+      `the footer begins "${seen.slice(0, first.length)}", with the link on GNU GPL VERSION 3 in that sentence: `
+      + `${linked}`);
 }
 
 // ---- the licences: FCompressor's, the typeface's (from the FunkGui the build used), and the toolchain's texts ------
@@ -486,6 +528,301 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
       && ones[24000] === 1 && tiny[0] === 0 && tiny[6] === 0 && tiny[3] === 1 && tiny.every((s) => s >= 0 && s <= 1),
       'files.fades', '5 ms in and out at 48 kHz, zero at both ends, untouched between; a buffer shorter than two '
       + 'fades stays in range');
+
+  // What a chosen or dropped file does in each state of the page (the states are the ones main.js names). While START
+  // is loading the file is kept: openFile() keeps it, and start() opens it once the demo runs.
+  const states = (found(read(source, 'web/main.js'), /\n  let state = 'idle';\s*\/\/ ([a-z, ]+)\n/) || '').split(', ');
+  const choice = typeof page.fileChoice === 'function' ? page.fileChoice : () => 'NO fileChoice()';
+  const does = states.map((state) => `${state}: ${choice(state) || 'nothing'}`).join(', ');
+  const keeps = holds('const openFile = async (file) => { const choice = fileChoice(state); '
+                      + 'notice(choice === \'startFirst\' ? SAY.startFirst : \'\'); '
+                      + 'if (choice === \'keep\') waiting = file; if (choice !== \'play\') return; '
+                      + 'const turn = (opening += 1);');
+  const opens = holds('state = \'running\'; showButtons(); contextChanged(); '
+                      + 'if (waiting !== null) openFile(waiting); return made.ready;');
+  row(does === 'idle: startFirst, refused: nothing, loading: keep, running: play, failed: nothing, stopped: nothing'
+      && choice('') === '' && choice(undefined) === '' && keeps && opens, 'files.by_state',
+      `a file, by the page's state: ${does}; openFile() keeps a file while START is loading: ${keeps}; start() opens `
+      + `it once the demo runs: ${opens}`);
+}
+
+// ---- the sample loop and the synth loop ----------------------------------------------------------------------------
+{
+  const main = read(source, 'web/main.js');
+  // What the page says of the two loops, word for word (docs/sprints/web-loop.md, "The page"), and nothing of the
+  // name the synth loop had, with a hyphen, a space or neither, in index.html, main.js and demo.css. The page's other
+  // scripts are read too, and a NOTE names the ones that still say it: the row does not hold them.
+  const texts = [['sample', 'SAMPLE LOOP'], ['synth', 'SYNTH LOOP'], ['sampleLoading', 'LOADING THE SAMPLE LOOP.'],
+                 ['sampleLost', 'THE SAMPLE LOOP DID NOT LOAD. THE SYNTH LOOP PLAYS INSTEAD.'],
+                 ['sampleUnchanged', 'THE SAMPLE LOOP DID NOT LOAD. THE SOURCE IS UNCHANGED.']];
+  const off = texts.filter(([key, text]) => page.SAY[key] !== text).map(([key]) => key);
+  const oldName = /built-?in|built[\s_-]*in[\s_-]*loop/i;
+  const three = [['index.html', index], ['main.js', main], ['demo.css', read(source, 'web/demo.css')]];
+  const old = three.filter(([, text]) => oldName.test(text)).map(([name]) => name);
+  row(off.length === 0 && page.SAY.source(page.SAY.sample) === 'SOURCE: SAMPLE LOOP' && !('loop' in page.SAY)
+      && old.length === 0, 'source.texts',
+      off.length + old.length === 0 ? `${texts.length} texts as the manifest gives them; `
+                                      + `${three.map(([name]) => name).join(', ')} do not say BUILT-IN`
+                                    : `not as the manifest gives them: [${off.join(', ')}]; BUILT-IN is still said `
+                                      + `in: [${old.join(', ')}]`);
+  const others = ['loop.js', 'sample.js', 'fcmp-worklet.js'].filter((f) => oldName.test(read(source, 'web', f)));
+  if (others.length > 0) note(`BUILT-IN is still said in web/${others.join(', web/')}: source.texts does not hold it`);
+
+  // index.html's source line: the name, the three buttons, the file input, the sentence about dropping a file and
+  // the notice, in this order. The buttons are disabled until main.js enables them.
+  const block = found(index, /<div id="fcmp-source">([\s\S]*?)<\/div>/) || '';
+  const parts = [...block.matchAll(/<(span|button|input|p)\b([^>]*)>([^<]*)/g)].map((m) => {
+    const id = found(m[2], /\bid="([^"]*)"/) || '';
+    return `${m[1]}#${id}${/\bdisabled\b/.test(m[2]) ? ' disabled' : ''}${/\bhidden\b/.test(m[2]) ? ' hidden' : ''}`
+           + `: ${m[3].trim()}`;
+  });
+  const want = [`span#fcmp-source-name: ${page.SAY.source(page.SAY.sample)}`,
+                `button#fcmp-loop disabled: ${page.SAY.sample}`, `button#fcmp-synth disabled: ${page.SAY.synth}`,
+                'button#fcmp-open disabled: OPEN AN AUDIO FILE', 'input#fcmp-file hidden: ',
+                'span#: OR DROP ONE ON THE PAGE. IT STAYS IN THIS BROWSER.', 'p#fcmp-notice: '];
+  row(parts.length === want.length && parts.every((part, i) => part === want[i]), 'source.controls',
+      `#fcmp-source holds: ${parts.join(' | ')}`);
+
+  // Which buttons are enabled, in every state: [the demo runs, what plays, the sample loop is loaded] and the
+  // buttons that can be pressed. Nothing plays ('') only before START; the sample loop cannot play unloaded, and the
+  // rule answers for it all the same.
+  const states = [
+    [false, '', false, ''], [false, '', true, ''], [false, 'sample', false, ''], [false, 'sample', true, ''],
+    [false, 'synth', false, ''], [false, 'synth', true, ''], [false, 'file', false, ''], [false, 'file', true, ''],
+    [true, 'sample', true, 'synth open'], [true, 'synth', true, 'loop open'], [true, 'synth', false, 'loop open'],
+    [true, 'file', true, 'loop synth open'], [true, 'file', false, 'loop synth open'],
+    [true, 'sample', false, 'loop synth open'], [true, '', false, 'loop synth open'],
+    [true, '', true, 'loop synth open'],
+  ];
+  const pressable = (on) => ['loop', 'synth', 'open'].filter((key) => on[key] === true).join(' ');
+  const strict = (on) => Object.keys(on).sort().join(' ') === 'loop open synth'
+                         && Object.values(on).every((value) => typeof value === 'boolean');
+  const wrong = states.filter(([running, kind, loaded, enabled]) => {
+    const on = page.sourceButtons(running, kind, loaded);
+    return !strict(on) || pressable(on) !== enabled;
+  }).map(([running, kind, loaded]) => `${running ? 'running' : 'not running'}, ${kind || 'nothing'} plays, the `
+                                      + `sample loop ${loaded ? 'loaded' : 'not loaded'}: `
+                                      + `"${pressable(page.sourceButtons(running, kind, loaded))}"`);
+  row(wrong.length === 0, 'source.buttons',
+      wrong.length === 0 ? `${states.length} states: none before START or once the demo has ended; while it runs a `
+                           + 'file can be opened, the loop that plays has its button disabled and the other enabled, '
+                           + 'and SAMPLE LOOP is enabled whenever the sample loop is not loaded'
+                         : `wrong for: ${wrong.join('; ')}`);
+
+  // The sample loop's time is under the time the self-test gives START, so a loop that never comes still lets START
+  // end in time, with the synth loop. The fetch is given up by that timer, which is cleared in one place: where the
+  // load has ended. Cleared sooner, it would never give the fetch up.
+  const selftest = main.slice(main.indexOf('async function runSelftest()'));
+  const startMs = Number(found(selftest, /await within\((\d+), 'the start', start\(\)\)/));
+  const between = (from, to) => main.slice(main.indexOf(from), main.indexOf(to));
+  const load = between('  const loadSample = () => {', '  const synth = () => {');
+  const cleared = load.split('clearTimeout(timer)').length - 1;
+  const atTheEnd = holds('}).finally(() => { clearTimeout(timer); sampleLoad = null; sampleAbort = null; });');
+  const gives = load.split('const timer = setTimeout(() => abort.abort(), SAMPLE_MS);').length === 2
+             && /await fetch\(SAMPLE_URL, \{ signal: abort\.signal,[^}]*\}\);/.test(load) && cleared === 1 && atTheEnd;
+  row(page.SAMPLE_MS === 15000 && startMs >= page.SAMPLE_MS + 5000 && gives, 'source.wait',
+      `the sample loop has ${page.SAMPLE_MS} ms and its fetch is ${gives ? 'given up then' : 'NOT GIVEN UP THEN'} `
+      + `(the timer is cleared in ${cleared} place(s), where the load has ended: ${atTheEnd}); the self-test gives `
+      + `START ${startMs} ms`);
+
+  // The self-test's rule for the fitted loop: the file fitted to 48 kHz passes, and a loop that is short of a frame,
+  // louder or quieter by 0.02 dB on one side, not silent at one side's end, or empty does not. Each wrong fit is
+  // wrong on one side only, once on the left and once on the right: the rule judges both.
+  const fitted = sample.fitLoop(loop, 48000);
+  const copy = (from, change) => {
+    const made = { sampleRate: from.sampleRate, frames: from.frames, left: from.left.slice(),
+                   right: from.right.slice() };
+    change(made);
+    return made;
+  };
+  const gain = (side, db) => (made) => { made[side] = made[side].map((v) => v * 10 ** (db / 20)); };
+  // -40 dBFS in a part of the last millisecond (48 frames at 48 kHz): from `from` frames before the end to `to`.
+  const loud = (side, from, to) => (made) => made[side].fill(0.01, made.frames - from, made.frames - to);
+  const oneSided = ['left', 'right'].flatMap((side) => [
+    [`the ${side} side louder by 0.005 dB`, true, copy(fitted, gain(side, 0.005))],
+    [`the ${side} side louder by 0.02 dB`, false, copy(fitted, gain(side, 0.02))],
+    [`the ${side} side quieter by 0.02 dB`, false, copy(fitted, gain(side, -0.02))],
+    [`-40 dBFS in the ${side} side's last millisecond`, false, copy(fitted, loud(side, 48, 0))],
+    [`-40 dBFS in the first half of the ${side} side's last millisecond`, false, copy(fitted, loud(side, 48, 24))],
+    [`the ${side} side one frame short, the frames as wanted`, false,
+     copy(fitted, (made) => { made[side] = made[side].slice(0, -1); })],
+  ]);
+  const cases = [
+    ['the file fitted to 48000 Hz', true, fitted],
+    ['the file at its own rate', true, sample.fitLoop(loop, loop.sampleRate)],
+    ...oneSided,
+    ['one frame short', false, copy(fitted, (made) => {
+      made.frames -= 1;
+      made.left = made.left.slice(0, -1);
+      made.right = made.right.slice(0, -1);
+    })],
+    ['no frame', false, { sampleRate: 48000, frames: 0, left: new Float32Array(0), right: new Float32Array(0) }],
+  ];
+  const misjudged = cases.filter(([, want2, made]) => page.fitRule(loop, made).ok !== want2).map(([what]) => what);
+  const judged = page.fitRule(loop, fitted);
+  const two = (values, digits) => values.map((d) => d.toFixed(digits)).join(' and ');
+  row(misjudged.length === 0 && judged.frames === 371614 && fitted.frames === 371614 && page.FIT.level === 0.01
+      && page.FIT.end === -60, 'source.fit_rule',
+      misjudged.length === 0 ? `fitRule(): ${fitted.frames} frames at 48000 Hz, the RMS ${two(judged.level, 5)} dB `
+                               + `from the file's (at most ${page.FIT.level}), the last 1 ms at ${two(judged.end, 1)} `
+                               + `dBFS (under ${page.FIT.end}); ${cases.filter(([, ok]) => !ok).length} wrong fits do `
+                               + 'not pass, each side\'s among them'
+                             : `misjudged: ${misjudged.join('; ')}`);
+
+  // The self-test's rows, in the manifest's order: the sample loop's two after engine.silence and before the
+  // editor's, page.source after page.start. worklet.render and engine.silence keep the synth loop.
+  const order = ['\'worklet.render\'', '\'engine.silence\'', '\'sample.read\'', '\'sample.fit\'', '\'editor.atlas\'',
+                 '\'editor.pixels\'', '\'page.start\'', '\'page.source\'', '\'page.status\''];
+  const places = order.map((name) => selftest.indexOf(name));
+  const inOrder = places.every((at, i) => at >= 0 && (i === 0 || at > places[i - 1]));
+  const synth = selftest.indexOf('const loop = synthLoop(48000);');
+  // The three rows of the sample loop, word for word: what each one judges, and what it judges it from.
+  const readRow = holds(
+    'const response = await within(SAMPLE_MS, \'the sample loop\', fetch(SAMPLE_URL));',
+    'const bytes = await within(SAMPLE_MS, \'the sample loop\', response.arrayBuffer());',
+    'const digest = new Uint8Array(await crypto.subtle.digest(\'SHA-256\', bytes));',
+    'const sha = Array.from(digest, (byte) => byte.toString(16).padStart(2, \'0\')).join(\'\');',
+    'file = readWav(bytes); row(sha === SAMPLE_SHA256 && file.sampleRate === SAMPLE_RATE '
+    + '&& file.frames === SAMPLE_FRAMES, \'sample.read\',');
+  const fitRow = holds(
+    'const fitted = fitLoop(file, 48000);', 'const judged = fitRule(file, fitted);',
+    'row(judged.ok && fitted.frames === 371614, \'sample.fit\',');
+  const sourceRow = holds(
+    'const plays = globalThis.fcmpPage.source() || {};',
+    'const frames = Math.round(SAMPLE_FRAMES * context.sampleRate / SAMPLE_RATE);',
+    'const name = $(\'fcmp-source-name\').textContent;', 'const told = $(\'fcmp-notice\').textContent;',
+    'const off = (id) => $(id).disabled;',
+    'row(plays.kind === \'sample\' && plays.name === SAY.sample && plays.frames === frames '
+    + '&& plays.sampleRate === context.sampleRate && name === SAY.source(SAY.sample) && told === \'\' '
+    + '&& off(\'fcmp-loop\') && !off(\'fcmp-synth\'), \'page.source\',');
+  row(inOrder && synth >= 0 && synth < places[0] && readRow && fitRow && sourceRow, 'source.selftest',
+      `runSelftest() names its rows in the order ${order.join(', ').replace(/'/g, '')}: ${inOrder}; the first two use `
+      + `synthLoop(48000): ${synth >= 0 && synth < places[0]}; word for word, sample.read holds the fetched bytes' `
+      + `SHA-256, the file's rate and its frames: ${readRow}; sample.fit is fitRule()'s verdict on fitLoop(file, `
+      + `48000) with 371614 frames: ${fitRow}; page.source holds the kind, the name, the frames, the rate, the name `
+      + `line, an empty notice and the two buttons: ${sourceRow}`);
+
+  // START: the context is made and resumed inside the click, and the sample loop asked for, before the first await.
+  // What the load does after its own awaits (readWav, fitLoop) can then delay neither. The loop is fitted to the
+  // context's rate, whatever that is, and never faded: the one call of fadeEnds() is for a file. And start() asks
+  // wanted() after it has waited for the loop, as after every await.
+  const start = between('  const start = async () => {', '  function contextChanged() {');
+  const at = ['new AudioContext(', 'context.resume()', 'const sample = loadSample();', 'await ']
+               .map((text) => start.indexOf(text));
+  const fits = load.indexOf('fitLoop(');
+  const awaits = load.indexOf('await fetch(');
+  const calls = main.slice(0, main.indexOf('async function runSelftest()')).split('fitLoop(').length - 1;
+  const inOrderToo = at.every((place, i) => place >= 0 && (i === 0 || place > at[i - 1]));
+  const caught = /\}\)\(\)\.catch\(\(\) => \{\s*sampleFailed = true;\s*return null;\s*\}\)\.finally\(/.test(load);
+  const toTheRate = holds('sampleBuffer = bufferOf(fitLoop(file, context.sampleRate));');
+  const fades = main.split('fadeEnds(').length - 1;               // its definition, and the call for a file
+  const noFade = fades === 2 && holds('for (let c = 0; c < decoded.numberOfChannels; c += 1) '
+                                      + 'fadeEnds(decoded.getChannelData(c), decoded.sampleRate);');
+  const asks = holds('const loaded = await sample; if (!wanted()) return;');
+  row(inOrderToo && awaits >= 0 && fits > awaits && calls === 1 && caught && toTheRate && noFade && asks,
+      'source.start',
+      `start() makes the context, resumes it and asks for the sample loop before its first await: ${inOrderToo}; `
+      + `the page calls fitLoop in ${calls} place(s), loadSample(), after its fetch: `
+      + `${fits > awaits && awaits >= 0}, to the context's rate: ${toTheRate}; that load never rejects: ${caught}; `
+      + `fadeEnds is called in ${fades - 1} place(s), for a file: ${noFade}; start() asks wanted() after the loop: `
+      + `${asks}`);
+
+  // A load after a failed one asks the server, not the browser's cache: the cache may hold the answer that failed.
+  // The first load is an ordinary fetch. The failure is noted in one place, where the load gives null.
+  const modes = found(load, /await fetch\(SAMPLE_URL, \{ signal: abort\.signal, cache: ([^}]*) \}\);/) || '';
+  const noted = main.split('sampleFailed = true;').length - 1;
+  const fresh = main.includes('  let sampleFailed = false;');
+  row(modes === 'sampleFailed ? \'reload\' : \'default\'' && noted === 1 && caught && fresh, 'source.retry',
+      `loadSample() fetches with the cache mode "${modes}"; sampleFailed starts false: ${fresh}, and is set in `
+      + `${noted} place(s), where a load gives null: ${caught}`);
+
+  // How a new source takes the place of the one before it: swapPlan(the context's time, the start time of the source
+  // before it). One that plays fades out, and the new one starts when it is gone. One that has not begun (a second
+  // choice within one swap of the first) is dropped, and the new one takes its start time: faded out like one that
+  // plays, it would begin part of the way down that fade. Then four choices, the first three 10 ms apart, as play()
+  // makes them: each plan's start time is the next one's `started`.
+  const S = page.SWAP_SECONDS;
+  const plans = [
+    ['nothing plays', [2, null], { at: 2, old: 'none' }],
+    ['nothing plays, at time 0', [0, null], { at: 0, old: 'none' }],
+    ['a source that plays', [2, 1], { at: 2 + S, old: 'fade' }],
+    ['a source that starts now', [2, 2], { at: 2 + S, old: 'fade' }],
+    ['the first source of a context that has not run yet', [0, 0], { at: S, old: 'fade' }],
+    ['a source in its fade-in', [2.01, 2], { at: 2.01 + S, old: 'fade' }],
+    ['a source that begins in 20 ms', [2, 2.02], { at: 2.02, old: 'drop' }],
+    ['a source that begins a whole swap from now', [2, 2 + S], { at: 2 + S, old: 'drop' }],
+  ];
+  const swapPlan = typeof page.swapPlan === 'function' ? page.swapPlan : () => ({ at: NaN, old: 'NO swapPlan()' });
+  const planWrong = plans.filter(([, [now, started], want2]) => {
+    const plan = swapPlan(now, started);
+    return Object.keys(plan).sort().join(' ') !== 'at old' || plan.at !== want2.at || plan.old !== want2.old;
+  }).map(([what, [now, started]]) => `${what}: ${JSON.stringify(swapPlan(now, started))}`);
+  let begins = 1;                                                // a source that has played since time 1
+  const presses = [5, 5.01, 5.02, 5.06].map((now) => {
+    const plan = swapPlan(now, begins);
+    begins = plan.at;
+    return `${plan.old} ${plan.at.toFixed(2)}`;
+  }).join(', ');
+  const swaps = holds(
+    'const plan = swapPlan(now, source === null ? null : startsAt);',
+    'if (plan.old === \'fade\') { const old = gain; old.gain.cancelScheduledValues(now); '
+    + 'old.gain.setValueAtTime(old.gain.value, now); old.gain.linearRampToValueAtTime(0, plan.at); '
+    + 'source.onended = () => old.disconnect(); source.stop(plan.at); } '
+    + 'else if (plan.old === \'drop\') { source.stop(); gain.disconnect(); } gain = context.createGain(); '
+    + 'if (plan.at > now) { gain.gain.setValueAtTime(0, plan.at); '
+    + 'gain.gain.linearRampToValueAtTime(1, plan.at + SWAP_SECONDS); }',
+    'source.start(plan.at); startsAt = plan.at;');
+  row(planWrong.length === 0 && S === 0.03 && presses === 'fade 5.03, drop 5.03, drop 5.03, fade 5.09' && swaps,
+      'source.swap',
+      planWrong.length === 0 ? `swapPlan(): ${plans.length} cases; a swap takes ${S * 1000} ms; choices at 5.00, 5.01, `
+                               + `5.02 and 5.06 s: ${presses}; play() does what the plan says: ${swaps}`
+                             : `wrong for: ${planWrong.join('; ')}`);
+
+  // A later choice wins over a load that still runs. Each choice takes a turn (SAMPLE LOOP, a file, SYNTH LOOP), and
+  // a load that ends plays only when its turn is still the last one and the demo still runs. While SAMPLE LOOP
+  // loads the notice says so. The buttons follow the demo's state, what plays and whether the loop is loaded.
+  const turns = holds(
+    'const playSample = async () => { const turn = (opening += 1); '
+    + 'notice(sampleBuffer === null ? SAY.sampleLoading : \'\'); const buffer = await loadSample(); '
+    + 'if (turn !== opening || state !== \'running\') return; '
+    + 'if (buffer === null) { notice(SAY.sampleUnchanged); return; } notice(\'\'); '
+    + 'play(buffer, \'sample\', SAY.sample); };',
+    '$(\'fcmp-synth\').addEventListener(\'click\', () => { if (state !== \'running\') return; opening += 1; '
+    + 'notice(\'\'); play(synth(), \'synth\', SAY.synth); });',
+    'const on = sourceButtons(state === \'running\', playing === null ? \'\' : playing.kind, '
+    + 'sampleBuffer !== null);');
+  const checks = pageCode.split('if (turn !== opening || state !== \'running\') return;').length - 1;
+  const takes = pageCode.split('const turn = (opening += 1);').length - 1;
+  row(turns && checks === 2 && takes === 2, 'source.turns',
+      'SAMPLE LOOP takes a turn, says LOADING while the loop is not loaded, and plays only when its turn is still '
+      + 'the last one and the demo runs; SYNTH LOOP takes a turn and clears the notice; the buttons are '
+      + `sourceButtons() of the demo's state: ${turns}; a turn is taken in ${takes} place(s) and asked after in `
+      + `${checks} (SAMPLE LOOP and a file)`);
+
+  // A demo that has ended: its notice is empty (what it said of the source is no longer true) and a load of the
+  // sample loop that still runs is given up, so nothing is read or fitted for it. While START is loading, a failure
+  // of the engine or of the editor gives the load up too: START then ends on the failure at once, not when the loop
+  // has come or its time is over. And a context that something else closed stops the demo: RESUME could not help.
+  const ended = holds(
+    'const silence = () => { showButtons(); notice(\'\'); giveUpSample(); '
+    + 'if (context !== null) context.close().catch(() => {}); };',
+    'const giveUpSample = () => { if (sampleAbort !== null) sampleAbort.abort(); };',
+    'sampleLoad = load; sampleAbort = abort; return load;',
+    'const bytes = await response.arrayBuffer(); if (abort.signal.aborted) throw new Error(\'given up\'); '
+    + 'const file = readWav(bytes); sampleBuffer = bufferOf(fitLoop(file, context.sampleRate));');
+  const duringStart = holds(
+    'function stop(error) { if (state === \'loading\' && fault === null) { fault = error; giveUpSample(); } '
+    + 'if (state !== \'running\') return;',
+    'if (state === \'running\') stop(error); else if (state === \'idle\') fail(error); '
+    + 'else if (state === \'loading\') giveUpSample(); };');
+  const closed = holds(
+    'function contextChanged() { if (state !== \'running\') return; if (context.state === \'closed\') { '
+    + 'stop(new Error(\'the audio context closed\')); } else if (context.state === \'running\') {');
+  const silences = pageCode.split(' silence(); }').length - 1;    // the last statement of fail() and of stop()
+  row(ended && duringStart && closed && silences === 2, 'source.ends',
+      'a demo that ends clears the notice and gives up the sample loop\'s load, which then reads and fits nothing: '
+      + `${ended} (fail() and stop() end that way: ${silences} of 2); a failure while START is loading gives the `
+      + `load up: ${duringStart}; a context closed from outside stops the demo: ${closed}`);
 }
 
 // ---- built-from ----------------------------------------------------------------------------------------------------
@@ -567,4 +904,8 @@ const same = (a, b) => existsSync(a) && existsSync(b) && readFileSync(a).equals(
 
 note('the page in a browser: node <build>/_deps/funkgui-src/tools/web/check-page.mjs <build>/site --page fcmp-ui');
 console.log(`${failed === 0 ? 'PASS' : 'FAIL'}     ${TEST}: ${passed} row(s) passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+// The exit code is set and node ends by itself: no process.exit() here. Since the rows of the fitted loop, this test
+// ends just after heavy work on large arrays, and node 24.15 can then hang in process.exit(): it joins V8's compiler
+// thread, which waits for a collection that the main thread no longer runs. Seen in 11 of 3000 runs (8 at once: the
+// last line printed, then no exit until the test's time limit); 0 of 3000 when node shuts V8 down in order, as here.
+process.exitCode = failed === 0 ? 0 : 1;
