@@ -123,7 +123,8 @@ FCompressor/
     LintDocs.cmake               -P script: the lint.docs test (facts the documents state that another file owns)
   Source/                        01 §2.1: fcdsp/ (core params engine modes telemetry analysis), plugin/ (+ portable/),
                                  editor/ (+ gpu/), web/ (engine facade ui: the browser demo, §2.12)
-  web/                           the demo's page, its AudioWorklet script, live/ (test-only pages), tests/ (node tests)
+  web/                           the demo's page, its AudioWorklet script, audio/ (the sample loop), live/ (test-only
+                                 pages), tests/ (node tests)
   .github/workflows/ci.yml       CI (§4.10)
   Tools/
     probes/common/               ProbeMain.cpp (subcommand dispatch over the self-registration list, Mode loop,
@@ -841,13 +842,18 @@ candidates); a name ending `.speed` or `.tail` runs alone. Natively four registe
 `.selfcheck`, `.tail`). wasm32 has no golden overlay and `golden.py adopt` takes no wasm32 candidate, so the web tree's
 gate is `Scripts/verify.sh --strict build-web`.
 
-**The site.** `build-web/site` is what a static server serves and what CI publishes (§4.10): `index.html`,
-`fcmp-ui.html` (the page again, the path FunkGui's page runner opens as the self-test), `main.js`, `loop.js`,
-`fcmp-worklet.js`, `demo.css`, the two modules, `licences/` (GPL-3.0, the typeface's OFL, and `THIRD-PARTY.txt` for what
-the modules link from the toolchain) and `built-from.txt`, one line `site <sha|none> <clean|dirty> <UTC>`: `clean` only
-when FCompressor's tree is clean and the FunkGui compiled in is the pinned commit unchanged, since the page's footer
-links that commit as the source. It is made afresh by every build and swapped in with one rename; `fcmp_probes`
-depends on it, so the gate's stamp covers it, and `web.size` holds it to its exact list of files.
+**The site.** `build-web/site` is what a static server serves and what CI publishes (§4.10), 15 files: `index.html`,
+`fcmp-ui.html` (the page again, the path FunkGui's page runner opens as the self-test), `main.js`, `loop.js` (it makes
+the synth loop, which the page synthesises and plays when it is chosen and when the sample loop does not load),
+`sample.js` (it reads the sample loop and resamples it to the audio context's rate), `fcmp-worklet.js`, `demo.css`,
+`audio/loop.wav` (the sample loop, the audio file the page plays when START is pressed: `web/audio/*.wav` byte for byte,
+and nothing else of `web/audio`; `cmake/FcmpWebSite.cmake` fails without `web/audio/loop.wav`), the two modules
+(`fcmp-engine.wasm`, `fcmp-ui.js` and `fcmp-ui.wasm`), `licences/` (GPL-3.0, the typeface's OFL, and `THIRD-PARTY.txt`
+for what the modules link from the toolchain) and `built-from.txt`, one line `site <sha|none> <clean|dirty> <UTC>`:
+`clean` only when FCompressor's tree is clean and the FunkGui compiled in is the pinned commit unchanged, since the
+page's footer links that commit as the source. It is made afresh by every build and swapped in with one rename;
+`fcmp_probes` depends on it, so the gate's stamp covers it, and `web.size` holds it to its exact list of files, and the
+sample loop to its size and SHA-256.
 
 **The live directory.** `build-web/live` holds what only the browser gate uses: the pages of `web/live` (the print rows
 through the shipped worklet, the rows that have no golden, the denormal range and the load), `fcmp-print.wasm` and the
@@ -1193,7 +1199,43 @@ verdict, default 120) and `--gpu default|swiftshader`. The steps:
   line says `dpi 2 clock fixed … drawn 1 idle 1`, and a pixel row compares the frame read back through the sink with
   SoftRaster's (a GPU: no sample over 2 of 255; a software renderer: none over 16 and at most 10 per mille over 2).
   One row for the shipped asynchronous preview; the page's self-test (`?selftest=1`) with the context suspended and
-  with a running one; every page of the live directory; then the scripted user, `Scripts/web/scenario.mjs`.
+  with a running one (14 and 15 rows of its own); every page of the live directory; then the scripted user,
+  `Scripts/web/scenario.mjs`. It has 90 rows of its own (92 with `--png`, which the gate does not pass); the gate copies
+  them and counts the scripted user as one row. On a build tree or an artifact the gate has 31 rows: 24 of the capture
+  pages, one of the preview, the two self-tests, one a live page (three pages) and the scripted user.
+- **The sample loop** (ADR-93: `audio/loop.wav` in the site, the audio file the page plays when START is pressed; the
+  synth loop is the loop the page synthesises, the other choice and what plays when the file does not load). The
+  self-test's rows for it are `sample.read`, `sample.fit` and `page.source`; each of the gate's two self-test rows fails
+  when the page says PASS without them, and the running one without `page.audio`. The scripted user's are the eleven
+  rows of its group `source`, on pages of its own. What plays is judged by three witnesses together: the page's source
+  line, `fcmpPage.source()`, which tells a driver what plays, and the engine's input. The 1 ms columns of the engine's
+  replies are compared with the loop itself, which the scripted user makes from the repository's `web/sample.js`,
+  `web/loop.js` and `web/audio/loop.wav` (not from the site: it needs a checkout with `web/`): every column heard must
+  be the loop's own level within 0.01 dB, for 0.4 s or for one whole loop. Every row also judges the three source
+  buttons. Where the file must be out of reach, the driver answers that one address in the server's place through the
+  DevTools protocol (a 404, no connection, or no answer until the row gives one); the site and the server are never
+  changed.
+- **The sample loop's rows**: `source.sample`, `source.synth` and `source.back` (START plays the sample loop, SYNTH LOOP
+  the synth loop, and SAMPLE LOOP the sample loop again: for the first two, one whole loop of the input is the loop
+  millisecond by millisecond, on into its second pass, so it plays at its own level, with no fade, and looped; the two
+  input meters show the sample loop's two sides; its file is asked of the server once in all); `source.quick` (the two
+  loop buttons pressed under 30 ms apart: the source between them never reaches the engine); `source.lost` and
+  `source.again` (the file answered 404: START still reaches PLAYING with the synth loop, and the page's notice says
+  that the sample loop did not load; the SAMPLE LOOP button stays enabled, and a press says LOADING, then leaves the
+  source and says so; once the server answers, a press plays the sample loop and clears the notice, and that request
+  went round the browser's cache); `source.kept` (a file dropped while START says LOADING is kept, and plays once the
+  demo runs); `source.fault` and `source.ends` (the engine stops or the editor aborts while START waits for the file:
+  START fails at once; the audio context is closed from outside while a load runs: the demo stops, the notice is cleared
+  and the buttons are disabled; each time the request for the file is given up); `source.slow` (the file never answers:
+  START says LOADING for the page's `SAMPLE_MS`, 15 s, and at most 1.5 s more, then plays the synth loop with the same
+  notice); and `source.turn` (a later choice, a dropped file or SYNTH LOOP, wins over a load of the sample loop that
+  still runs, and the load says nothing and changes nothing when it ends, whether it fails or the whole file comes).
+- **The published form** (`--url`), 29 rows: the row `published` (`<base>/built-from.txt` says `site <commit> clean`;
+  when it never does, nothing more is run), then the row `audio` (`<base>/audio/loop.wav` has the size and the SHA-256
+  of the sample loop; it is asked at that address and no other, so a redirect fails the row; when the row fails the
+  pages are still run, and the two self-test rows fail with it when the page reads the same wrong file), then the
+  capture pages, the asynchronous preview and the self-test both ways against `<base>`. The live pages and the scripted
+  user are not on the published site and are not run.
 - **Lines**: `EQUAL|DIFFERS|FAIL <view>.theme<t>: …`, the rows `PASS|FAIL|NOTE web.live <row>: …`, the pages' own lines,
   and last `web-live: N/M passed (results in <out>)`. Results in `<out>`: `expect/`, `frames/`, `png/`, the pages'
   logs, `scenario.log`, `summary.txt`.
@@ -1202,8 +1244,10 @@ verdict, default 120) and `--gpu default|swiftshader`. The steps:
 
 It takes no lock (headless Chrome takes no window) and builds nothing (the target `verify-web-live` builds first). The
 lead runs it at the gate (§4.8), CI's `web` job on the build and on the downloaded artifact, and CI's `published` job
-with `--url` against the public page (§4.10). `Scripts/web/page-check.mjs` runs the self-test, the capture pages and
-the live pages in any browser a WebDriver drives (CI's Firefox and Safari).
+with `--url` against the public page (§4.10). `Scripts/web/page-check.mjs` runs the self-test, the capture pages and the
+live pages in any browser a WebDriver drives (CI's Firefox and Safari). Its self-test row asks what the gate's asks: a
+page that says PASS must have judged `sample.read`, `sample.fit` and `page.source`, and with `--autoplay` also
+`page.audio` (never of Safari, which has no such switch).
 
 ### 3.7 Tolerances
 
@@ -1722,12 +1766,15 @@ GitHub Actions runs the workflow on every push to `main`, on every pull request 
   `web-site` artifact the gate tested, byte for byte, deployed to GitHub Pages, https://snipet.github.io/FCompressor/
   (the user's decision, 2026-10-02).
 - `published` (after `publish`): `Scripts/web-live.sh --url <the page's address> --expect … --commit <sha>` waits until
-  the public `built-from.txt` names this commit, then runs the capture pages and the self-test against the public page.
+  the public `built-from.txt` names this commit, then holds the published `audio/loop.wav` to the sample loop's size and
+  SHA-256 at its own address (the row `audio`: a redirect fails it) and runs the capture pages and the self-test against
+  the public page.
 
-Outside CI, Cloudflare builds and serves a second copy of the site from `main`,
-https://fcompressor.seantfunk.workers.dev (`wrangler.jsonc`, `Scripts/cloudflare-build.sh`; ADR-93). Its Preview
-builds of other branches are off; were they on, the check it adds to a pull request, "Workers Builds: fcompressor",
-would be Cloudflare's own build of that commit: not one of the jobs above, and gating nothing.
+Outside CI, Cloudflare builds and serves a second copy of the site from `main`, at the user's own domain,
+https://fcompressor.seanfunk.xyz, and at https://fcompressor.seantfunk.workers.dev (`wrangler.jsonc`,
+`Scripts/cloudflare-build.sh`; ADR-93). Its Preview builds of other branches are off; were they on, the check it adds to
+a pull request, "Workers Builds: fcompressor", would be Cloudflare's own build of that commit: not one of the jobs
+above, and gating nothing.
 
 Nothing is signed or installed; the demo's site is the only thing published. A failing job uploads its results
 (`dsp-results`, `plugin-results`, `linux-dsp-results`, `linux-plugin-results`, `web-results`); `web-browsers` uploads

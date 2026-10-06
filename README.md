@@ -94,16 +94,18 @@ The Standalone is `build/FCompressor_artefacts/Release/Standalone/FCompressor`. 
 
 The DSP and the editor also build for a browser: two WebAssembly modules and a static page, without JUCE. The engine
 runs in an AudioWorklet with the plugin's arithmetic (the test suite holds it to the plugin's own results); the editor
-is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin format. CI publishes it from `main` to
-[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/), once the jobs that gate it have passed.
-Cloudflare serves a second copy at
-[fcompressor.seantfunk.workers.dev](https://fcompressor.seantfunk.workers.dev), which it builds from `main` itself.
+is the plugin's panel, drawn with WebGL2. It is a demonstration, not a plugin format. It is served at
+[fcompressor.seanfunk.xyz](https://fcompressor.seanfunk.xyz) and at
+[snipet.github.io/FCompressor](https://snipet.github.io/FCompressor/). CI publishes the GitHub Pages copy from `main`,
+once the jobs that gate it have passed. Cloudflare builds the copy at the domain from `main` itself, and also serves it
+at [fcompressor.seantfunk.workers.dev](https://fcompressor.seantfunk.workers.dev).
 
-Press START. The page plays a loop it synthesises, or an audio file you open or drop on it; the file never leaves
-your browser. It needs a desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address.
-Its tests run in headless Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI
-also runs its self-test and checks in Firefox and Safari (both pass) and reports them without failing on them. It has
-not been tried by hand in Firefox or Safari yet.
+Press START. The page plays a loop that Sean Funk made for the demo (the sample loop). You can change to a loop the page
+synthesises (the synth loop), or to an audio file you open or drop on it; the file never leaves your browser. It needs a
+desktop browser with WebAssembly, AudioWorklet and WebGL2, and an HTTPS or localhost address. Its tests run in headless
+Chrome, on macOS (with the GPU, and with a software renderer) and on x86-64 Linux in CI; CI also runs its self-test and
+checks in Firefox and Safari (both pass) and reports them without failing on them. It has not been tried by hand in
+Firefox or Safari yet.
 
 What differs from the plugin (the page lists the same):
 - No preset import or export; your own presets last until the page is closed.
@@ -159,7 +161,7 @@ Source/fcdsp/      the JUCE-free DSP library: core, parameters, engine, telemetr
 Source/plugin/     the JUCE processor, state and presets (portable/: the model code, without JUCE)
 Source/editor/     the panel and its views, without JUCE (+ gpu/ for the bgfx editor)
 Source/web/        the web demo: engine/ (the DSP behind a C ABI), facade/ (the editor's processor), ui/ (its main)
-web/               the web demo's page, its AudioWorklet script, its test-only pages and its node tests
+web/               the web demo's page, its AudioWorklet script, its sample loop, its test-only pages and node tests
 Tools/probes/      the test probes, one self-registering file each; Tools/web/ the web demo's checks
 tests/golden/      the blessed golden results; tests/fixtures/ write-once fixtures
 Scripts/           deps.sh, verify.sh, validate.sh, golden.py, release.sh, gui-live.sh, web-live.sh (+ web/)
@@ -181,6 +183,7 @@ FCompressor is GPL-3.0 ([`LICENSE`](LICENSE)). It builds on [JUCE 8](https://juc
 AGPLv3 licence), [bgfx](https://github.com/bkaradzic/bgfx) (BSD-2-Clause) and FunkGui (GPL-3.0). The web demo has no
 JUCE and no bgfx; its modules contain parts of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt, and the
 published site carries their licences beside the GPL and the typeface's (JetBrains Mono, SIL Open Font License 1.1).
+The demo's sample loop (`web/audio/loop.wav`), which Sean Funk made for it, is under the GPL-3.0 as well.
 
 The Mode names describe circuit families. Product names mentioned in the documentation are trademarks of their owners;
 FCompressor is not affiliated with or endorsed by them.
