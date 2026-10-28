@@ -47,6 +47,9 @@ const OPTIONAL_RUNTIME = [
   'emscripten_stack_get_end',
   'emscripten_stack_init',
   'emscripten_stack_get_free',
+  // Emscripten 6.0.13's link exports it whenever SUPPORT_LONGJMP is 'emscripten' (the default; tools/link.py), used or
+  // not: the invoke_* wrappers that would call it are imports, and the import list stays empty.
+  'setThrew',
 ];
 
 let passed = 0;

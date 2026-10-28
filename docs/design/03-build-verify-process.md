@@ -806,7 +806,7 @@ The "edit one Mode .cpp" column holds because no TU instantiates every Mode: `FC
 The browser demo (`docs/ARCHITECTURE.md` §3.1) is the configuration `FCOMPRESSOR_WEB=ON`, the `web` preset
 (`build-web`, Release). Before `project()`, `CMakeLists.txt` takes Emscripten's toolchain file from `em-config`;
 `cmake/FcmpPlatform.cmake` then sets `FCMP_PLATFORM` to `web` and refuses the option without the toolchain or the
-toolchain without the option. `cmake/FcmpDeps.cmake` pins Emscripten to 6.0.3 (`FCMP_EMSCRIPTEN_VERSION`: any other
+toolchain without the option. `cmake/FcmpDeps.cmake` pins Emscripten to 6.0.13 (`FCMP_EMSCRIPTEN_VERSION`: any other
 version is a configure error, the version is a row of `fcmp-deps.txt`, and CI installs the version that line names).
 The option implies DSP-only for every JUCE branch, and FunkGui is configured without JUCE, bgfx or presets
 (`FunkGui::core`, `FunkGui::web`, `FunkGui::harness`). The one architecture is wasm32, with `-msimd128` and never
