@@ -89,7 +89,7 @@ ARCHITECTURE; SPRINTS beats 03 §4.9 on scheduling and ownership only.
   - `agent` — headless, RelWithDebInfo: the default and the DoD build. `[AGENT]` = `cmake --workflow --preset
     agent-verify && Scripts/verify.sh "$WT/build-agent"`. Probes only: `cmake --build --preset agent-probes`.
   - `agent-gui` — GPU editor work. `[GPU]` = `cmake --workflow --preset agent-gui-verify`.
-  - `web` — the browser demo: wasm32 through Emscripten 6.0.3 (any other version fails the configure), Release.
+  - `web` — the browser demo: wasm32 through Emscripten 6.0.13 (any other version fails the configure), Release.
     `[WEB]` = `cmake --workflow --preset web-verify && Scripts/verify.sh --strict "$WT/build-web"`: every `ui.*` probe
     and the `web.*` tests under node, against the same goldens. Run it too when you touch `Source/web/**`, `web/**`,
     `Tools/web/**`, `Source/editor/**` outside `gpu/`, `Source/plugin/portable/**`, `Source/fcdsp/core/**` or a `ui_*`

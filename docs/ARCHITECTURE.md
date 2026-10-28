@@ -150,7 +150,7 @@ source globs — so adding any of those edits no shared file (ADR-19, ADR-20, AD
 
 ### 3.1 The browser demo (ADR-93)
 
-The `web` configuration (`-DFCOMPRESSOR_WEB=ON`, the `web` preset; Emscripten pinned to 6.0.3) builds the same `fcdsp`
+The `web` configuration (`-DFCOMPRESSOR_WEB=ON`, the `web` preset; Emscripten pinned to 6.0.13) builds the same `fcdsp`
 and the same editor for a browser: two WebAssembly modules joined by one `MessagePort`, and a static page. There is no
 `Processor`, no JUCE, no bgfx, no thread and no `SharedArrayBuffer`, so any static host serves it.
 

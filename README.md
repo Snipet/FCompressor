@@ -120,8 +120,8 @@ What differs from the plugin (the page lists the same):
 - Desktop browsers with WebGL2 only, and nothing for a screen reader in the editor.
 - On the CHARACTERISTICS screen the attack and release curves follow a control once it rests, not while it moves.
 
-To build and serve it yourself you need Emscripten 6.0.3 with `em-config` on the `PATH` (from emsdk:
-`emsdk install 6.0.3 && emsdk activate 6.0.3`; the configure refuses any other version), node 22 or later, CMake 3.30
+To build and serve it yourself you need Emscripten 6.0.13 with `em-config` on the `PATH` (from emsdk:
+`emsdk install 6.0.13 && emsdk activate 6.0.13`; the configure refuses any other version), node 22 or later, CMake 3.30
 or later, Ninja and git. JUCE and bgfx are not needed; FunkGui is fetched at its pinned tag.
 
 ```sh

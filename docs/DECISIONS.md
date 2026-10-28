@@ -1044,7 +1044,7 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
   for the demo, came after them, on 2026-10-05 (manifest `docs/sprints/web-loop.md`, four cards: W-A, the module that
   reads that file and resamples it to the audio context's rate; W-P, the page; W-G, the gate; W-D, the documents). Where
   this entry and the plan differ, this entry is right.
-  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.3, the `web` preset;
+  - **Shape.** A fourth configuration, `web` (`-DFCOMPRESSOR_WEB=ON`, Emscripten pinned to 6.0.13, the `web` preset;
     03 §2.12, ARCHITECTURE §3.1), with no JUCE (JUCE has no browser target), no bgfx and no threads. Two wasm modules
     joined by a MessagePort: `fcmp-engine.wasm` (fcdsp behind a C ABI, in an AudioWorklet) and `fcmp-ui.js` +
     `fcmp-ui.wasm` (the unchanged Panel over a web facade, FunkGui's core without JUCE, a WebGL2 sink) on the main
