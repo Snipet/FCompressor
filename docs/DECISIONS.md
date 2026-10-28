@@ -1569,6 +1569,10 @@ The user tested the Sprint 10 build in Ableton Live ("worked and functioned incr
       alone. `mutants.mjs` went from 48 mutated sites to 63. The last full run of them caught 62 as named; the 63rd,
       `synth-left-on-both`, whose own text had broken the page's syntax, was corrected and passed when run alone, and
       the whole table was not run again.
+  - **The Emscripten pin moved to 6.0.13** (2026-10-28; 6.0.3 before): Homebrew upgraded the toolchain on the
+    lead's Mac and the user chose to follow it. The web gate held every golden (no drift, no candidates) and the
+    engine's self-check hash; the one change was a new export, `setThrew`, which 6.0.13 links whenever
+    `SUPPORT_LONGJMP` is `emscripten` (its default), so `web.engine.abi` lists it as the runtime's own name.
   - **Follow-ups, each on its trigger** (`docs/sprints/web/plan.md`, "Follow-ups"): the preview in a Web Worker, so the
     CHARACTERISTICS curves can track a drag; persistence of user presets and the last state in localStorage (when the
     user asks); preset import and export as an upload and a download through `chooseFiles`; the DSP probes under node
